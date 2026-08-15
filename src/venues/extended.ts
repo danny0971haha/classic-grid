@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Intent, VenueSnapshot } from "../types.js";
+import { readExperimentLeverage } from "../config.js";
 import { loadEnv } from "../loadEnv.js";
 import { dryApply, type ApplyResult, type VenueExecutor } from "./types.js";
 
@@ -92,9 +93,9 @@ export class ExtendedExecutor implements VenueExecutor {
     if (process.env.GRID_SKIP_LEVERAGE !== "1") {
       const btcId = this.ex.marketIdForName("BTC-USD");
       if (btcId != null) {
-        const target = Number(
-          process.env.EXTENDED_LEVERAGE || process.env.GRID_LEVERAGE || 30
-        );
+        const target =
+          readExperimentLeverage() ??
+          Number(process.env.EXTENDED_LEVERAGE || process.env.GRID_LEVERAGE || 30);
         try {
           const current = await this.ex.getLeverage(btcId).catch(() => null);
           if (current == null || Math.abs(current - target) > 0.1) {

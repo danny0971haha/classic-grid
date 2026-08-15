@@ -95,7 +95,7 @@ const VENUE_LEVERAGE: Record<VenueId, number> = {
   risex: RISEX_LEVERAGE,
 };
 
-const ALL_VENUES: VenueId[] = [
+export const ALL_VENUES: VenueId[] = [
   "extended",
   "risex",
   "decibel",
@@ -105,6 +105,34 @@ const ALL_VENUES: VenueId[] = [
   "nado",
   "popdex",
 ];
+
+export type ExperimentConfig = {
+  enabled: boolean;
+  id: string;
+  specVersion: "0.1.0";
+  capitalUsd: number;
+  leverage: number;
+  marginFraction: number;
+  gridCount: number;
+  halfBandPct: number;
+  maxGrossNotionalUsd: number;
+  dailyLossUsd: number;
+  maxDrawdownUsd: number;
+  boundaryBufferPct: number;
+};
+
+const EXPERIMENT_SPEC_VERSION = "0.1.0" as const;
+const EXPERIMENT_DEFAULTS = {
+  capitalUsd: 50,
+  leverage: 10,
+  marginFraction: 0.3,
+  gridCount: 12,
+  halfBandPct: 0.03,
+  maxGrossNotionalUsd: 150,
+  dailyLossUsd: 2.5,
+  maxDrawdownUsd: 5,
+  boundaryBufferPct: 0.01,
+} as const;
 
 function truthy(v: string | undefined): boolean {
   return ["1", "true", "yes", "YES"].includes(String(v || "").trim());
@@ -118,6 +146,7 @@ export type RuntimeConfig = {
   tickMs: number;
   dashboardPort: number;
   grids: Record<VenueId, GridParams>;
+  experiment: ExperimentConfig;
 };
 
 export function gridFor(cfg: RuntimeConfig, venue: VenueId): GridParams {
@@ -126,8 +155,10 @@ export function gridFor(cfg: RuntimeConfig, venue: VenueId): GridParams {
 
 export function anchorGrid(base: GridParams, mid: number): GridParams {
   if (!(mid > 0)) throw new Error(`无效 mid=${mid}`);
-  const refHalf = base.halfBand || HALF_BAND;
-  const half = mid * (refHalf / REF_MID);
+  const half =
+    base.halfBandPct != null && base.halfBandPct > 0
+      ? mid * base.halfBandPct
+      : mid * ((base.halfBand || HALF_BAND) / REF_MID);
   const lower = mid - half;
   const upper = mid + half;
   const notional = base.equityUsd * base.marginFraction * base.leverage;
@@ -136,7 +167,78 @@ export function anchorGrid(base: GridParams, mid: number): GridParams {
   return { ...base, halfBand: half, lower, upper, sizeBase };
 }
 
-function leverageFor(venue: VenueId, fallbackGridLev: number): number {
+function numEnv(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export function parseExperimentConfig(): ExperimentConfig {
+  const enabled = truthy(process.env.EXPERIMENT_MODE);
+  const id = String(process.env.EXPERIMENT_ID || "").trim();
+  return {
+    enabled,
+    id: id || (enabled ? "grid-ab-v0.1-classic-local" : ""),
+    specVersion: EXPERIMENT_SPEC_VERSION,
+    capitalUsd: Math.max(0, numEnv(process.env.EXPERIMENT_CAPITAL_USD, EXPERIMENT_DEFAULTS.capitalUsd)),
+    leverage: Math.max(1, numEnv(process.env.EXPERIMENT_LEVERAGE, EXPERIMENT_DEFAULTS.leverage)),
+    marginFraction: Math.min(
+      1,
+      Math.max(0.05, numEnv(process.env.EXPERIMENT_MARGIN_FRAC, EXPERIMENT_DEFAULTS.marginFraction))
+    ),
+    gridCount: Math.max(2, Math.round(numEnv(process.env.EXPERIMENT_GRID_COUNT, EXPERIMENT_DEFAULTS.gridCount))),
+    halfBandPct: Math.max(
+      0.0001,
+      numEnv(process.env.EXPERIMENT_HALF_BAND_PCT, EXPERIMENT_DEFAULTS.halfBandPct)
+    ),
+    maxGrossNotionalUsd: Math.max(
+      0,
+      numEnv(process.env.EXPERIMENT_MAX_GROSS_NOTIONAL_USD, EXPERIMENT_DEFAULTS.maxGrossNotionalUsd)
+    ),
+    dailyLossUsd: Math.max(
+      0,
+      numEnv(process.env.EXPERIMENT_DAILY_LOSS_USD, EXPERIMENT_DEFAULTS.dailyLossUsd)
+    ),
+    maxDrawdownUsd: Math.max(
+      0,
+      numEnv(process.env.EXPERIMENT_MAX_DRAWDOWN_USD, EXPERIMENT_DEFAULTS.maxDrawdownUsd)
+    ),
+    boundaryBufferPct: Math.max(
+      0,
+      numEnv(process.env.EXPERIMENT_BOUNDARY_BUFFER_PCT, EXPERIMENT_DEFAULTS.boundaryBufferPct)
+    ),
+  };
+}
+
+/** 实验模式杠杆覆盖各所 env / 默认值；非实验模式返回 null */
+export function readExperimentLeverage(): number | null {
+  loadEnv();
+  if (!truthy(process.env.EXPERIMENT_MODE)) return null;
+  return Math.max(1, numEnv(process.env.EXPERIMENT_LEVERAGE, EXPERIMENT_DEFAULTS.leverage));
+}
+
+export function formatExperimentBanner(cfg: RuntimeConfig): string {
+  const e = cfg.experiment;
+  const marginBudget = Number((e.capitalUsd * e.marginFraction).toFixed(6));
+  const halfPct = Number((e.halfBandPct * 100).toFixed(6));
+  return [
+    "EXPERIMENT MODE",
+    `capital=${e.capitalUsd}U`,
+    `leverage=${e.leverage}x`,
+    `marginBudget=${marginBudget}U`,
+    `maxGrossNotional=${e.maxGrossNotionalUsd}U`,
+    `gridCount=${e.gridCount}`,
+    `halfBand=${halfPct}%`,
+    `dailyLossLimit=${e.dailyLossUsd}U`,
+    `maxDrawdown=${e.maxDrawdownUsd}U`,
+  ].join("\n");
+}
+
+function leverageFor(
+  venue: VenueId,
+  fallbackGridLev: number,
+  experiment: ExperimentConfig
+): number {
+  if (experiment.enabled) return experiment.leverage;
   if (venue === "risex") {
     return Math.max(
       1,
@@ -177,7 +279,8 @@ function leverageFor(venue: VenueId, fallbackGridLev: number): number {
   );
 }
 
-function equityFor(venue: VenueId): number {
+function equityFor(venue: VenueId, experiment: ExperimentConfig): number {
+  if (experiment.enabled) return experiment.capitalUsd;
   if (venue === "popdex") {
     const n = Number(process.env.POPDEX_EQUITY_USD);
     if (Number.isFinite(n) && n > 0) return n;
@@ -196,7 +299,10 @@ function equityFor(venue: VenueId): number {
 
 export function loadRuntimeConfig(): RuntimeConfig {
   loadEnv();
-  const dryRun = process.env.DRY_RUN == null ? true : truthy(process.env.DRY_RUN);
+  const experiment = parseExperimentConfig();
+  const dryRaw = process.env.DRY_RUN;
+  const dryRun =
+    dryRaw == null || String(dryRaw).trim() === "" ? true : truthy(dryRaw);
   const liveConfirm = truthy(process.env.LIVE_CONFIRM);
   const venues = String(process.env.VENUES || "extended,risex,decibel,n1")
     .split(",")
@@ -212,13 +318,15 @@ export function loadRuntimeConfig(): RuntimeConfig {
     1,
     Number(process.env.GRID_LEVERAGE || LEVERAGE) || LEVERAGE
   );
-  const marginFraction = Math.min(
-    1,
-    Math.max(
-      0.05,
-      Number(process.env.GRID_MARGIN_FRAC || MARGIN_FRAC) || MARGIN_FRAC
-    )
-  );
+  const marginFraction = experiment.enabled
+    ? experiment.marginFraction
+    : Math.min(
+        1,
+        Math.max(
+          0.05,
+          Number(process.env.GRID_MARGIN_FRAC || MARGIN_FRAC) || MARGIN_FRAC
+        )
+      );
   const halfBand = Math.max(
     100,
     Number(process.env.GRID_HALF_BAND || HALF_BAND) || HALF_BAND
@@ -230,15 +338,16 @@ export function loadRuntimeConfig(): RuntimeConfig {
 
   const grids = {} as Record<VenueId, GridParams>;
   for (const v of ALL_VENUES) {
-    const gridCount =
-      v === "popdex"
+    const gridCount = experiment.enabled
+      ? experiment.gridCount
+      : v === "popdex"
         ? Math.max(
             2,
             Number(process.env.POPDEX_GRID_COUNT || VENUE_GRID_COUNT.popdex) ||
               VENUE_GRID_COUNT.popdex
           )
         : VENUE_GRID_COUNT[v];
-    const venueLev = leverageFor(v, leverage);
+    const venueLev = leverageFor(v, leverage, experiment);
     const venueHalf =
       v === "risex"
         ? Math.max(
@@ -275,9 +384,10 @@ export function loadRuntimeConfig(): RuntimeConfig {
             : halfBand;
     grids[v] = {
       ...SHARED,
-      equityUsd: equityFor(v),
+      equityUsd: equityFor(v, experiment),
       marginFraction,
-      halfBand: venueHalf,
+      halfBand: experiment.enabled ? REF_MID * experiment.halfBandPct : venueHalf,
+      ...(experiment.enabled ? { halfBandPct: experiment.halfBandPct } : {}),
       leverage: venueLev,
       // Phoenix maker 更低；Nado / N1 / Decibel / PopDEX 按所 maker 档
       ...(v === "phoenix" || v === "phoenix2" ? { feeRate: 0.00005 } : {}),
@@ -286,6 +396,9 @@ export function loadRuntimeConfig(): RuntimeConfig {
       ...(v === "decibel" ? { feeRate: 0.00011 } : {}),
       // 换带宽时加快撤挂收敛（仓位不动，只改单）
       ...(v === "decibel" || v === "n1" ? { maxWritesPerTick: 40 } : {}),
+      ...(experiment.enabled
+        ? { maxWritesPerTick: Math.max(40, experiment.gridCount + 4) }
+        : {}),
       lower: 0,
       upper: 0,
       gridCount,
@@ -302,6 +415,7 @@ export function loadRuntimeConfig(): RuntimeConfig {
     tickMs,
     dashboardPort,
     grids,
+    experiment,
   };
 }
 
@@ -309,5 +423,17 @@ export function assertLiveAllowed(cfg: RuntimeConfig): void {
   if (cfg.dryRun) return;
   if (!cfg.liveConfirm) {
     throw new Error("拒绝实盘：需要 LIVE_CONFIRM=YES（且 DRY_RUN=0）");
+  }
+  if (!cfg.experiment.enabled) return;
+  const e = cfg.experiment;
+  const marginBudget = e.capitalUsd * e.marginFraction;
+  const planned = marginBudget * e.leverage;
+  if (marginBudget > 15 + 1e-9) {
+    throw new Error(`拒绝实盘：实验保证金预算 ${marginBudget}U > 15U`);
+  }
+  if (planned > e.maxGrossNotionalUsd + 1e-9) {
+    throw new Error(
+      `拒绝实盘：实验计划名义 ${planned}U > ${e.maxGrossNotionalUsd}U`
+    );
   }
 }

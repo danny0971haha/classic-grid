@@ -1,10 +1,27 @@
 import {
   anchorGrid,
   assertLiveAllowed,
+  formatExperimentBanner,
   gridFor,
   loadRuntimeConfig,
   type RuntimeConfig,
 } from "./config.js";
+import { runExperimentKillSwitch } from "./experimentKillSwitch.js";
+import {
+  acknowledgeHaltIfRequested,
+  combineDailyPnl,
+  emptyRiskState,
+  evaluateExperimentRisk,
+  filterRiskIncreasingIntents,
+  loadRiskState,
+  persistRiskState,
+  type ExperimentRiskState,
+} from "./experimentRisk.js";
+import {
+  createExperimentTelemetry,
+  type ExperimentEventName,
+} from "./experimentTelemetry.js";
+import { loadSoftResumeAnchors } from "./softResume.js";
 import {
   setDashboardMeta,
   setDashboardOfficial,
@@ -24,7 +41,7 @@ import {
 import { loadVenueSessionCounters } from "./ledger.js";
 import { getOfficialCache, refreshOfficialStats } from "./officialStats.js";
 import { createExecutor, type VenueExecutor } from "./venues/index.js";
-import type { GridParams, Side, VenueId } from "./types.js";
+import type { GridParams, Side, VenueId, VenueSnapshot } from "./types.js";
 import {
   classifyTrade,
   tgBoot,
@@ -34,12 +51,85 @@ import {
   isSoftPlaceError,
   tgOpen,
 } from "./telegram.js";
-import { loadEnv } from "./loadEnv.js";
-import fs from "node:fs";
-import path from "node:path";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): void {
+  experimentTelemetry?.emit(event, fields as never);
+}
+
+async function applyExperimentGuards(p: {
+  rt: VenueRuntime;
+  market: string;
+  cfg: RuntimeConfig;
+  snap: VenueSnapshot;
+}): Promise<"halt" | "reduce" | "ok"> {
+  const { rt, market, cfg, snap } = p;
+  const g = rt.params;
+  if (!cfg.experiment.enabled || !g) return "ok";
+  const off = getOfficialCache()?.venues?.[rt.ex.id];
+  const planned = g.equityUsd * g.marginFraction * g.leverage;
+  const { decision, next } = evaluateExperimentRisk(
+    {
+      mid: snap.mid,
+      equityUsd: snap.equityUsd ?? null,
+      dailyPnlUsd: combineDailyPnl({
+        realizedPnlUsd: off?.realizedPnl,
+        feesUsd: off?.fees,
+      }),
+      positionQty: snap.position,
+      positionNotionalUsd: Math.abs(snap.position) * snap.mid,
+      plannedGrossNotionalUsd: planned,
+      gridLower: g.lower,
+      gridUpper: g.upper,
+    },
+    {
+      maxGrossNotionalUsd: cfg.experiment.maxGrossNotionalUsd,
+      dailyLossUsd: cfg.experiment.dailyLossUsd,
+      maxDrawdownUsd: cfg.experiment.maxDrawdownUsd,
+      boundaryBufferPct: cfg.experiment.boundaryBufferPct,
+    },
+    experimentRiskState
+  );
+  experimentRiskState = next;
+  persistRiskState(cfg.experiment.id, experimentRiskState);
+  emitExp("SNAPSHOT", {
+    venue: rt.ex.id,
+    symbol: market,
+    mid: snap.mid,
+    anchor: rt.anchorMid,
+    grid_lower: g.lower,
+    grid_upper: g.upper,
+    leverage: g.leverage,
+    position_qty: snap.position,
+    position_notional_usd: Math.abs(snap.position) * snap.mid,
+    planned_gross_notional_usd: planned,
+    equity_usd: snap.equityUsd ?? null,
+    open_order_count: snap.openOrders.length,
+    unrealized_pnl_usd: snap.unrealizedPnl ?? null,
+    realized_pnl_usd: off?.realizedPnl ?? null,
+    fee_usd: off?.fees ?? null,
+    risk_flags: decision.reasons,
+    restart_count: experimentRestartCount,
+  });
+  if (decision.halt) {
+    console.warn(
+      `[${rt.ex.id}] RISK HALT ${decision.reasons.join(",")} — cancelAll → closePosition`
+    );
+    await runExperimentKillSwitch({
+      ex: rt.ex,
+      market,
+      reasons: decision.reasons,
+      experimentId: cfg.experiment.id,
+      onEvent: (event, fields) => emitExp(event, { venue: rt.ex.id, ...fields }),
+    });
+    experimentRiskState = loadRiskState(cfg.experiment.id);
+    return "halt";
+  }
+  if (decision.reduceOnly) return "reduce";
+  return "ok";
 }
 
 /** 读侧瞬时网络/SDK 抖动：不标面板异常、不刷仓位归零 */
@@ -49,40 +139,12 @@ function isTransientReadError(msg: string): boolean {
   );
 }
 
-/** 软启：从 data/status.json 恢复锚点，避免重锚导致误撤现有挂单 */
-function loadSoftResumeAnchors(): Partial<
-  Record<VenueId, { anchorMid: number; gridCount: number }>
-> {
-  loadEnv();
-  if (!["1", "true", "yes", "YES"].includes(String(process.env.SOFT_RESUME || "").trim())) {
-    return {};
-  }
-  try {
-    const p = path.resolve(process.cwd(), "data", "status.json");
-    if (!fs.existsSync(p)) return {};
-    const j = JSON.parse(fs.readFileSync(p, "utf8"));
-    const out: Partial<Record<VenueId, { anchorMid: number; gridCount: number }>> = {};
-    for (const v of j.venues || []) {
-      const id = String(v.venue) as VenueId;
-      const mid = Number(v.anchorMid);
-      const gc = Number(v.gridCount);
-      if (mid > 0 && gc > 0) out[id] = { anchorMid: mid, gridCount: gc };
-    }
-    console.log(
-      `[soft-resume] loaded anchors: ${Object.entries(out)
-        .map(([k, v]) => `${k}=${v!.anchorMid.toFixed(1)}`)
-        .join(", ") || "(none)"}`
-    );
-    return out;
-  } catch (e: any) {
-    console.warn(`[soft-resume] load failed: ${String(e?.message || e).slice(0, 120)}`);
-    return {};
-  }
-}
-
 let softResumeAnchors: Partial<
   Record<VenueId, { anchorMid: number; gridCount: number }>
 > = {};
+let experimentTelemetry: ReturnType<typeof createExperimentTelemetry> | null = null;
+let experimentRiskState: ExperimentRiskState = emptyRiskState();
+let experimentRestartCount = 0;
 
 type Tracked = { levelIndex: number; side: Side; price: number; size: number };
 
@@ -179,6 +241,14 @@ async function ensureAnchored(
   console.log(`[${rt.ex.id}] margin: ${margin.message}`);
   if (!fee.ok) throw new Error(`[${rt.ex.id}] ${fee.message}`);
   if (!margin.ok) throw new Error(`[${rt.ex.id}] ${margin.message}`);
+  if (
+    cfg.experiment.enabled &&
+    risk.notional > cfg.experiment.maxGrossNotionalUsd + 1e-6
+  ) {
+    throw new Error(
+      `[${rt.ex.id}] planned notional ${risk.notional}U > ${cfg.experiment.maxGrossNotionalUsd}U`
+    );
+  }
 
   rt.built = built;
   rt.params = anchored;
@@ -266,6 +336,39 @@ async function tickOne(
       ? Number(snap.unrealizedPnl)
       : null;
   rt.unrealizedPnl = upnlOfficial ?? 0;
+  const guard = await applyExperimentGuards({ rt, market, cfg, snap });
+  if (guard === "halt") {
+    const offHalt = getOfficialCache()?.venues?.[rt.ex.id];
+    upsertDashboardVenue({
+      venue: rt.ex.id,
+      market,
+      mid: snap.mid,
+      anchorMid: rt.anchorMid,
+      lower: g.lower,
+      upper: g.upper,
+      spacing: built.spacing,
+      sizeBase: g.sizeBase,
+      gridCount: g.gridCount,
+      position: snap.position,
+      openOrders: snap.openOrders.length,
+      seeded: rt.seeded,
+      completedRungs: rt.completedRungs,
+      gridProfit: Number(rt.gridProfit.toFixed(4)),
+      unrealizedPnl:
+        upnlOfficial != null ? Number(upnlOfficial.toFixed(4)) : undefined,
+      equityUsd:
+        snap.equityUsd != null && Number.isFinite(snap.equityUsd)
+          ? Number(snap.equityUsd.toFixed(4))
+          : undefined,
+      officialVolume: offHalt?.source === "official" ? offHalt.volume : null,
+      officialFees: offHalt?.source === "official" ? offHalt.fees : null,
+      officialRealizedPnl: offHalt?.source === "official" ? offHalt.realizedPnl : null,
+      officialSource: offHalt?.source === "official" ? "official" : "local",
+      lastError: `HALTED ${experimentRiskState.haltReasons.join(",")}`,
+      updatedAt: new Date().toISOString(),
+    });
+    return;
+  }
   const plan = planFromFillsAndSeed({
     market,
     mid,
@@ -280,6 +383,13 @@ async function tickOne(
     maxOpenOrders: g.maxOpenOrders,
     skipBand: g.skipBand,
   });
+  if (guard === "reduce") {
+    plan.intents = filterRiskIncreasingIntents(plan.intents, {
+      halt: false,
+      reduceOnly: true,
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+    });
+  }
 
   // TG / 完成格：按交易所真实仓位变化，不按「挂单 ID 消失」推断（撤补会误报吃格）
   {
@@ -328,7 +438,32 @@ async function tickOne(
 
   let applyErr: string | undefined;
   if (plan.intents.length) {
+    for (const intent of plan.intents) {
+      if (intent.type === "place") {
+        emitExp("ORDER_SUBMIT", {
+          venue: rt.ex.id,
+          symbol: market,
+          side: intent.order.side,
+          order_price: intent.order.price,
+          order_qty: intent.order.size,
+          grid_level: intent.order.level,
+        });
+      } else {
+        emitExp("CANCEL", {
+          venue: rt.ex.id,
+          symbol: market,
+          order_id: intent.orderId,
+        });
+      }
+    }
     const result = await rt.ex.apply(plan.intents);
+    if (result.placed) {
+      emitExp("ORDER_ACK", {
+        venue: rt.ex.id,
+        symbol: market,
+        open_order_count: snap.openOrders.length + result.placed - result.cancelled,
+      });
+    }
     if (result.failed || result.errors.length) {
       console.log(
         `[${rt.ex.id}] apply placed=${result.placed} cancelled=${result.cancelled} failed=${result.failed} ${result.errors.join("; ")}`
@@ -338,7 +473,22 @@ async function tickOne(
       void tgError(rt.ex.id, raw);
       // 穿价/post-only 类：不提醒也不挂看板红字（下轮会重试）
       if (!isSoftPlaceError(rt.ex.id, raw)) applyErr = raw;
+      emitExp("ERROR", {
+        venue: rt.ex.id,
+        symbol: market,
+        error_message: raw,
+        error_code: "APPLY_FAILED",
+      });
     }
+  }
+  for (const f of plan.filled) {
+    emitExp("FILL", {
+      venue: rt.ex.id,
+      symbol: market,
+      side: f.side,
+      order_price: f.price,
+      grid_level: f.levelIndex,
+    });
   }
 
   rt.active = plan.nextActive;
@@ -383,7 +533,44 @@ async function tickOne(
 export async function runLoop(opts?: { once?: boolean }): Promise<void> {
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
+  if (cfg.experiment.enabled) {
+    if (process.env.SOFT_RESUME == null || String(process.env.SOFT_RESUME).trim() === "") {
+      process.env.SOFT_RESUME = "1";
+    }
+    console.log(formatExperimentBanner(cfg));
+    experimentTelemetry = createExperimentTelemetry({
+      experimentId: cfg.experiment.id,
+      mode: cfg.dryRun ? "dry-run" : "live",
+      venue: cfg.venues[0] || "extended",
+      symbol: cfg.markets[0] || "BTC",
+      manifestFields: {
+        experiment_spec_version: cfg.experiment.specVersion,
+        starting_capital_usd: cfg.experiment.capitalUsd,
+        leverage: cfg.experiment.leverage,
+        max_margin_budget_usd: cfg.experiment.capitalUsd * cfg.experiment.marginFraction,
+        max_planned_gross_notional_usd: cfg.experiment.maxGrossNotionalUsd,
+        grid_half_band_pct: Number((cfg.experiment.halfBandPct * 100).toFixed(6)),
+        grid_level_count: cfg.experiment.gridCount,
+        daily_loss_limit_usd: cfg.experiment.dailyLossUsd,
+        max_drawdown_usd: cfg.experiment.maxDrawdownUsd,
+        boundary_buffer_pct: Number((cfg.experiment.boundaryBufferPct * 100).toFixed(6)),
+      },
+    });
+    experimentRiskState = acknowledgeHaltIfRequested(
+      cfg.experiment.id,
+      loadRiskState(cfg.experiment.id)
+    );
+    if (experimentRiskState.halted) {
+      console.warn(
+        `[experiment] HALTED persisted reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=YES to resume`
+      );
+    }
+  }
   softResumeAnchors = loadSoftResumeAnchors();
+  if (cfg.experiment.enabled && Object.keys(softResumeAnchors).length) {
+    experimentRestartCount = 1;
+    emitExp("RESTART", { restart_count: experimentRestartCount, risk_flags: ["SOFT_RESUME"] });
+  }
   loadBotPauseState();
   if (isBotPaused()) {
     console.warn("[bot-control] starting in PAUSED mode（data/bot-paused.json）");
@@ -566,6 +753,11 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
             await rt.ex.connect();
             console.log(`[${rt.ex.id}] reconnected`);
             rt.lastError = undefined;
+            emitExp("RESTART", {
+              venue: rt.ex.id,
+              reconnect_count: 1,
+              risk_flags: ["RECONNECT"],
+            });
           }
           await tickOne(rt, market, cfg);
         } catch (e: any) {
@@ -574,6 +766,12 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
           console.error(
             `[${rt.ex.id}] tick failed${transient ? " (transient)" : ""}: ${msg}`
           );
+          emitExp("ERROR", {
+            venue: rt.ex.id,
+            symbol: market,
+            error_message: msg,
+            error_code: transient ? "TICK_TRANSIENT" : "TICK_FAILED",
+          });
           // 瞬时读失败：保留上次看板，不标异常、不把仓位/挂单刷成 0（绝不因此撤单）
           if (!transient) {
             rt.lastError = msg;

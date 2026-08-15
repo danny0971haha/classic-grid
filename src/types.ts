@@ -17,6 +17,8 @@ export type GridParams = {
   upper: number;
   /** 半幅（USD），默认 3000 → 总宽 6000 */
   halfBand: number;
+  /** 实验模式：以锚点百分比计算半幅（例如 0.03 = ±3%） */
+  halfBandPct?: number;
   /** 格子数（价格线 = gridCount+1）；上下各 gridCount/2 */
   gridCount: number;
   sizeBase: number;

@@ -1,3 +1,4 @@
+import { readExperimentLeverage } from "../config.js";
 import type { Intent, VenueSnapshot } from "../types.js";
 import { DecibelLive } from "./decibelLive.js";
 import { dryApply, type ApplyResult, type VenueExecutor } from "./types.js";
@@ -20,7 +21,8 @@ export class DecibelExecutor implements VenueExecutor {
       try {
         await this.live.setLeverage(
           "BTC",
-          Number(process.env.DECIBEL_LEVERAGE || process.env.GRID_LEVERAGE || 30)
+          readExperimentLeverage() ??
+            Number(process.env.DECIBEL_LEVERAGE || process.env.GRID_LEVERAGE || 30)
         );
       } catch (e: any) {
         console.warn(
