@@ -426,6 +426,38 @@ export function assertLiveAllowed(cfg: RuntimeConfig): void {
   }
   if (!cfg.experiment.enabled) return;
   const e = cfg.experiment;
+  if (cfg.venues.length !== 1 || cfg.markets.length !== 1) {
+    throw new Error("拒绝实盘：v0.1 实验必须恰好 1 个 venue 与 1 个 market");
+  }
+  const frozen = [
+    ["capitalUsd", e.capitalUsd, 50],
+    ["leverage", e.leverage, 10],
+    ["marginFraction", e.marginFraction, 0.3],
+    ["gridCount", e.gridCount, 12],
+    ["halfBandPct", e.halfBandPct, 0.03],
+    ["maxGrossNotionalUsd", e.maxGrossNotionalUsd, 150],
+    ["dailyLossUsd", e.dailyLossUsd, 2.5],
+    ["maxDrawdownUsd", e.maxDrawdownUsd, 5],
+    ["boundaryBufferPct", e.boundaryBufferPct, 0.01],
+  ] as const;
+  for (const [name, actual, expected] of frozen) {
+    if (Math.abs(actual - expected) > 1e-9) {
+      throw new Error(`拒绝实盘：实验规格 ${name}=${actual}，冻结值必须为 ${expected}`);
+    }
+  }
+  const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || "").trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/.test(accountScope)) {
+    throw new Error("拒绝实盘：需要非敏感的 EXPERIMENT_ACCOUNT_SCOPE 绑定账户范围");
+  }
+  if (e.id !== "grid-ab-v0.1-classic-live") {
+    throw new Error("拒绝实盘：EXPERIMENT_ID 不在 v0.1 live allowlist");
+  }
+  if (cfg.venues[0] !== "extended" || cfg.markets[0] !== "BTC") {
+    throw new Error("拒绝实盘：v0.1 目前只开放已具备 ownership/leverage readback 的 extended:BTC");
+  }
+  if (process.env.GRID_SKIP_LEVERAGE === "1" || process.env.RISE_SKIP_LEVERAGE === "1") {
+    throw new Error("拒绝实盘：不得跳过杠杆设置与读回验证");
+  }
   const marginBudget = e.capitalUsd * e.marginFraction;
   const planned = marginBudget * e.leverage;
   if (marginBudget > 15 + 1e-9) {

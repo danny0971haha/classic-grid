@@ -396,6 +396,7 @@ export class ExtendedExchange extends EventEmitter {
     const { orderId, externalId, exchangeId } = await this._submitOrder(m, {
       side: o.side, qtyStr, priceStr, type: 'LIMIT', timeInForce: 'GTT',
       postOnly: o.postOnly ?? true, reduceOnly: !!o.reduceOnly,
+      externalId: o.externalId ?? null,
     });
     this._watch.add(m.marketId);
     this._tracked.set(orderId, {

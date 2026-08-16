@@ -1,12 +1,15 @@
+import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { assertSafeExperimentId, sha256Json } from "./experimentStorage.js";
 
 export type ExperimentMode = "dry-run" | "live";
 
 export type ExperimentManifest = {
   experiment_spec_version: string;
   experiment_id: string;
+  run_id: string;
   bot: "classic-grid" | "ritmex-bot";
   repo: string;
   commit_sha: string;
@@ -23,21 +26,21 @@ export type ExperimentManifest = {
   boundary_buffer_pct: number;
   venue: string;
   symbol: string;
+  scope_key: string;
+  lease_generation: string;
 };
 
 export type ExperimentEventName =
-  | "SNAPSHOT"
-  | "ORDER_SUBMIT"
-  | "ORDER_ACK"
-  | "FILL"
-  | "CANCEL"
-  | "RESTART"
-  | "ERROR"
-  | "RISK_HALT";
+  | "SNAPSHOT" | "ORDER_SUBMIT" | "ORDER_ACK" | "FILL" | "CANCEL"
+  | "RESTART" | "ERROR" | "RISK_HALT";
 
 export type ExperimentEvent = {
-  schema_version: "1.0";
+  schema_version: "2.0";
+  event_id: string;
+  run_id: string;
+  manifest_sha256: string;
   ts: string;
+  exchange_ts: string | null;
   experiment_id: string;
   bot: string;
   commit_sha: string;
@@ -45,6 +48,16 @@ export type ExperimentEvent = {
   venue: string;
   symbol: string;
   event: ExperimentEventName;
+  intent_id: string | null;
+  client_order_id: string | null;
+  exchange_order_id: string | null;
+  account_scope: string | null;
+  anchor_epoch: number | null;
+  lease_generation: string;
+  source: string;
+  order_status: string | null;
+  filled_qty: number | null;
+  remaining_qty: number | null;
   anchor: number | null;
   grid_lower: number | null;
   grid_upper: number | null;
@@ -60,7 +73,6 @@ export type ExperimentEvent = {
   margin_used_usd: number | null;
   open_order_count: number | null;
   order_id: string | null;
-  client_order_id: string | null;
   order_price: number | null;
   order_qty: number | null;
   fee_usd: number | null;
@@ -77,8 +89,6 @@ export type ExperimentEvent = {
   risk_flags: string[];
 };
 
-const SECRET_RE = /api[_-]?key|secret|private[_-]?key|token|authorization|password/i;
-
 export function readCommitSha(): string {
   if (process.env.COMMIT_SHA?.trim()) return process.env.COMMIT_SHA.trim();
   try {
@@ -86,14 +96,19 @@ export function readCommitSha(): string {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
     }).trim();
-  } catch {
-    return "unknown";
-  }
+  } catch { return "unknown"; }
 }
 
-function redact(value: unknown): unknown {
-  if (typeof value === "string" && SECRET_RE.test(value)) return "[redacted]";
-  return value;
+function nullableNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function safeCode(value: unknown): string | null {
+  if (value == null) return null;
+  const clean = String(value).toUpperCase().replace(/[^A-Z0-9_.:-]/g, "_").slice(0, 80);
+  return clean || null;
 }
 
 export function createExperimentTelemetry(opts: {
@@ -102,32 +117,45 @@ export function createExperimentTelemetry(opts: {
   mode: ExperimentMode;
   venue: string;
   symbol: string;
+  scopeKey?: string;
+  leaseGeneration?: string;
   commitSha?: string;
+  runId?: string;
   baseDir?: string;
   repo?: string;
-  manifestFields: Omit<
-    ExperimentManifest,
-    "experiment_id" | "bot" | "repo" | "commit_sha" | "started_at" | "mode" | "venue" | "symbol"
-  > &
+  manifestFields: Omit<ExperimentManifest,
+    "experiment_id" | "run_id" | "bot" | "repo" | "commit_sha" | "started_at" |
+    "mode" | "venue" | "symbol" | "scope_key" | "lease_generation"> &
     Partial<Pick<ExperimentManifest, "repo">>;
 }): {
   dir: string;
   manifestPath: string;
   eventsPath: string;
   manifest: ExperimentManifest;
-  emit: (event: ExperimentEventName, fields?: Partial<ExperimentEvent>) => void;
+  manifestSha256: string;
+  droppedEvents: () => number;
+  emit: (event: ExperimentEventName, fields?: Partial<ExperimentEvent>) => boolean;
 } {
+  const experimentId = assertSafeExperimentId(opts.experimentId);
   const commitSha = opts.commitSha || readCommitSha();
+  if (opts.mode === "live" && !/^[0-9a-f]{40}$/i.test(commitSha)) {
+    throw new Error("live experiment requires a full git commit sha");
+  }
+  const runId = opts.runId || `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID()}`;
   const dir = path.join(
     opts.baseDir || path.resolve(process.cwd(), "data", "experiments"),
-    opts.experimentId
+    experimentId,
+    "runs",
+    assertSafeExperimentId(runId)
   );
-  fs.mkdirSync(dir, { recursive: true });
+  fs.mkdirSync(path.dirname(dir), { recursive: true });
+  fs.mkdirSync(dir, { recursive: false, mode: 0o700 });
   const manifest: ExperimentManifest = {
     experiment_spec_version: opts.manifestFields.experiment_spec_version,
-    experiment_id: opts.experimentId,
+    experiment_id: experimentId,
+    run_id: runId,
     bot: opts.bot || "classic-grid",
-    repo: opts.manifestFields.repo || opts.repo || "https://github.com/beibei030/classic-grid",
+    repo: opts.manifestFields.repo || opts.repo || "https://github.com/danny0971haha/classic-grid",
     commit_sha: commitSha,
     started_at: new Date().toISOString(),
     mode: opts.mode,
@@ -142,57 +170,73 @@ export function createExperimentTelemetry(opts: {
     boundary_buffer_pct: opts.manifestFields.boundary_buffer_pct,
     venue: opts.venue,
     symbol: opts.symbol,
+    scope_key: opts.scopeKey || `${opts.venue}:${opts.symbol}`,
+    lease_generation: opts.leaseGeneration || "dry-run-no-lease",
   };
   const manifestPath = path.join(dir, "manifest.json");
   const eventsPath = path.join(dir, "events.jsonl");
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
-  if (!fs.existsSync(eventsPath)) fs.writeFileSync(eventsPath, "", "utf8");
+  const manifestText = `${JSON.stringify(manifest, null, 2)}\n`;
+  fs.writeFileSync(manifestPath, manifestText, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  fs.writeFileSync(eventsPath, "", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  const manifestSha256 = sha256Json(manifest);
+  let dropped = 0;
 
-  const emit = (event: ExperimentEventName, fields: Partial<ExperimentEvent> = {}): void => {
-    const row: ExperimentEvent = {
-      schema_version: "1.0",
-      ts: new Date().toISOString(),
-      experiment_id: opts.experimentId,
-      bot: opts.bot || "classic-grid",
-      commit_sha: commitSha,
-      mode: opts.mode,
-      venue: fields.venue ?? opts.venue,
-      symbol: fields.symbol ?? opts.symbol,
-      event,
-      anchor: fields.anchor ?? null,
-      grid_lower: fields.grid_lower ?? null,
-      grid_upper: fields.grid_upper ?? null,
-      grid_level: fields.grid_level ?? null,
-      side: fields.side ?? null,
-      mid: fields.mid ?? null,
-      equity_usd: fields.equity_usd ?? null,
-      free_margin_usd: fields.free_margin_usd ?? null,
-      leverage: fields.leverage ?? null,
-      position_qty: fields.position_qty ?? null,
-      position_notional_usd: fields.position_notional_usd ?? null,
-      planned_gross_notional_usd: fields.planned_gross_notional_usd ?? null,
-      margin_used_usd: fields.margin_used_usd ?? null,
-      open_order_count: fields.open_order_count ?? null,
-      order_id: fields.order_id ?? null,
-      client_order_id: fields.client_order_id ?? null,
-      order_price: fields.order_price ?? null,
-      order_qty: fields.order_qty ?? null,
-      fee_usd: fields.fee_usd ?? null,
-      funding_usd: fields.funding_usd ?? null,
-      realized_pnl_usd: fields.realized_pnl_usd ?? null,
-      unrealized_pnl_usd: fields.unrealized_pnl_usd ?? null,
-      net_pnl_usd: fields.net_pnl_usd ?? null,
-      grid_profit_estimate_usd: fields.grid_profit_estimate_usd ?? null,
-      api_latency_ms: fields.api_latency_ms ?? null,
-      error_code: fields.error_code ?? null,
-      error_message:
-        fields.error_message != null ? String(redact(fields.error_message)) : null,
-      restart_count: fields.restart_count ?? 0,
-      reconnect_count: fields.reconnect_count ?? 0,
-      risk_flags: Array.isArray(fields.risk_flags) ? fields.risk_flags.map(String) : [],
-    };
-    fs.appendFileSync(eventsPath, JSON.stringify(row) + "\n", "utf8");
+  const emit = (event: ExperimentEventName, fields: Partial<ExperimentEvent> = {}): boolean => {
+    try {
+      const row: ExperimentEvent = {
+        schema_version: "2.0",
+        event_id: crypto.randomUUID(),
+        run_id: runId,
+        manifest_sha256: manifestSha256,
+        ts: new Date().toISOString(),
+        exchange_ts: fields.exchange_ts ? String(fields.exchange_ts) : null,
+        experiment_id: experimentId,
+        bot: opts.bot || "classic-grid",
+        commit_sha: commitSha,
+        mode: opts.mode,
+        venue: String(fields.venue ?? opts.venue),
+        symbol: String(fields.symbol ?? opts.symbol),
+        event,
+        intent_id: fields.intent_id ? String(fields.intent_id) : null,
+        client_order_id: fields.client_order_id ? String(fields.client_order_id) : null,
+        exchange_order_id: fields.exchange_order_id ? String(fields.exchange_order_id) : null,
+        account_scope: fields.account_scope ? String(fields.account_scope) : null,
+        anchor_epoch: nullableNumber(fields.anchor_epoch),
+        lease_generation: opts.leaseGeneration || "dry-run-no-lease",
+        source: String(fields.source || "classic-grid"),
+        order_status: safeCode(fields.order_status),
+        filled_qty: nullableNumber(fields.filled_qty),
+        remaining_qty: nullableNumber(fields.remaining_qty),
+        anchor: nullableNumber(fields.anchor), grid_lower: nullableNumber(fields.grid_lower), grid_upper: nullableNumber(fields.grid_upper),
+        grid_level: nullableNumber(fields.grid_level), side: fields.side ? String(fields.side) : null,
+        mid: nullableNumber(fields.mid), equity_usd: nullableNumber(fields.equity_usd), free_margin_usd: nullableNumber(fields.free_margin_usd),
+        leverage: nullableNumber(fields.leverage), position_qty: nullableNumber(fields.position_qty), position_notional_usd: nullableNumber(fields.position_notional_usd),
+        planned_gross_notional_usd: nullableNumber(fields.planned_gross_notional_usd), margin_used_usd: nullableNumber(fields.margin_used_usd),
+        open_order_count: nullableNumber(fields.open_order_count), order_id: fields.order_id ? String(fields.order_id) : null,
+        order_price: nullableNumber(fields.order_price), order_qty: nullableNumber(fields.order_qty), fee_usd: nullableNumber(fields.fee_usd),
+        funding_usd: nullableNumber(fields.funding_usd), realized_pnl_usd: nullableNumber(fields.realized_pnl_usd),
+        unrealized_pnl_usd: nullableNumber(fields.unrealized_pnl_usd), net_pnl_usd: nullableNumber(fields.net_pnl_usd),
+        grid_profit_estimate_usd: nullableNumber(fields.grid_profit_estimate_usd), api_latency_ms: nullableNumber(fields.api_latency_ms),
+        error_code: safeCode(fields.error_code),
+        // Free-form remote errors can contain credentials. Exact diagnostics remain only in local logs.
+        error_message: fields.error_message == null ? null : "diagnostic omitted; see local logs",
+        restart_count: nullableNumber(fields.restart_count) ?? 0,
+        reconnect_count: nullableNumber(fields.reconnect_count) ?? 0,
+        risk_flags: Array.isArray(fields.risk_flags) ? fields.risk_flags.map(safeCode).filter((x): x is string => Boolean(x)) : [],
+      };
+      const fd = fs.openSync(eventsPath, "a", 0o600);
+      try {
+        fs.writeFileSync(fd, `${JSON.stringify(row)}\n`, "utf8");
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
+      return true;
+    } catch {
+      dropped += 1;
+      return false;
+    }
   };
 
-  return { dir, manifestPath, eventsPath, manifest, emit };
+  return { dir, manifestPath, eventsPath, manifest, manifestSha256, droppedEvents: () => dropped, emit };
 }

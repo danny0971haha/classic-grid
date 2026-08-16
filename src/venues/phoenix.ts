@@ -337,8 +337,8 @@ export class PhoenixExecutor implements VenueExecutor {
           if (!parsed) throw new Error(`无法解析 orderId=${intent.orderId}`);
           const symbol = await this.resolveSymbol(intent.market);
           const ix = await client.ixs.buildCancelOrdersById({
-            authority,
-            symbol,
+            authority: authority as any,
+            symbol: symbol as any,
             orders: [
               {
                 price: parsed.priceTicks,
@@ -387,8 +387,8 @@ export class PhoenixExecutor implements VenueExecutor {
           });
           // 只走 post-only；穿价已在上面跳过，勿 fallback 成可吃单的 limit
           const ix = await client.ixs.buildPlacePostOnlyOrder({
-            authority,
-            symbol,
+            authority: authority as any,
+            symbol: symbol as any,
             orderPacket: {
               side: limitPacket.side,
               priceInTicks: limitPacket.priceInTicks,
@@ -422,8 +422,8 @@ export class PhoenixExecutor implements VenueExecutor {
     const { client, authority } = this.ensureLive();
     const symbol = await this.resolveSymbol(market);
     const ix = await client.ixs.buildCancelAll({
-      authority,
-      symbol,
+      authority: authority as any,
+      symbol: symbol as any,
       traderPdaIndex: 0,
       traderSubaccountIndex: 0,
     });
@@ -457,8 +457,8 @@ export class PhoenixExecutor implements VenueExecutor {
     });
     (packet as any).orderFlags = OrderFlags.ReduceOnly;
     const ix = await client.ixs.buildPlaceMarketOrder({
-      authority,
-      symbol,
+      authority: authority as any,
+      symbol: symbol as any,
       orderPacket: packet,
       traderPdaIndex: 0,
       traderSubaccountIndex: 0,

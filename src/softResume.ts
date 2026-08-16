@@ -2,40 +2,83 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadEnv } from "./loadEnv.js";
 import type { VenueId } from "./types.js";
+import { assertSafeExperimentId, readChecksummedJson, writeChecksummedJson } from "./experimentStorage.js";
 
-export type SoftResumeAnchor = { anchorMid: number; gridCount: number };
+export type SoftResumeAnchor = { anchorMid: number; gridCount: number; anchorEpoch: number };
+type RecoveryCheckpoint = {
+  experimentId: string;
+  scopeKey: string;
+  leaseGeneration: string;
+  updatedAt: string;
+  anchors: Partial<Record<VenueId, SoftResumeAnchor>>;
+};
 
 function truthy(v: string | undefined): boolean {
-  return ["1", "true", "yes", "YES"].includes(String(v || "").trim());
+  return ["1", "true", "yes"].includes(String(v || "").trim().toLowerCase());
 }
 
-/** 软启：从 data/status.json 恢复锚点，避免重锚导致误撤现有挂单 */
-export function loadSoftResumeAnchors(
-  statusPath?: string
-): Partial<Record<VenueId, SoftResumeAnchor>> {
+function recoveryPath(experimentId: string, baseDir?: string): string {
+  return path.join(
+    baseDir || path.resolve(process.cwd(), "data", "experiments"),
+    assertSafeExperimentId(experimentId),
+    "recovery-checkpoint.json"
+  );
+}
+
+/** Load only the trading checkpoint. Dashboard status is intentionally not a recovery source. */
+export function loadSoftResumeAnchors(opts?: {
+  experimentId?: string;
+  scopeKey?: string;
+  baseDir?: string;
+  checkpointPath?: string;
+}): Partial<Record<VenueId, SoftResumeAnchor>> {
   loadEnv();
   if (!truthy(process.env.SOFT_RESUME)) return {};
+  const experimentId = opts?.experimentId || String(process.env.EXPERIMENT_ID || "").trim();
+  if (!experimentId) return {};
+  const p = opts?.checkpointPath || recoveryPath(experimentId, opts?.baseDir);
+  if (!fs.existsSync(p)) return {};
   try {
-    const p = statusPath || path.resolve(process.cwd(), "data", "status.json");
-    if (!fs.existsSync(p)) return {};
-    const j = JSON.parse(fs.readFileSync(p, "utf8"));
+    const checkpoint = readChecksummedJson<RecoveryCheckpoint>(p);
+    if (checkpoint.experimentId !== experimentId) throw new Error("checkpoint experiment mismatch");
+    if (opts?.scopeKey && checkpoint.scopeKey !== opts.scopeKey) throw new Error("checkpoint scope mismatch");
     const out: Partial<Record<VenueId, SoftResumeAnchor>> = {};
-    for (const v of j.venues || []) {
-      const id = String(v.venue) as VenueId;
-      const mid = Number(v.anchorMid);
-      const gc = Number(v.gridCount);
-      if (mid > 0 && gc > 0) out[id] = { anchorMid: mid, gridCount: gc };
+    for (const [venue, row] of Object.entries(checkpoint.anchors || {})) {
+      const mid = Number(row?.anchorMid);
+      const gridCount = Number(row?.gridCount);
+      const anchorEpoch = Number(row?.anchorEpoch);
+      if (mid > 0 && gridCount > 0 && anchorEpoch > 0) {
+        out[venue as VenueId] = { anchorMid: mid, gridCount, anchorEpoch };
+      }
     }
-    console.log(
-      `[soft-resume] loaded anchors: ${
-        Object.entries(out)
-          .map(([k, v]) => `${k}=${v!.anchorMid.toFixed(1)}`)
-          .join(", ") || "(none)"
-      }`
-    );
     return out;
-  } catch (e: any) {
-    console.warn(`[soft-resume] load failed: ${String(e?.message || e).slice(0, 120)}`);
-    return {};
+  } catch (error: any) {
+    throw new Error(`recovery checkpoint invalid: ${String(error?.message || error)}`);
   }
+}
+
+export function persistSoftResumeAnchor(p: {
+  experimentId: string;
+  scopeKey: string;
+  leaseGeneration: string;
+  venue: VenueId;
+  anchor: SoftResumeAnchor;
+  baseDir?: string;
+}): void {
+  const file = recoveryPath(p.experimentId, p.baseDir);
+  let anchors: Partial<Record<VenueId, SoftResumeAnchor>> = {};
+  if (fs.existsSync(file)) {
+    const previous = readChecksummedJson<RecoveryCheckpoint>(file);
+    if (previous.experimentId !== p.experimentId || previous.scopeKey !== p.scopeKey) {
+      throw new Error("refusing to overwrite a recovery checkpoint from another scope");
+    }
+    anchors = previous.anchors || {};
+  }
+  writeChecksummedJson(file, {
+    experimentId: p.experimentId,
+    scopeKey: p.scopeKey,
+    leaseGeneration: p.leaseGeneration,
+    updatedAt: new Date().toISOString(),
+    anchors: { ...anchors, [p.venue]: p.anchor },
+  } satisfies RecoveryCheckpoint);
 }

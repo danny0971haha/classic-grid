@@ -168,10 +168,28 @@ export function upsertDashboardVenue(row: DashboardVenueRow): void {
   persistStatus();
 }
 
-export function startDashboardServer(port: number): http.Server | null {
+export function startDashboardServer(
+  port: number,
+  opts: { allowMutations?: boolean; authToken?: string } = {}
+): http.Server | null {
   if (!(port > 0)) return null;
   const server = http.createServer((req, res) => {
     const url = req.url?.split("?")[0] || "/";
+    if (req.method === "POST") {
+      if (opts.allowMutations === false) {
+        res.writeHead(403, { "Content-Type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ ok: false, error: "dashboard mutations disabled" }));
+        return;
+      }
+      if (opts.authToken) {
+        const supplied = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+        if (supplied !== opts.authToken) {
+          res.writeHead(401, { "Content-Type": "application/json; charset=utf-8" });
+          res.end(JSON.stringify({ ok: false, error: "unauthorized" }));
+          return;
+        }
+      }
+    }
     if (url === "/api/snapshot" || url === "/api/status" || url === "/api/overview") {
       syncPauseIntoSnapshot();
       const body = {
@@ -187,7 +205,7 @@ export function startDashboardServer(port: number): http.Server | null {
     }
     if (url === "/api/meta") {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify({ authRequired: false, port }));
+      res.end(JSON.stringify({ authRequired: Boolean(opts.authToken), mutationsEnabled: opts.allowMutations !== false, port }));
       return;
     }
     if (
@@ -396,8 +414,8 @@ export function startDashboardServer(port: number): http.Server | null {
     res.writeHead(404, { "Content-Type": "text/plain" });
     res.end("not found");
   });
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`[dashboard] http://0.0.0.0:${port}/  api=/api/snapshot`);
+  server.listen(port, "127.0.0.1", () => {
+    console.log(`[dashboard] http://127.0.0.1:${port}/  api=/api/snapshot`);
   });
   server.on("error", (e: NodeJS.ErrnoException) => {
     console.error(`[dashboard] listen failed: ${e.message}`);

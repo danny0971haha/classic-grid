@@ -38,6 +38,7 @@ type ExtendedExchange = {
     price: number;
     sizeBase: number;
     postOnly?: boolean;
+    externalId?: string;
   }): Promise<{ orderId: string }>;
   cancelOrder(marketId: number, orderId: string): Promise<unknown>;
   cancelAll(marketId: number): Promise<unknown>;
@@ -54,6 +55,10 @@ function marketName(market: string): string {
 
 export class ExtendedExecutor implements VenueExecutor {
   readonly id = "extended" as const;
+  readonly experimentCapabilities = {
+    deterministicClientOrderId: true,
+    leverageReadback: true,
+  };
   private ex: ExtendedExchange | null = null;
   private equityCache: { at: number; value: number | undefined } = { at: 0, value: undefined };
   constructor(private dryRun: boolean) {}
@@ -173,7 +178,9 @@ export class ExtendedExecutor implements VenueExecutor {
         price: Number(o.price),
         size: Number(o.sizeBase),
         level: 0,
+        clientOrderId: o.externalId || String(o.externalId || "") || undefined,
       })),
+      observedAt: new Date().toISOString(),
       equityUsd,
       unrealizedPnl:
         upnl != null && Number.isFinite(Number(upnl)) ? Number(upnl) : undefined,
@@ -209,6 +216,7 @@ export class ExtendedExecutor implements VenueExecutor {
             price: intent.order.price,
             sizeBase: intent.order.size,
             postOnly: true,
+            externalId: intent.order.clientOrderId,
           });
           result.placed += 1;
           wrote += 1;
@@ -246,5 +254,13 @@ export class ExtendedExecutor implements VenueExecutor {
     }
     const ex = this.ensure();
     await ex.closePosition(this.marketId(market));
+  }
+
+  async verifyExperimentPreflight(market: string, leverage: number): Promise<void> {
+    if (this.dryRun) return;
+    const current = await this.ensure().getLeverage(this.marketId(market));
+    if (current == null || Math.abs(current - leverage) > 0.1) {
+      throw new Error(`Extended leverage readback ${current ?? "missing"} != ${leverage}`);
+    }
   }
 }

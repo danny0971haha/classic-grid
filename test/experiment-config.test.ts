@@ -122,6 +122,25 @@ describe("experiment config precedence", () => {
     );
   });
 
+  it("refuses multi-venue live experiments and any drift from the frozen envelope", () => {
+    withEnv(
+      { EXPERIMENT_MODE: "1", DRY_RUN: "0", LIVE_CONFIRM: "YES", VENUES: "extended,risex", MARKETS: "BTC" },
+      () => assert.throws(() => assertLiveAllowed(loadRuntimeConfig()), /恰好 1 个 venue/)
+    );
+    withEnv(
+      { EXPERIMENT_MODE: "1", DRY_RUN: "0", LIVE_CONFIRM: "YES", VENUES: "extended", MARKETS: "BTC", EXPERIMENT_LEVERAGE: "11" },
+      () => assert.throws(() => assertLiveAllowed(loadRuntimeConfig()), /冻结值/)
+    );
+    withEnv(
+      { EXPERIMENT_MODE: "1", DRY_RUN: "0", LIVE_CONFIRM: "YES", VENUES: "extended", MARKETS: "BTC", EXPERIMENT_ACCOUNT_SCOPE: "" },
+      () => assert.throws(() => assertLiveAllowed(loadRuntimeConfig()), /EXPERIMENT_ACCOUNT_SCOPE/)
+    );
+    withEnv(
+      { EXPERIMENT_MODE: "1", DRY_RUN: "0", LIVE_CONFIRM: "YES", VENUES: "extended", MARKETS: "BTC", EXPERIMENT_ACCOUNT_SCOPE: "research-1", EXPERIMENT_ID: "not-allowed" },
+      () => assert.throws(() => assertLiveAllowed(loadRuntimeConfig()), /allowlist/)
+    );
+  });
+
   it("prints the frozen experiment envelope", async () => {
     const { formatExperimentBanner } = await import("../src/config.js");
     const cfg = loadExperimentConfig();

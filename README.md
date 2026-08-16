@@ -33,7 +33,7 @@
 - 本地看板：总览 KPI、今日明细、各所状态、挂单档位横轴（看匀不匀）、日历盈亏
 - 官方量 / 费 / 平仓盈亏（节流拉取，避免内存爆）
 - Telegram：开/平简报、整点总览、异常去重（可选）
-- `SOFT_RESUME`：重启恢复锚点，避免误整表撤单
+- `SOFT_RESUME`：从实验 recovery checkpoint 恢复锚点；看板 `status.json` 不参与交易恢复
 - 紧急暂停 / 出入金记账（看板按钮 + API）
 
 ---
@@ -45,7 +45,7 @@
 | 难题 | 解法要点 |
 |------|----------|
 | 成交后网格断档 | 买→上邻卖 / 卖→下邻买，每 level 一单 |
-| 重启冲掉挂单 | `SOFT_RESUME` + 本地锚点，只补漏 |
+| 重启冲掉挂单 | checksum recovery checkpoint + 交易所对账 + 确定性 client order id |
 | 官方统计 OOM | 节流拉取 + 加大 Node 堆 |
 | 各所盈亏口径不一 | Ex 用已平仓 history；Rise/Dec 用 fill realized 等 |
 | 仓位名义差很多 | 净仓路径不同，先对满格名义再对净格数 |
@@ -81,6 +81,9 @@ cp .env.example .env
 - 各所的 API / 私钥 / keypair 路径（`secrets/*.key`、`secrets/*.json`，已在 `.gitignore`）
 - 默认 `DRY_RUN=1`（模拟，只读看板，不下单）
 - 实盘必须**同时**满足：`DRY_RUN=0` 且 `LIVE_CONFIRM=YES`
+- v0.1 实验实盘额外锁定：`EXPERIMENT_ID=grid-ab-v0.1-classic-live`、非敏感的
+  `EXPERIMENT_ACCOUNT_SCOPE`、且仅允许单一 `extended:BTC`；启动时仍会读回杠杆、
+  对账挂单 ownership，并在任一证据缺失时拒绝运行
 
 ### 3. 先空转一轮（强烈建议）
 

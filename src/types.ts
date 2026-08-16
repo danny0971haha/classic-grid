@@ -50,9 +50,17 @@ export type DesiredOrder = {
   price: number;
   size: number;
   level: number;
+  /** Deterministic ownership key used for crash reconciliation. */
+  clientOrderId?: string;
 };
 
-export type LiveOrder = DesiredOrder & { id: string };
+export type LiveOrder = DesiredOrder & {
+  id: string;
+  clientOrderId?: string;
+  exchangeOrderId?: string;
+  status?: string;
+  filledSize?: number;
+};
 
 export type VenueSnapshot = {
   venue: VenueId;
@@ -64,6 +72,10 @@ export type VenueSnapshot = {
   unrealizedPnl?: number;
   /** 账户权益（USD）；读不到则为 undefined */
   equityUsd?: number;
+  /** 官方爆仓价；读不到则省略 */
+  liquidationPrice?: number;
+  /** Snapshot completion time for freshness checks. */
+  observedAt?: string;
 };
 
 export type Intent =
@@ -75,6 +87,8 @@ export type ApplyResult = {
   cancelled: number;
   failed: number;
   errors: string[];
+  /** True when submit may have reached the venue but acknowledgement is unknown. */
+  ambiguous?: boolean;
 };
 
 export type ActiveOrder = {

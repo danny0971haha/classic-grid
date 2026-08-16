@@ -11,7 +11,7 @@
 ## 2. 重启别把挂单冲掉（SOFT_RESUME）
 
 **问题**：进程一重启若按最新 mid 重锚，会整表撤挂、重铺，仓位路径被打乱。  
-**做法**：`SOFT_RESUME=1` 时从本地 `data/status.json` 读回各所 `anchorMid`，视为已铺过，只补漏档。  
+**做法**：`SOFT_RESUME=1` 时只从带 checksum 的 `data/experiments/<id>/recovery-checkpoint.json` 读回锚点；`data/status.json` 仅供看板展示，禁止作为交易恢复来源。恢复前需核对 experiment/scope，并以交易所快照及确定性 client order id 重建活单。
 **注意**：`data/` 永不提交仓库。
 
 ## 3. 官方统计把内存打爆（OOM）

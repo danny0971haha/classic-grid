@@ -9,6 +9,7 @@ import {
   loadRiskState,
   type ExperimentRiskLimits,
   type RiskMarketInput,
+  worstCaseGrossNotionalUsd,
 } from "../src/experimentRisk.js";
 import { withEnv } from "./helpers/env.js";
 import fs from "node:fs";
@@ -126,6 +127,26 @@ describe("experiment risk guards", () => {
     assert.equal(ok.decision.halt, false);
   });
 
+  it("fails closed when live equity/PnL inputs are missing or stale", () => {
+    const missing = evaluateExperimentRisk(
+      input({ equityUsd: null, dailyPnlUsd: null, requireFreshInputs: true, snapshotAgeMs: 0, pnlAgeMs: 0 }),
+      LIMITS,
+      emptyRiskState()
+    );
+    assert.equal(missing.decision.halt, true);
+    assert.ok(missing.decision.reasons.includes("EQUITY_UNAVAILABLE"));
+    assert.ok(missing.decision.reasons.includes("DAILY_PNL_UNAVAILABLE"));
+
+    const stale = evaluateExperimentRisk(
+      input({ requireFreshInputs: true, snapshotAgeMs: 120_001, pnlAgeMs: 120_001 }),
+      LIMITS,
+      emptyRiskState()
+    );
+    assert.equal(stale.decision.halt, true);
+    assert.ok(stale.decision.reasons.includes("SNAPSHOT_STALE"));
+    assert.ok(stale.decision.reasons.includes("DAILY_PNL_STALE"));
+  });
+
   it("keeps HALTED once set and strips risk-increasing intents", () => {
     const halted = evaluateExperimentRisk(
       input({ dailyPnlUsd: -3 }),
@@ -145,12 +166,14 @@ describe("experiment risk guards", () => {
     assert.equal(filtered[0]?.type, "cancel");
   });
 
-  it("requires EXPERIMENT_HALT_ACK=YES before clearing persisted HALTED", () => {
+  it("requires the unique halt id and consumes it before clearing persisted HALTED", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-ack-"));
     const id = "classic-dryrun-001";
     const halted = {
       ...emptyRiskState(),
       halted: true,
+      haltStatus: "HALTED_FLAT" as const,
+      haltId: "halt-unique-123",
       haltReasons: ["DAILY_LOSS"],
     };
     persistRiskState(id, halted, dir);
@@ -158,10 +181,53 @@ describe("experiment risk guards", () => {
       acknowledgeHaltIfRequested(id, loadRiskState(id, dir), dir)
     );
     assert.equal(still.halted, true);
-    const cleared = withEnv({ EXPERIMENT_HALT_ACK: "YES" }, () =>
+    const staticYes = withEnv({ EXPERIMENT_HALT_ACK: "YES" }, () =>
+      acknowledgeHaltIfRequested(id, loadRiskState(id, dir), dir)
+    );
+    assert.equal(staticYes.halted, true);
+    const cleared = withEnv({ EXPERIMENT_HALT_ACK: "halt-unique-123" }, () =>
       acknowledgeHaltIfRequested(id, loadRiskState(id, dir), dir)
     );
     assert.equal(cleared.halted, false);
     assert.equal(cleared.acknowledged, true);
+  });
+
+  it("fails closed on corrupt durable state", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-corrupt-"));
+    const id = "classic-corrupt-001";
+    fs.mkdirSync(path.join(dir, id), { recursive: true });
+    fs.writeFileSync(path.join(dir, id, "risk-state.json"), "{broken", "utf8");
+    const state = loadRiskState(id, dir, "extended:BTC");
+    assert.equal(state.halted, true);
+    assert.equal(state.haltStatus, "HALT_FAILED");
+    assert.ok(state.haltReasons.includes("RISK_STATE_CORRUPT"));
+  });
+
+  it("uses a verified backup only as evidence and still halts on primary corruption", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-corrupt-backup-"));
+    const id = "classic-corrupt-backup-001";
+    persistRiskState(id, emptyRiskState("extended:BTC"), dir);
+    persistRiskState(id, { ...emptyRiskState("extended:BTC"), updatedAt: new Date().toISOString() }, dir);
+    fs.writeFileSync(path.join(dir, id, "risk-state.json"), "bad", "utf8");
+    const state = loadRiskState(id, dir, "extended:BTC");
+    assert.equal(state.halted, true);
+    assert.equal(state.haltStatus, "HALT_FAILED");
+    assert.ok(state.haltReasons.includes("RISK_STATE_PRIMARY_CORRUPT"));
+  });
+
+  it("reserves current position, live orders, and proposed orders in worst-case direction", () => {
+    const notional = worstCaseGrossNotionalUsd({
+      positionQty: 0.0005,
+      mid: 100_000,
+      openOrders: [
+        { id: "b1", market: "BTC", side: "buy", price: 99_000, size: 0.0005, level: 1 },
+        { id: "s1", market: "BTC", side: "sell", price: 101_000, size: 0.00025, level: 2 },
+      ],
+      intents: [
+        { type: "cancel", orderId: "b1", market: "BTC" },
+        { type: "place", order: { market: "BTC", side: "buy", price: 98_000, size: 0.0005, level: 0 } },
+      ],
+    });
+    assert.equal(notional, 150);
   });
 });

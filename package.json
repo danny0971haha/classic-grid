@@ -9,7 +9,9 @@
     "status": "node --import tsx src/cli/status.ts",
     "flat": "node --import tsx src/cli/flat.ts",
     "dashboard": "node --import tsx src/cli/dashboard.ts",
-    "test": "node --import tsx test/grid.test.ts && node --import tsx --test test/experiment-config.test.ts test/experiment-risk.test.ts test/experiment-telemetry.test.ts test/experiment-killswitch.test.ts test/experiment-resume.test.ts"
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx test/grid.test.ts && node --import tsx --test test/experiment-config.test.ts test/experiment-risk.test.ts test/experiment-telemetry.test.ts test/experiment-killswitch.test.ts test/experiment-resume.test.ts test/experiment-storage.test.ts",
+    "check": "npm run typecheck && npm test"
   },
   "engines": {
     "node": ">=20"

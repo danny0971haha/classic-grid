@@ -9,6 +9,12 @@ export type VenueExecutor = {
   cancelAll(market: string): Promise<void>;
   /** 尽力市价/IOC 减仓清仓；无仓则 no-op */
   closePosition(market: string): Promise<void>;
+  /** Live experiment must refuse venues without both capabilities. */
+  experimentCapabilities?: {
+    deterministicClientOrderId: boolean;
+    leverageReadback: boolean;
+  };
+  verifyExperimentPreflight?(market: string, leverage: number): Promise<void>;
 };
 
 export function dryApply(venue: VenueId, intents: Intent[]): ApplyResult {
@@ -17,3 +23,5 @@ export function dryApply(venue: VenueId, intents: Intent[]): ApplyResult {
   console.log(`[${venue}:dry] apply place=${placed} cancel=${cancelled}`);
   return { placed, cancelled, failed: 0, errors: [] };
 }
+
+export type { ApplyResult } from "../types.js";

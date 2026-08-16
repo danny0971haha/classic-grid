@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { loadSoftResumeAnchors } from "../src/softResume.js";
+import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "../src/softResume.js";
 import { buildGrid, planFromFillsAndSeed, seedOrders } from "../src/grid.js";
 import { anchorGrid, loadRuntimeConfig } from "../src/config.js";
 import { withEnv } from "./helpers/env.js";
@@ -11,16 +11,20 @@ import { withEnv } from "./helpers/env.js";
 describe("soft-resume regression", () => {
   it("preserves saved anchor and does not duplicate logical grid orders", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-resume-"));
-    const statusPath = path.join(dir, "status.json");
-    fs.writeFileSync(
-      statusPath,
-      JSON.stringify({
-        venues: [{ venue: "extended", anchorMid: 100_000, gridCount: 80 }],
-      }),
-      "utf8"
-    );
+    persistSoftResumeAnchor({
+      experimentId: "classic-dryrun-001",
+      scopeKey: "extended:BTC",
+      leaseGeneration: "test-lease",
+      venue: "extended",
+      anchor: { anchorMid: 100_000, gridCount: 12, anchorEpoch: 1234 },
+      baseDir: dir,
+    });
 
-    const anchors = withEnv({ SOFT_RESUME: "1" }, () => loadSoftResumeAnchors(statusPath));
+    const anchors = withEnv({ SOFT_RESUME: "1" }, () => loadSoftResumeAnchors({
+      experimentId: "classic-dryrun-001",
+      scopeKey: "extended:BTC",
+      baseDir: dir,
+    }));
     assert.equal(anchors.extended?.anchorMid, 100_000);
 
     const cfg = withEnv(

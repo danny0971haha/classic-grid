@@ -13,6 +13,8 @@ import {
   emptyRiskState,
   evaluateExperimentRisk,
   filterRiskIncreasingIntents,
+  worstCaseGrossNotionalUsd,
+  experimentDir,
   loadRiskState,
   persistRiskState,
   type ExperimentRiskState,
@@ -21,7 +23,8 @@ import {
   createExperimentTelemetry,
   type ExperimentEventName,
 } from "./experimentTelemetry.js";
-import { loadSoftResumeAnchors } from "./softResume.js";
+import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "./softResume.js";
+import { acquireExperimentLease, type ExperimentLease } from "./experimentStorage.js";
 import {
   setDashboardMeta,
   setDashboardOfficial,
@@ -57,7 +60,8 @@ function sleep(ms: number): Promise<void> {
 }
 
 function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): void {
-  experimentTelemetry?.emit(event, fields as never);
+  try { experimentTelemetry?.emit(event, fields as never); }
+  catch { /* telemetry is deliberately outside the trading control path */ }
 }
 
 async function applyExperimentGuards(p: {
@@ -70,7 +74,13 @@ async function applyExperimentGuards(p: {
   const g = rt.params;
   if (!cfg.experiment.enabled || !g) return "ok";
   const off = getOfficialCache()?.venues?.[rt.ex.id];
-  const planned = g.equityUsd * g.marginFraction * g.leverage;
+  const planned = worstCaseGrossNotionalUsd({
+    positionQty: snap.position,
+    mid: snap.mid,
+    openOrders: snap.openOrders,
+  });
+  const pnlUpdatedAt = off?.updatedAt ? Date.parse(off.updatedAt) : Number.NaN;
+  const snapUpdatedAt = snap.observedAt ? Date.parse(snap.observedAt) : Date.now();
   const { decision, next } = evaluateExperimentRisk(
     {
       mid: snap.mid,
@@ -84,6 +94,9 @@ async function applyExperimentGuards(p: {
       plannedGrossNotionalUsd: planned,
       gridLower: g.lower,
       gridUpper: g.upper,
+      requireFreshInputs: !cfg.dryRun,
+      snapshotAgeMs: Number.isFinite(snapUpdatedAt) ? Date.now() - snapUpdatedAt : null,
+      pnlAgeMs: Number.isFinite(pnlUpdatedAt) ? Date.now() - pnlUpdatedAt : null,
     },
     {
       maxGrossNotionalUsd: cfg.experiment.maxGrossNotionalUsd,
@@ -94,7 +107,19 @@ async function applyExperimentGuards(p: {
     experimentRiskState
   );
   experimentRiskState = next;
-  persistRiskState(cfg.experiment.id, experimentRiskState);
+  let persistenceFailed = false;
+  try {
+    persistRiskState(cfg.experiment.id, experimentRiskState);
+  } catch (error: any) {
+    persistenceFailed = true;
+    experimentRiskState = {
+      ...experimentRiskState,
+      halted: true,
+      haltStatus: "HALT_FAILED",
+      haltReasons: Array.from(new Set([...experimentRiskState.haltReasons, "RISK_STATE_PERSIST_FAILED"])),
+    };
+    console.error(`[experiment] risk-state persist failed: ${String(error?.message || error).slice(0, 160)}`);
+  }
   emitExp("SNAPSHOT", {
     venue: rt.ex.id,
     symbol: market,
@@ -114,18 +139,22 @@ async function applyExperimentGuards(p: {
     risk_flags: decision.reasons,
     restart_count: experimentRestartCount,
   });
-  if (decision.halt) {
+  if (decision.halt || persistenceFailed) {
+    const haltReasons = persistenceFailed
+      ? Array.from(new Set([...decision.reasons, "RISK_STATE_PERSIST_FAILED"]))
+      : decision.reasons;
     console.warn(
-      `[${rt.ex.id}] RISK HALT ${decision.reasons.join(",")} — cancelAll → closePosition`
+      `[${rt.ex.id}] RISK HALT ${haltReasons.join(",")} — cancelAll → closePosition`
     );
-    await runExperimentKillSwitch({
+    const kill = await runExperimentKillSwitch({
       ex: rt.ex,
       market,
-      reasons: decision.reasons,
+      reasons: haltReasons,
       experimentId: cfg.experiment.id,
+      scopeKey: experimentScopeKey,
       onEvent: (event, fields) => emitExp(event, { venue: rt.ex.id, ...fields }),
     });
-    experimentRiskState = loadRiskState(cfg.experiment.id);
+    experimentRiskState = kill.state;
     return "halt";
   }
   if (decision.reduceOnly) return "reduce";
@@ -140,11 +169,14 @@ function isTransientReadError(msg: string): boolean {
 }
 
 let softResumeAnchors: Partial<
-  Record<VenueId, { anchorMid: number; gridCount: number }>
+  Record<VenueId, { anchorMid: number; gridCount: number; anchorEpoch: number }>
 > = {};
 let experimentTelemetry: ReturnType<typeof createExperimentTelemetry> | null = null;
 let experimentRiskState: ExperimentRiskState = emptyRiskState();
 let experimentRestartCount = 0;
+let experimentScopeKey = "";
+let experimentLease: ExperimentLease | null = null;
+let experimentOwnershipPrefix = "";
 
 type Tracked = { levelIndex: number; side: Side; price: number; size: number };
 
@@ -157,12 +189,36 @@ type VenueRuntime = {
   built: BuiltGrid | null;
   params: GridParams | null;
   anchorMid: number;
+  anchorEpoch: number;
   lastError?: string;
   /** 本地 inventory：上一次仓位与成本名义 */
   lastPosition: number | null;
   invCost: number;
   unrealizedPnl: number;
 };
+
+async function verifyLiveExperimentExecutor(
+  rt: VenueRuntime,
+  cfg: RuntimeConfig
+): Promise<void> {
+  if (!cfg.experiment.enabled || cfg.dryRun) return;
+  const caps = rt.ex.experimentCapabilities;
+  if (!caps?.deterministicClientOrderId || !caps.leverageReadback || !rt.ex.verifyExperimentPreflight) {
+    throw new Error(`[${rt.ex.id}] venue lacks experiment ownership/leverage safety capabilities`);
+  }
+  const market = cfg.markets[0]!;
+  await rt.ex.verifyExperimentPreflight(market, cfg.experiment.leverage);
+  const recovery = await rt.ex.snapshot(market);
+  if (recovery.openOrders.length && !softResumeAnchors[rt.ex.id]) {
+    throw new Error(`[${rt.ex.id}] open orders exist but no valid recovery checkpoint was loaded`);
+  }
+  const unowned = recovery.openOrders.filter(
+    (o) => !String(o.clientOrderId || "").startsWith(experimentOwnershipPrefix)
+  );
+  if (unowned.length) {
+    throw new Error(`[${rt.ex.id}] reconciliation found ${unowned.length} unowned open orders`);
+  }
+}
 
 /** 用 mid 变动维护本地均价，估浮盈亏（所方无 entry 时兜底） */
 function syncInventory(rt: VenueRuntime, position: number, mid: number): number {
@@ -253,11 +309,21 @@ async function ensureAnchored(
   rt.built = built;
   rt.params = anchored;
   rt.anchorMid = midForAnchor;
+  rt.anchorEpoch = resume?.anchorEpoch || Date.now();
   // 软启：有旧锚点则视为已铺过，只补漏档、不整表重铺
   if (resume && resume.anchorMid > 0) {
     rt.seeded = true;
   }
   cfg.grids[rt.ex.id] = anchored;
+  if (cfg.experiment.enabled && experimentLease) {
+    persistSoftResumeAnchor({
+      experimentId: cfg.experiment.id,
+      scopeKey: experimentScopeKey,
+      leaseGeneration: experimentLease.generation,
+      venue: rt.ex.id,
+      anchor: { anchorMid: midForAnchor, gridCount: anchored.gridCount, anchorEpoch: rt.anchorEpoch },
+    });
+  }
   return { mid: snap.mid, snap };
 }
 
@@ -266,7 +332,7 @@ async function tickOne(
   market: string,
   cfg: RuntimeConfig
 ): Promise<void> {
-  // 紧急暂停：只读刷新看板，绝不 apply（不下单/不撤单/不补单）
+  // Pause suppresses strategy writes, but hard-risk evaluation and kill remain active.
   if (isBotPaused()) {
     if (!rt.params || !rt.built) {
       try {
@@ -278,6 +344,8 @@ async function tickOne(
       }
     }
     const snap = await rt.ex.snapshot(market);
+    const pausedGuard = await applyExperimentGuards({ rt, market, cfg, snap });
+    if (pausedGuard === "halt") return;
     syncInventory(rt, snap.position, snap.mid);
     const upnlOfficial =
       snap.unrealizedPnl != null && Number.isFinite(Number(snap.unrealizedPnl))
@@ -382,7 +450,31 @@ async function tickOne(
     seeded: rt.seeded,
     maxOpenOrders: g.maxOpenOrders,
     skipBand: g.skipBand,
+    ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,
+    anchorEpoch: rt.anchorEpoch,
   });
+  if (cfg.experiment.enabled) {
+    const worstAfterBatch = worstCaseGrossNotionalUsd({
+      positionQty: snap.position,
+      mid: snap.mid,
+      openOrders: snap.openOrders,
+      intents: plan.intents,
+    });
+    if (worstAfterBatch > cfg.experiment.maxGrossNotionalUsd + 1e-9) {
+      plan.intents = filterRiskIncreasingIntents(plan.intents, {
+        halt: false,
+        reduceOnly: true,
+        reasons: ["POST_BATCH_NOTIONAL_CAP"],
+      });
+      for (const order of snap.openOrders) {
+        if (plan.intents.length >= g.maxWritesPerTick) break;
+        if (!String(order.clientOrderId || "").startsWith(experimentOwnershipPrefix)) continue;
+        if (!plan.intents.some((i) => i.type === "cancel" && i.orderId === order.id)) {
+          plan.intents.push({ type: "cancel", orderId: order.id, market });
+        }
+      }
+    }
+  }
   if (guard === "reduce") {
     plan.intents = filterRiskIncreasingIntents(plan.intents, {
       halt: false,
@@ -437,6 +529,7 @@ async function tickOne(
   );
 
   let applyErr: string | undefined;
+  let applyReliable = true;
   if (plan.intents.length) {
     for (const intent of plan.intents) {
       if (intent.type === "place") {
@@ -447,6 +540,9 @@ async function tickOne(
           order_price: intent.order.price,
           order_qty: intent.order.size,
           grid_level: intent.order.level,
+          client_order_id: intent.order.clientOrderId,
+          intent_id: intent.order.clientOrderId,
+          anchor_epoch: rt.anchorEpoch,
         });
       } else {
         emitExp("CANCEL", {
@@ -464,7 +560,8 @@ async function tickOne(
         open_order_count: snap.openOrders.length + result.placed - result.cancelled,
       });
     }
-    if (result.failed || result.errors.length) {
+    if (result.failed || result.errors.length || result.ambiguous) {
+      applyReliable = false;
       console.log(
         `[${rt.ex.id}] apply placed=${result.placed} cancelled=${result.cancelled} failed=${result.failed} ${result.errors.join("; ")}`
       );
@@ -480,6 +577,11 @@ async function tickOne(
         error_code: "APPLY_FAILED",
       });
     }
+    if (result.failed || result.errors.length || result.ambiguous) {
+      // Do not advance local intent state after a partial/ambiguous apply. A fresh
+      // exchange read is required before the next planner pass.
+      try { await rt.ex.snapshot(market); } catch { /* next tick remains unseeded */ }
+    }
   }
   for (const f of plan.filled) {
     emitExp("FILL", {
@@ -491,8 +593,10 @@ async function tickOne(
     });
   }
 
-  rt.active = plan.nextActive;
-  rt.seeded = true;
+  if (applyReliable) {
+    rt.active = plan.nextActive;
+    rt.seeded = true;
+  }
   rt.lastError = applyErr;
 
   const off = getOfficialCache()?.venues?.[rt.ex.id];
@@ -533,16 +637,26 @@ async function tickOne(
 export async function runLoop(opts?: { once?: boolean }): Promise<void> {
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
+  const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.dryRun ? "dry-run" : "")).trim();
+  experimentScopeKey = `${accountScope}:${cfg.venues.join("+")}:${cfg.markets.join("+")}`;
+  experimentOwnershipPrefix = `cg:${cfg.experiment.id}:`;
   if (cfg.experiment.enabled) {
     if (process.env.SOFT_RESUME == null || String(process.env.SOFT_RESUME).trim() === "") {
       process.env.SOFT_RESUME = "1";
     }
     console.log(formatExperimentBanner(cfg));
-    experimentTelemetry = createExperimentTelemetry({
+    experimentLease = acquireExperimentLease({
+      experimentDir: experimentDir(cfg.experiment.id),
+      scopeKey: experimentScopeKey,
+    });
+    try {
+      experimentTelemetry = createExperimentTelemetry({
       experimentId: cfg.experiment.id,
       mode: cfg.dryRun ? "dry-run" : "live",
       venue: cfg.venues[0] || "extended",
       symbol: cfg.markets[0] || "BTC",
+      scopeKey: experimentScopeKey,
+      leaseGeneration: experimentLease.generation,
       manifestFields: {
         experiment_spec_version: cfg.experiment.specVersion,
         starting_capital_usd: cfg.experiment.capitalUsd,
@@ -555,18 +669,32 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
         max_drawdown_usd: cfg.experiment.maxDrawdownUsd,
         boundary_buffer_pct: Number((cfg.experiment.boundaryBufferPct * 100).toFixed(6)),
       },
-    });
-    experimentRiskState = acknowledgeHaltIfRequested(
+      });
+      experimentRiskState = acknowledgeHaltIfRequested(
       cfg.experiment.id,
-      loadRiskState(cfg.experiment.id)
+      loadRiskState(cfg.experiment.id, undefined, experimentScopeKey)
     );
-    if (experimentRiskState.halted) {
-      console.warn(
-        `[experiment] HALTED persisted reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=YES to resume`
-      );
+      experimentRiskState = {
+        ...experimentRiskState,
+        scopeKey: experimentScopeKey,
+        leaseGeneration: experimentLease.generation,
+      };
+      persistRiskState(cfg.experiment.id, experimentRiskState);
+      if (experimentRiskState.halted) {
+        console.warn(
+          `[experiment] HALTED ${experimentRiskState.haltStatus} reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=${experimentRiskState.haltId} once to resume`
+        );
+      }
+    } catch (error) {
+      experimentLease.release();
+      experimentLease = null;
+      throw error;
     }
   }
-  softResumeAnchors = loadSoftResumeAnchors();
+  softResumeAnchors = loadSoftResumeAnchors({
+    experimentId: cfg.experiment.id,
+    scopeKey: experimentScopeKey,
+  });
   if (cfg.experiment.enabled && Object.keys(softResumeAnchors).length) {
     experimentRestartCount = 1;
     emitExp("RESTART", { restart_count: experimentRestartCount, risk_flags: ["SOFT_RESUME"] });
@@ -592,7 +720,10 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
   );
 
   setDashboardMeta({ dryRun: cfg.dryRun });
-  const dash = startDashboardServer(cfg.dashboardPort);
+  const dash = startDashboardServer(cfg.dashboardPort, {
+    allowMutations: cfg.dryRun,
+    authToken: cfg.dryRun ? process.env.DASHBOARD_AUTH_TOKEN : undefined,
+  });
 
   // 后台拉官方日统计（不阻塞启动）
   void refreshOfficialStats({ force: true })
@@ -682,6 +813,7 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
       built: null,
       params: null,
       anchorMid: 0,
+      anchorEpoch: 0,
       lastPosition: null,
       invCost: 0,
       unrealizedPnl: 0,
@@ -691,12 +823,21 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
   for (const rt of runtimes) {
     try {
       await rt.ex.connect();
+      await verifyLiveExperimentExecutor(rt, cfg);
       console.log(`[${rt.ex.id}] connected`);
     } catch (e: any) {
       const msg = String(e?.message || e).slice(0, 200);
       console.error(`[${rt.ex.id}] connect failed: ${msg}`);
       rt.lastError = msg;
       void tgError(rt.ex.id, `connect failed: ${msg}`);
+      if (cfg.experiment.enabled && !cfg.dryRun) {
+        for (const active of runtimes) {
+          try { active.ex.disconnect(); } catch { /* ignore cleanup */ }
+        }
+        experimentLease?.release();
+        experimentLease = null;
+        throw e;
+      }
       upsertDashboardVenue({
         venue: rt.ex.id,
         market: cfg.markets[0] || "BTC",
@@ -734,6 +875,8 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
         /* ignore */
       }
     }
+    experimentLease?.release();
+    experimentLease = null;
     process.exit(0);
   };
   process.on("SIGINT", () => void stop());
@@ -751,6 +894,7 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
               /* ignore */
             }
             await rt.ex.connect();
+            await verifyLiveExperimentExecutor(rt, cfg);
             console.log(`[${rt.ex.id}] reconnected`);
             rt.lastError = undefined;
             emitExp("RESTART", {
