@@ -3,9 +3,18 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Intent, VenueSnapshot } from "../types.js";
 import { readExperimentLeverage } from "../config.js";
 import { loadEnv } from "../loadEnv.js";
+import { ExtendedAccountStream } from "./extendedAccountStream.js";
+import {
+  ExtendedObservationBarrier,
+  type ExtendedObservationResult,
+} from "./extendedObservation.js";
+import {
+  ExtendedStrictApi,
+  type ExtendedStrictExchangeFacade,
+} from "./extendedStrictApi.js";
 import { dryApply, type ApplyResult, type VenueExecutor } from "./types.js";
 
-type ExtendedExchange = {
+type ExtendedExchange = ExtendedStrictExchangeFacade & {
   init(): Promise<boolean>;
   stop(): void;
   marketIdForName(name: string): number | null;
@@ -60,8 +69,17 @@ export class ExtendedExecutor implements VenueExecutor {
     leverageReadback: true,
   };
   private ex: ExtendedExchange | null = null;
-  private equityCache: { at: number; value: number | undefined } = { at: 0, value: undefined };
+  private accountStream: ExtendedAccountStream | null = null;
+  private observation: ExtendedObservationBarrier | null = null;
+  private leaseGeneration = 0;
   constructor(private dryRun: boolean) {}
+
+  setLeaseGeneration(generation: number): void {
+    if (!Number.isSafeInteger(generation) || generation < 0) {
+      throw new Error("EXTENDED_INVALID_LEASE_GENERATION");
+    }
+    this.leaseGeneration = generation;
+  }
 
   async connect(): Promise<void> {
     if (this.dryRun) return;
@@ -95,6 +113,12 @@ export class ExtendedExecutor implements VenueExecutor {
       apiUrl,
     }) as ExtendedExchange;
     await this.ex.init();
+    this.accountStream = new ExtendedAccountStream({ apiUrl, apiKey });
+    await this.accountStream.connect();
+    this.observation = new ExtendedObservationBarrier(
+      new ExtendedStrictApi(this.ex),
+      this.accountStream.state
+    );
     if (process.env.GRID_SKIP_LEVERAGE !== "1") {
       const btcId = this.ex.marketIdForName("BTC-USD");
       if (btcId != null) {
@@ -116,6 +140,9 @@ export class ExtendedExecutor implements VenueExecutor {
   }
 
   disconnect(): void {
+    this.accountStream?.stop();
+    this.accountStream = null;
+    this.observation = null;
     this.ex?.stop();
     this.ex = null;
   }
@@ -131,63 +158,61 @@ export class ExtendedExecutor implements VenueExecutor {
     return id;
   }
 
-  private async readEquity(ex: ExtendedExchange): Promise<number | undefined> {
-    const now = Date.now();
-    if (now - this.equityCache.at < 60_000 && this.equityCache.value != null) {
-      return this.equityCache.value;
+  async strictSnapshot(market: string): Promise<ExtendedObservationResult> {
+    if (this.dryRun) {
+      throw new Error("EXTENDED_STRICT_SNAPSHOT_LIVE_ONLY");
     }
-    try {
-      await (ex as any)._refreshAccount?.();
-      const v = Number((ex as any).equity ?? (ex as any).balance);
-      const value = Number.isFinite(v) && v > 0 ? v : undefined;
-      this.equityCache = { at: now, value };
-      return value;
-    } catch {
-      return this.equityCache.value;
-    }
+    if (!this.observation) throw new Error("EXTENDED_ACCOUNT_OBSERVATION_NOT_CONNECTED");
+    return this.observation.observe({
+      market: marketName(market),
+      leaseGeneration: this.leaseGeneration,
+    });
   }
 
   async snapshot(market: string): Promise<VenueSnapshot> {
     if (this.dryRun) {
       return { venue: this.id, market, mid: 100_000, position: 0, openOrders: [] };
     }
-    const ex = this.ensure();
-    const marketId = this.marketId(market);
-    await ex._refreshAllPositions();
-    await ex._refreshAllOpenOrders();
-    const mid = await ex.getPrice(marketId);
-    const pos = ex.getPosition(marketId);
-    const oo = ex.getAllOpenOrders().filter((o) => o.marketId === marketId);
-    const equityUsd = await this.readEquity(ex);
-    const all =
-      typeof ex.getAllPositions === "function" ? ex.getAllPositions() : [];
-    const detail =
-      all.find((p) => p.marketId === marketId) ||
-      all.find((p) => /BTC/i.test(String(p.market || "")));
-    const upnl = pos?.unrealizedPnl ?? detail?.unrealizedPnl;
-    const liq = detail?.liquidationPrice ?? pos?.liquidationPrice;
+    const result = await this.strictSnapshot(market);
+    if (!result.ok) {
+      throw new Error(
+        `EXTENDED_STRICT_SNAPSHOT_${result.reasonCode}:${result.failedSources.join(",")}`
+      );
+    }
+    const strict = result.snapshot;
+    const normalizedMarket = marketName(market);
+    const positions = strict.positions.filter((position) => position.market === normalizedMarket);
+    const signedPosition = positions.reduce(
+      (sum, position) => sum + Math.abs(position.size) * (position.side === "SHORT" ? -1 : 1),
+      0
+    );
+    const unrealizedPnl = positions.reduce(
+      (sum, position) => sum + (position.unrealizedPnl ?? 0),
+      0
+    );
+    const liquidationPrices = positions
+      .map((position) => position.liquidationPrice)
+      .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
     return {
       venue: this.id,
       market,
-      mid,
-      position: pos?.sizeBase ?? 0,
-      openOrders: oo.map((o) => ({
-        id: String(o.externalId || o.orderId),
-        market,
-        side: o.side === "sell" ? "sell" : "buy",
-        price: Number(o.price),
-        size: Number(o.sizeBase),
-        level: 0,
-        clientOrderId: o.externalId || String(o.externalId || "") || undefined,
-      })),
-      observedAt: new Date().toISOString(),
-      equityUsd,
-      unrealizedPnl:
-        upnl != null && Number.isFinite(Number(upnl)) ? Number(upnl) : undefined,
-      liquidationPrice:
-        liq != null && Number.isFinite(Number(liq)) && Number(liq) > 0
-          ? Number(liq)
-          : undefined,
+      mid: strict.markPrice.markPrice,
+      position: signedPosition,
+      openOrders: strict.openOrders
+        .filter((order) => order.market === normalizedMarket)
+        .map((order) => ({
+          id: order.externalId || order.id,
+          market,
+          side: order.side === "SELL" ? "sell" : "buy",
+          price: order.price,
+          size: Math.max(0, order.qty - order.filledQty),
+          level: 0,
+          clientOrderId: order.externalId,
+        })),
+      observedAt: strict.generation.generatedAt,
+      equityUsd: strict.balance.equity,
+      unrealizedPnl,
+      liquidationPrice: liquidationPrices[0],
     };
   }
 

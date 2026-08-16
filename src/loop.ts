@@ -864,8 +864,12 @@ export async function runLoop(opts?: {
         `[${venue}] restore ledger rungs=${prev.completedRungs} profit≈${prev.gridProfit.toFixed(4)}`
       );
     }
+    const ex = createExecutor(venue, cfg.dryRun);
+    if (cfg.experiment.enabled && experimentLease) {
+      ex.setLeaseGeneration?.(experimentLease.generation);
+    }
     runtimes.push({
-      ex: createExecutor(venue, cfg.dryRun),
+      ex,
       seeded: false,
       active: new Map(),
       completedRungs: prev?.completedRungs || 0,

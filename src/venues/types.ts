@@ -1,4 +1,5 @@
 import type { ApplyResult, Intent, VenueId, VenueSnapshot } from "../types.js";
+import type { ExtendedObservationResult } from "./extendedObservation.js";
 
 export type VenueExecutor = {
   readonly id: VenueId;
@@ -15,6 +16,10 @@ export type VenueExecutor = {
     leverageReadback: boolean;
   };
   verifyExperimentPreflight?(market: string, leverage: number): Promise<void>;
+  /** Bind authoritative observations to the currently held runtime lease. */
+  setLeaseGeneration?(generation: number): void;
+  /** Venue-native strict read result, when the adapter supports one. */
+  strictSnapshot?(market: string): Promise<ExtendedObservationResult>;
 };
 
 export function dryApply(venue: VenueId, intents: Intent[]): ApplyResult {
