@@ -4,8 +4,15 @@ import path from "node:path";
 import type { Intent, LiveOrder } from "./types.js";
 import {
   assertSafeExperimentId,
-  readChecksummedJson,
-  writeChecksummedJson,
+  atomicWriteFile,
+  createChecksummedEnvelopeV2,
+  inspectChecksummedEnvelopeV2,
+  serializeChecksummedEnvelopeV2,
+  sha256Json,
+  type ChecksummedEnvelopeV2,
+  type EnvelopeInspection,
+  type EnvelopeInspectionCondition,
+  type StorageOptions,
 } from "./experimentStorage.js";
 
 export type RiskDecision = { halt: boolean; reduceOnly: boolean; reasons: string[] };
@@ -53,6 +60,23 @@ export type ExperimentRiskState = {
   updatedAt: string;
 };
 
+export type RiskStateStoreOptions = StorageOptions & {
+  now?: () => Date;
+  randomId?: () => string;
+};
+
+const RISK_STATE_KIND = "experiment-risk-state";
+const UNSCOPED = "UNSCOPED";
+const HALT_STATUSES: HaltStatus[] = ["RUNNING", "HALTING", "HALTED_UNFLAT", "HALTED_FLAT", "HALT_FAILED"];
+
+function nowIso(options?: RiskStateStoreOptions): string {
+  return (options?.now?.() || new Date()).toISOString();
+}
+
+function newHaltId(options?: RiskStateStoreOptions): string {
+  return options?.randomId?.() || crypto.randomUUID();
+}
+
 export function emptyRiskState(scopeKey: string | null = null): ExperimentRiskState {
   return {
     halted: false,
@@ -79,86 +103,322 @@ export function riskStatePath(experimentId: string, baseDir?: string): string {
   return path.join(experimentDir(experimentId, baseDir), "risk-state.json");
 }
 
-function failClosedState(reason: string, scopeKey?: string): ExperimentRiskState {
+function failClosedState(
+  reasons: string | string[],
+  scopeKey?: string,
+  options?: RiskStateStoreOptions
+): ExperimentRiskState {
   return {
     ...emptyRiskState(scopeKey || null),
     halted: true,
     haltStatus: "HALT_FAILED",
-    haltId: crypto.randomUUID(),
-    haltReasons: [reason],
+    haltId: newHaltId(options),
+    haltReasons: Array.from(new Set(Array.isArray(reasons) ? reasons : [reasons])),
     acknowledged: false,
+    updatedAt: nowIso(options),
   };
 }
 
-function normalizeState(raw: any, expectedScope?: string): ExperimentRiskState {
+function isNullableFinite(value: unknown): boolean {
+  return value === null || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isExperimentRiskState(value: unknown): value is ExperimentRiskState {
+  const row = value as Partial<ExperimentRiskState> | null;
+  if (!row || typeof row !== "object") return false;
+  if (typeof row.halted !== "boolean" || !HALT_STATUSES.includes(row.haltStatus as HaltStatus)) return false;
+  if (row.halted === (row.haltStatus === "RUNNING")) return false;
+  if (!(row.haltId === null || typeof row.haltId === "string")) return false;
+  if (!Array.isArray(row.haltReasons) || !row.haltReasons.every((reason) => typeof reason === "string")) return false;
+  if (!(row.scopeKey === null || typeof row.scopeKey === "string")) return false;
+  if (!(row.leaseGeneration === null || typeof row.leaseGeneration === "string")) return false;
+  if (!isNullableFinite(row.startingEquityUsd) || !isNullableFinite(row.highWaterMarkUsd)) return false;
+  if (typeof row.drawdownFromStartUsd !== "number" || !Number.isFinite(row.drawdownFromStartUsd) || row.drawdownFromStartUsd < 0) return false;
+  if (typeof row.drawdownFromHwmUsd !== "number" || !Number.isFinite(row.drawdownFromHwmUsd) || row.drawdownFromHwmUsd < 0) return false;
+  if (typeof row.acknowledged !== "boolean") return false;
+  return typeof row.updatedAt === "string" && Number.isFinite(Date.parse(row.updatedAt));
+}
+
+function normalizeLegacyState(raw: any, expectedScope: string | undefined, options: RiskStateStoreOptions): ExperimentRiskState | null {
+  if (typeof raw?.halted !== "boolean") return null;
   const rawStatus = String(raw?.haltStatus || "");
-  const statusOk = ["RUNNING", "HALTING", "HALTED_UNFLAT", "HALTED_FLAT", "HALT_FAILED"].includes(rawStatus);
-  const halted = Boolean(raw?.halted) || (statusOk && rawStatus !== "RUNNING");
+  const statusOk = HALT_STATUSES.includes(rawStatus as HaltStatus);
+  const legacyHalted = Boolean(raw.halted) || (statusOk && rawStatus !== "RUNNING");
   const state: ExperimentRiskState = {
     ...emptyRiskState(expectedScope || null),
-    halted,
-    haltStatus: statusOk ? rawStatus as HaltStatus : halted ? "HALTED_UNFLAT" : "RUNNING",
-    haltId: raw?.haltId ? String(raw.haltId) : halted ? crypto.randomUUID() : null,
+    halted: legacyHalted,
+    haltStatus: statusOk ? rawStatus as HaltStatus : legacyHalted ? "HALTED_UNFLAT" : "RUNNING",
+    haltId: raw?.haltId ? String(raw.haltId) : legacyHalted ? newHaltId(options) : null,
     haltReasons: Array.isArray(raw?.haltReasons) ? raw.haltReasons.map(String) : [],
     scopeKey: raw?.scopeKey ? String(raw.scopeKey) : expectedScope || null,
     leaseGeneration: raw?.leaseGeneration ? String(raw.leaseGeneration) : null,
     startingEquityUsd: raw?.startingEquityUsd != null && Number.isFinite(Number(raw.startingEquityUsd)) ? Number(raw.startingEquityUsd) : null,
     highWaterMarkUsd: raw?.highWaterMarkUsd != null && Number.isFinite(Number(raw.highWaterMarkUsd)) ? Number(raw.highWaterMarkUsd) : null,
-    drawdownFromStartUsd: Number(raw?.drawdownFromStartUsd) || 0,
-    drawdownFromHwmUsd: Number(raw?.drawdownFromHwmUsd) || 0,
+    drawdownFromStartUsd: Math.max(0, Number(raw?.drawdownFromStartUsd) || 0),
+    drawdownFromHwmUsd: Math.max(0, Number(raw?.drawdownFromHwmUsd) || 0),
     acknowledged: Boolean(raw?.acknowledged),
-    updatedAt: String(raw?.updatedAt || new Date().toISOString()),
+    updatedAt: Number.isFinite(Date.parse(String(raw?.updatedAt || ""))) ? String(raw.updatedAt) : nowIso(options),
   };
-  if (expectedScope && state.scopeKey && state.scopeKey !== expectedScope) {
-    return failClosedState("RISK_STATE_SCOPE_MISMATCH", expectedScope);
-  }
+  if (expectedScope && state.scopeKey && state.scopeKey !== expectedScope) return null;
   return state;
+}
+
+function forceHalt(
+  state: ExperimentRiskState,
+  reason: string,
+  expectedScope: string | undefined,
+  options: RiskStateStoreOptions
+): ExperimentRiskState {
+  return {
+    ...state,
+    halted: true,
+    haltStatus: "HALT_FAILED",
+    haltId: state.haltId || newHaltId(options),
+    haltReasons: Array.from(new Set([...state.haltReasons, reason])),
+    scopeKey: expectedScope || state.scopeKey,
+    acknowledged: false,
+    updatedAt: nowIso(options),
+  };
+}
+
+function envelopeExpected(experimentId: string, expectedScope?: string) {
+  return {
+    kind: RISK_STATE_KIND,
+    experimentId,
+    scopeKey: expectedScope,
+    validatePayload: isExperimentRiskState,
+  };
+}
+
+function inspectRiskCopy(
+  filePath: string,
+  experimentId: string,
+  expectedScope: string | undefined,
+  options: RiskStateStoreOptions
+): EnvelopeInspection<ExperimentRiskState> {
+  const inspected = inspectChecksummedEnvelopeV2(filePath, envelopeExpected(experimentId, expectedScope), options);
+  if (inspected.condition === "VALID" && inspected.envelope) {
+    const payloadScope = inspected.envelope.payload.scopeKey || UNSCOPED;
+    if (
+      payloadScope !== inspected.envelope.scopeKey ||
+      inspected.envelope.payload.leaseGeneration !== inspected.envelope.leaseGeneration
+    ) {
+      return {
+        condition: "CORRUPT",
+        raw: inspected.raw,
+        diagnosticCode: "RISK_STATE_ENVELOPE_PAYLOAD_IDENTITY_MISMATCH",
+      };
+    }
+  }
+  return inspected;
+}
+
+function pairFailureReason(
+  primary: ChecksummedEnvelopeV2<ExperimentRiskState>,
+  backup: ChecksummedEnvelopeV2<ExperimentRiskState>
+): string | null {
+  if (backup.storeGeneration > primary.storeGeneration) return "RISK_STATE_BACKUP_NEWER";
+  if (backup.storeGeneration === primary.storeGeneration) {
+    return backup.envelopeSha256 === primary.envelopeSha256 ? null : "RISK_STATE_GENERATION_HASH_CONFLICT";
+  }
+  if (backup.storeGeneration !== primary.storeGeneration - 1) return "RISK_STATE_GENERATION_GAP";
+  if (primary.previousEnvelopeSha256 !== backup.envelopeSha256) return "RISK_STATE_CHAIN_MISMATCH";
+  return null;
+}
+
+function copyConditionReason(condition: EnvelopeInspectionCondition, prefix: "PRIMARY" | "BACKUP"): string {
+  return `RISK_STATE_${prefix}_${condition}`;
+}
+
+function writeEnvelope(filePath: string, envelope: ChecksummedEnvelopeV2<ExperimentRiskState>, options: RiskStateStoreOptions): void {
+  atomicWriteFile(filePath, serializeChecksummedEnvelopeV2(envelope), options);
+}
+
+function createInitialPair(
+  experimentId: string,
+  state: ExperimentRiskState,
+  baseDir: string | undefined,
+  options: RiskStateStoreOptions
+): void {
+  const primaryPath = riskStatePath(experimentId, baseDir);
+  const scopeKey = state.scopeKey || UNSCOPED;
+  const writtenAt = nowIso(options);
+  const envelope = createChecksummedEnvelopeV2({
+    kind: RISK_STATE_KIND,
+    experimentId,
+    scopeKey,
+    storeGeneration: 1,
+    leaseGeneration: state.leaseGeneration,
+    createdAt: writtenAt,
+    writtenAt,
+    previousEnvelopeSha256: null,
+    payload: state,
+  });
+  writeEnvelope(primaryPath, envelope, options);
+  const verified = inspectRiskCopy(primaryPath, experimentId, scopeKey, options);
+  if (verified.condition !== "VALID" || !verified.raw) throw new Error("RISK_STATE_INITIAL_PRIMARY_VERIFY_FAILED");
+  atomicWriteFile(`${primaryPath}.bak`, verified.raw, options);
+}
+
+export function initializeRiskStateStore(p: {
+  experimentId: string;
+  baseDir?: string;
+  scopeKey?: string;
+  leaseGeneration?: string | null;
+  options?: RiskStateStoreOptions;
+}): ExperimentRiskState {
+  const options = p.options || {};
+  const primaryPath = riskStatePath(p.experimentId, p.baseDir);
+  const storage = options.fileSystem;
+  if ((storage?.existsSync(primaryPath) ?? false) || (storage?.existsSync(`${primaryPath}.bak`) ?? false)) {
+    throw new Error("RISK_STATE_ALREADY_INITIALIZED");
+  }
+  if (!storage) {
+    const primary = inspectRiskCopy(primaryPath, p.experimentId, p.scopeKey, options);
+    const backup = inspectRiskCopy(`${primaryPath}.bak`, p.experimentId, p.scopeKey, options);
+    if (primary.condition !== "MISSING" || backup.condition !== "MISSING") throw new Error("RISK_STATE_ALREADY_INITIALIZED");
+  }
+  const state = failClosedState("INITIAL_RECONCILIATION_REQUIRED", p.scopeKey, options);
+  state.leaseGeneration = p.leaseGeneration || null;
+  createInitialPair(p.experimentId, state, p.baseDir, options);
+  return state;
+}
+
+function readLegacyRiskState(
+  filePath: string,
+  expectedScope: string | undefined,
+  options: RiskStateStoreOptions
+): ExperimentRiskState | null {
+  const storage = options.fileSystem || fs;
+  try {
+    const rawText = storage.readFileSync(filePath, "utf8");
+    const parsed = JSON.parse(rawText);
+    let payload = parsed;
+    if (parsed?.schema_version === "1") {
+      if (parsed.payload == null || parsed.checksum_sha256 !== sha256Json(parsed.payload)) return null;
+      payload = parsed.payload;
+    }
+    return normalizeLegacyState(payload, expectedScope, options);
+  } catch {
+    return null;
+  }
 }
 
 export function loadRiskState(
   experimentId: string,
   baseDir?: string,
-  expectedScope?: string
+  expectedScope?: string,
+  options: RiskStateStoreOptions = {}
 ): ExperimentRiskState {
-  const p = riskStatePath(experimentId, baseDir);
-  if (!fs.existsSync(p)) return emptyRiskState(expectedScope || null);
-  try { return normalizeState(readChecksummedJson(p), expectedScope); }
-  catch {
-    const backupPath = `${p}.bak`;
-    if (fs.existsSync(backupPath)) {
+  const primaryPath = riskStatePath(experimentId, baseDir);
+  const backupPath = `${primaryPath}.bak`;
+  const primary = inspectRiskCopy(primaryPath, experimentId, expectedScope, options);
+  const backup = inspectRiskCopy(backupPath, experimentId, expectedScope, options);
+
+  if (primary.condition === "VALID" && primary.envelope && primary.raw) {
+    if (backup.condition === "VALID" && backup.envelope) {
+      const pairError = pairFailureReason(primary.envelope, backup.envelope);
+      if (pairError) return failClosedState(pairError, expectedScope || primary.envelope.scopeKey, options);
+    } else if (backup.condition === "MISSING" || backup.condition === "CORRUPT") {
       try {
-        const backup = normalizeState(readChecksummedJson(backupPath), expectedScope);
-        return {
-          ...backup,
-          halted: true,
-          haltStatus: "HALT_FAILED",
-          haltId: crypto.randomUUID(),
-          haltReasons: Array.from(new Set([...backup.haltReasons, "RISK_STATE_PRIMARY_CORRUPT"])),
-          acknowledged: false,
-          updatedAt: new Date().toISOString(),
-        };
+        atomicWriteFile(backupPath, primary.raw, options);
+        const repaired = inspectRiskCopy(backupPath, experimentId, primary.envelope.scopeKey, options);
+        if (repaired.condition !== "VALID" || repaired.envelope?.envelopeSha256 !== primary.envelope.envelopeSha256) {
+          return failClosedState("RISK_STATE_BACKUP_REPAIR_VERIFY_FAILED", expectedScope || primary.envelope.scopeKey, options);
+        }
       } catch {
-        // both copies invalid
+        return failClosedState("RISK_STATE_BACKUP_REPAIR_FAILED", expectedScope || primary.envelope.scopeKey, options);
       }
+    } else {
+      return failClosedState(copyConditionReason(backup.condition, "BACKUP"), expectedScope || primary.envelope.scopeKey, options);
     }
+    return primary.envelope.payload;
   }
-  // One-time compatibility for a syntactically valid pre-envelope state. Invalid
-  // JSON or an object without an explicit halted flag remains fail-closed.
-  try {
-    const legacy = JSON.parse(fs.readFileSync(p, "utf8"));
-    if (typeof legacy?.halted === "boolean") return normalizeState(legacy, expectedScope);
-  } catch {
-    // handled by fail-closed return below
+
+  if (backup.condition === "VALID" && backup.envelope) {
+    return forceHalt(
+      backup.envelope.payload,
+      copyConditionReason(primary.condition, "PRIMARY"),
+      expectedScope || backup.envelope.scopeKey,
+      options
+    );
   }
-  return failClosedState("RISK_STATE_CORRUPT", expectedScope);
+
+  const backupCouldBeLegacy = backup.condition === "MISSING" || backup.condition === "CORRUPT";
+  const legacy = backupCouldBeLegacy ? readLegacyRiskState(primaryPath, expectedScope, options) : null;
+  if (legacy) {
+    const migrated = forceHalt(legacy, "RISK_STATE_LEGACY_MIGRATED", expectedScope, options);
+    try {
+      createInitialPair(experimentId, migrated, baseDir, options);
+    } catch {
+      return forceHalt(migrated, "RISK_STATE_MIGRATION_PERSIST_FAILED", expectedScope, options);
+    }
+    return migrated;
+  }
+
+  if (primary.condition === "MISSING" && backup.condition === "MISSING") {
+    return failClosedState("RISK_STATE_MISSING", expectedScope, options);
+  }
+  return failClosedState([
+    "RISK_STATE_CORRUPT",
+    copyConditionReason(primary.condition, "PRIMARY"),
+    copyConditionReason(backup.condition, "BACKUP"),
+  ], expectedScope, options);
 }
 
 export function persistRiskState(
   experimentId: string,
   state: ExperimentRiskState,
-  baseDir?: string
+  baseDir?: string,
+  options: RiskStateStoreOptions = {}
 ): void {
-  writeChecksummedJson(riskStatePath(experimentId, baseDir), state);
+  if (!isExperimentRiskState(state)) throw new Error("RISK_STATE_PAYLOAD_INVALID");
+  const primaryPath = riskStatePath(experimentId, baseDir);
+  const backupPath = `${primaryPath}.bak`;
+  const scopeKey = state.scopeKey || UNSCOPED;
+  const primary = inspectRiskCopy(primaryPath, experimentId, scopeKey, options);
+  const backup = inspectRiskCopy(backupPath, experimentId, scopeKey, options);
+
+  if (primary.condition === "MISSING" && backup.condition === "MISSING") {
+    // Backward-compatible bootstrap for existing callers is deliberately
+    // fail-closed. A RUNNING store can only follow a committed halted store.
+    const initial = state.halted
+      ? state
+      : failClosedState("INITIAL_RECONCILIATION_REQUIRED", state.scopeKey || undefined, options);
+    initial.leaseGeneration = state.leaseGeneration;
+    createInitialPair(experimentId, initial, baseDir, options);
+    return;
+  }
+
+  let predecessor: ChecksummedEnvelopeV2<ExperimentRiskState>;
+  if (primary.condition === "VALID" && primary.envelope && primary.raw) {
+    if (backup.condition === "VALID" && backup.envelope) {
+      const pairError = pairFailureReason(primary.envelope, backup.envelope);
+      if (pairError) throw new Error(pairError);
+    } else if (backup.condition !== "MISSING" && backup.condition !== "CORRUPT") {
+      throw new Error(copyConditionReason(backup.condition, "BACKUP"));
+    }
+    atomicWriteFile(backupPath, primary.raw, options);
+    predecessor = primary.envelope;
+  } else if (backup.condition === "VALID" && backup.envelope) {
+    predecessor = backup.envelope;
+  } else {
+    throw new Error("RISK_STATE_NO_VALID_PREDECESSOR");
+  }
+
+  const writtenAt = nowIso(options);
+  const next = createChecksummedEnvelopeV2({
+    kind: RISK_STATE_KIND,
+    experimentId,
+    scopeKey,
+    storeGeneration: predecessor.storeGeneration + 1,
+    leaseGeneration: state.leaseGeneration,
+    createdAt: predecessor.createdAt,
+    writtenAt,
+    previousEnvelopeSha256: predecessor.envelopeSha256,
+    payload: state,
+  });
+  writeEnvelope(primaryPath, next, options);
 }
 
 /** Clear exactly one halt by presenting its unique halt id. Static YES is rejected. */
