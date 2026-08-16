@@ -30,10 +30,12 @@
     "risex-client": "^0.1.11",
     "tsx": "^4.19.2",
     "undici": "^6.21.0",
-    "viem": "^2.52.0"
+    "viem": "^2.52.0",
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "@types/ws": "^8.18.1",
     "typescript": "^5.7.2"
   }
 }
