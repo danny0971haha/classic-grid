@@ -181,6 +181,33 @@ export class ExtendedExchange extends EventEmitter {
     return flight;
   }
 
+  // Strict read-plane wrappers. These deliberately return only the response
+  // from the current request and never consult or mutate dashboard caches.
+  strictReadAccountDetails() {
+    return this._req('GET', '/api/v1/user/account/info');
+  }
+
+  strictReadBalance() {
+    return this._req('GET', '/api/v1/user/balance');
+  }
+
+  strictReadPositions(market) {
+    return this._req('GET', `/api/v1/user/positions?market=${encodeURIComponent(market)}`);
+  }
+
+  strictReadOpenOrders(market) {
+    return this._req('GET', `/api/v1/user/orders?market=${encodeURIComponent(market)}`);
+  }
+
+  strictReadLeverage(market) {
+    return this._req('GET', `/api/v1/user/leverage?market=${encodeURIComponent(market)}`);
+  }
+
+  strictReadMarkPrice(market) {
+    return this._req('GET', `/api/v1/info/markets/${encodeURIComponent(market)}/stats`)
+      .then((stats) => ({ market, markPrice: stats?.markPrice }));
+  }
+
   /** 分页拉取账户成交（单市场，避免多 market 一次请求 403） */
   async getTradesPage(marketName, { cursor, limit = 500 } = {}) {
     const qs = new URLSearchParams();
