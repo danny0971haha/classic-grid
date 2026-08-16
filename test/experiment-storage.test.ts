@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
-  acquireExperimentLease,
   atomicWriteFile,
   canonicalJson,
   createChecksummedEnvelopeV2,
@@ -15,7 +14,7 @@ import {
   type AtomicWriteStep,
 } from "../src/experimentStorage.js";
 
-describe("experiment storage and singleton fencing", () => {
+describe("experiment storage", () => {
   it("round-trips a checksummed atomic file and rejects tampering", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-storage-"));
     const file = path.join(dir, "state.json");
@@ -25,19 +24,6 @@ describe("experiment storage and singleton fencing", () => {
     row.payload.value = 8;
     fs.writeFileSync(file, JSON.stringify(row), "utf8");
     assert.throws(() => readChecksummedJson(file), /checksum/);
-  });
-
-  it("rejects a second process owner and uses generation-checked release", () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-lease-"));
-    const first = acquireExperimentLease({ experimentDir: dir, scopeKey: "extended:BTC" });
-    assert.throws(
-      () => acquireExperimentLease({ experimentDir: dir, scopeKey: "extended:BTC" }),
-      /already locked/
-    );
-    first.release();
-    const second = acquireExperimentLease({ experimentDir: dir, scopeKey: "extended:BTC" });
-    assert.notEqual(first.generation, second.generation);
-    second.release();
   });
 
   it("canonicalizes V2 payloads independently of object insertion order", () => {

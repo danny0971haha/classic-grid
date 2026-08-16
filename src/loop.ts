@@ -24,7 +24,12 @@ import {
   type ExperimentEventName,
 } from "./experimentTelemetry.js";
 import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "./softResume.js";
-import { acquireExperimentLease, type ExperimentLease } from "./experimentStorage.js";
+import {
+  acquireRuntimeLease,
+  startRuntimeLeaseHeartbeat,
+  type RuntimeLease,
+  type RuntimeLeaseHeartbeat,
+} from "./runtimeLease.js";
 import {
   setDashboardMeta,
   setDashboardOfficial,
@@ -55,8 +60,17 @@ import {
   tgOpen,
 } from "./telegram.js";
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener("abort", done);
+      clearTimeout(timer);
+      resolve();
+    }
+    signal?.addEventListener("abort", done, { once: true });
+  });
 }
 
 function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): void {
@@ -147,7 +161,17 @@ async function applyExperimentGuards(p: {
       `[${rt.ex.id}] RISK HALT ${haltReasons.join(",")} — cancelAll → closePosition`
     );
     const kill = await runExperimentKillSwitch({
-      ex: rt.ex,
+      ex: {
+        cancelAll: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.cancelAll(killMarket);
+        },
+        closePosition: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.closePosition(killMarket);
+        },
+        snapshot: (killMarket) => rt.ex.snapshot(killMarket),
+      },
       market,
       reasons: haltReasons,
       experimentId: cfg.experiment.id,
@@ -175,8 +199,14 @@ let experimentTelemetry: ReturnType<typeof createExperimentTelemetry> | null = n
 let experimentRiskState: ExperimentRiskState = emptyRiskState();
 let experimentRestartCount = 0;
 let experimentScopeKey = "";
-let experimentLease: ExperimentLease | null = null;
+let experimentLease: RuntimeLease | null = null;
 let experimentOwnershipPrefix = "";
+
+function assertExperimentLeaseCurrent(cfg: RuntimeConfig): void {
+  if (!cfg.experiment.enabled) return;
+  if (!experimentLease) throw new Error("RUNTIME_LEASE_MISSING");
+  experimentLease.assertCurrent();
+}
 
 type Tracked = { levelIndex: number; side: Side; price: number; size: number };
 
@@ -206,6 +236,7 @@ async function verifyLiveExperimentExecutor(
   if (!caps?.deterministicClientOrderId || !caps.leverageReadback || !rt.ex.verifyExperimentPreflight) {
     throw new Error(`[${rt.ex.id}] venue lacks experiment ownership/leverage safety capabilities`);
   }
+  assertExperimentLeaseCurrent(cfg);
   const market = cfg.markets[0]!;
   await rt.ex.verifyExperimentPreflight(market, cfg.experiment.leverage);
   const recovery = await rt.ex.snapshot(market);
@@ -316,10 +347,11 @@ async function ensureAnchored(
   }
   cfg.grids[rt.ex.id] = anchored;
   if (cfg.experiment.enabled && experimentLease) {
+    experimentLease.assertCurrent();
     persistSoftResumeAnchor({
       experimentId: cfg.experiment.id,
       scopeKey: experimentScopeKey,
-      leaseGeneration: experimentLease.generation,
+      leaseGeneration: String(experimentLease.generation),
       venue: rt.ex.id,
       anchor: { anchorMid: midForAnchor, gridCount: anchored.gridCount, anchorEpoch: rt.anchorEpoch },
     });
@@ -332,6 +364,7 @@ async function tickOne(
   market: string,
   cfg: RuntimeConfig
 ): Promise<void> {
+  assertExperimentLeaseCurrent(cfg);
   // Pause suppresses strategy writes, but hard-risk evaluation and kill remain active.
   if (isBotPaused()) {
     if (!rt.params || !rt.built) {
@@ -552,6 +585,7 @@ async function tickOne(
         });
       }
     }
+    assertExperimentLeaseCurrent(cfg);
     const result = await rt.ex.apply(plan.intents);
     if (result.placed) {
       emitExp("ORDER_ACK", {
@@ -634,29 +668,62 @@ async function tickOne(
   });
 }
 
-export async function runLoop(opts?: { once?: boolean }): Promise<void> {
+export type RunLoopLifecycleFaultPoint =
+  | "BEFORE_TELEMETRY"
+  | "BEFORE_RISK_LOAD"
+  | "AFTER_CHECKPOINT"
+  | "BEFORE_EXECUTOR_CREATE"
+  | "BEFORE_CONNECT"
+  | "BEFORE_OFFICIAL_REFRESH";
+
+export async function runLoop(opts?: {
+  once?: boolean;
+  /** Offline fault-injection seam. It can only force a fail-closed startup error. */
+  lifecycleFaultAt?: RunLoopLifecycleFaultPoint;
+}): Promise<void> {
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
   const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.dryRun ? "dry-run" : "")).trim();
   experimentScopeKey = `${accountScope}:${cfg.venues.join("+")}:${cfg.markets.join("+")}`;
   experimentOwnershipPrefix = `cg:${cfg.experiment.id}:`;
+  const abortController = new AbortController();
+  let leaseHeartbeat: RuntimeLeaseHeartbeat | null = null;
+  let leaseLossError: unknown = null;
+  let dash: ReturnType<typeof startDashboardServer> | null = null;
+  const runtimes: VenueRuntime[] = [];
+  const requestStop = () => abortController.abort();
+  const injectLifecycleFault = (point: RunLoopLifecycleFaultPoint) => {
+    if (opts?.lifecycleFaultAt === point) throw new Error(`INJECTED_LIFECYCLE_FAULT:${point}`);
+  };
+  process.on("SIGINT", requestStop);
+  process.on("SIGTERM", requestStop);
+  try {
   if (cfg.experiment.enabled) {
     if (process.env.SOFT_RESUME == null || String(process.env.SOFT_RESUME).trim() === "") {
       process.env.SOFT_RESUME = "1";
     }
     console.log(formatExperimentBanner(cfg));
-    experimentLease = acquireExperimentLease({
+    experimentLease = await acquireRuntimeLease({
       experimentDir: experimentDir(cfg.experiment.id),
+      experimentId: cfg.experiment.id,
       scopeKey: experimentScopeKey,
     });
-    try {
-      experimentTelemetry = createExperimentTelemetry({
+    leaseHeartbeat = startRuntimeLeaseHeartbeat({
+      lease: experimentLease,
+      signal: abortController.signal,
+      onLost(error) {
+        leaseLossError = error;
+        abortController.abort();
+      },
+    });
+    injectLifecycleFault("BEFORE_TELEMETRY");
+    experimentTelemetry = createExperimentTelemetry({
       experimentId: cfg.experiment.id,
       mode: cfg.dryRun ? "dry-run" : "live",
       venue: cfg.venues[0] || "extended",
       symbol: cfg.markets[0] || "BTC",
       scopeKey: experimentScopeKey,
-      leaseGeneration: experimentLease.generation,
+      leaseGeneration: String(experimentLease.generation),
       manifestFields: {
         experiment_spec_version: cfg.experiment.specVersion,
         starting_capital_usd: cfg.experiment.capitalUsd,
@@ -669,32 +736,30 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
         max_drawdown_usd: cfg.experiment.maxDrawdownUsd,
         boundary_buffer_pct: Number((cfg.experiment.boundaryBufferPct * 100).toFixed(6)),
       },
-      });
-      experimentRiskState = acknowledgeHaltIfRequested(
+    });
+    injectLifecycleFault("BEFORE_RISK_LOAD");
+    experimentRiskState = acknowledgeHaltIfRequested(
       cfg.experiment.id,
       loadRiskState(cfg.experiment.id, undefined, experimentScopeKey)
     );
-      experimentRiskState = {
-        ...experimentRiskState,
-        scopeKey: experimentScopeKey,
-        leaseGeneration: experimentLease.generation,
-      };
-      persistRiskState(cfg.experiment.id, experimentRiskState);
-      if (experimentRiskState.halted) {
-        console.warn(
-          `[experiment] HALTED ${experimentRiskState.haltStatus} reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=${experimentRiskState.haltId} once to resume`
-        );
-      }
-    } catch (error) {
-      experimentLease.release();
-      experimentLease = null;
-      throw error;
+    experimentRiskState = {
+      ...experimentRiskState,
+      scopeKey: experimentScopeKey,
+      leaseGeneration: String(experimentLease.generation),
+    };
+    experimentLease.assertCurrent();
+    persistRiskState(cfg.experiment.id, experimentRiskState);
+    if (experimentRiskState.halted) {
+      console.warn(
+        `[experiment] HALTED ${experimentRiskState.haltStatus} reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=${experimentRiskState.haltId} once to resume`
+      );
     }
   }
   softResumeAnchors = loadSoftResumeAnchors({
     experimentId: cfg.experiment.id,
     scopeKey: experimentScopeKey,
   });
+  injectLifecycleFault("AFTER_CHECKPOINT");
   if (cfg.experiment.enabled && Object.keys(softResumeAnchors).length) {
     experimentRestartCount = 1;
     emitExp("RESTART", { restart_count: experimentRestartCount, risk_flags: ["SOFT_RESUME"] });
@@ -720,15 +785,10 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
   );
 
   setDashboardMeta({ dryRun: cfg.dryRun });
-  const dash = startDashboardServer(cfg.dashboardPort, {
+  dash = startDashboardServer(cfg.dashboardPort, {
     allowMutations: cfg.dryRun,
     authToken: cfg.dryRun ? process.env.DASHBOARD_AUTH_TOKEN : undefined,
   });
-
-  // 后台拉官方日统计（不阻塞启动）
-  void refreshOfficialStats({ force: true })
-    .then((b) => setDashboardOfficial(b))
-    .catch((e) => console.error(`[official] refresh failed: ${String(e?.message || e).slice(0, 160)}`));
 
   let lastHourlyKey = "";
   let lastOfficialDashAt = 0;
@@ -795,8 +855,8 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
     }
   };
 
+  injectLifecycleFault("BEFORE_EXECUTOR_CREATE");
   const saved = loadVenueSessionCounters();
-  const runtimes: VenueRuntime[] = [];
   for (const venue of cfg.venues) {
     const prev = saved[venue];
     if (prev && (prev.completedRungs > 0 || prev.gridProfit > 0)) {
@@ -821,6 +881,7 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
   }
 
   for (const rt of runtimes) {
+    injectLifecycleFault("BEFORE_CONNECT");
     try {
       await rt.ex.connect();
       await verifyLiveExperimentExecutor(rt, cfg);
@@ -831,11 +892,6 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
       rt.lastError = msg;
       void tgError(rt.ex.id, `connect failed: ${msg}`);
       if (cfg.experiment.enabled && !cfg.dryRun) {
-        for (const active of runtimes) {
-          try { active.ex.disconnect(); } catch { /* ignore cleanup */ }
-        }
-        experimentLease?.release();
-        experimentLease = null;
         throw e;
       }
       upsertDashboardVenue({
@@ -860,31 +916,18 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
     }
   }
 
-  const stop = async () => {
-    if (dash) {
-      try {
-        dash.close();
-      } catch {
-        /* ignore */
-      }
-    }
-    for (const rt of runtimes) {
-      try {
-        rt.ex.disconnect();
-      } catch {
-        /* ignore */
-      }
-    }
-    experimentLease?.release();
-    experimentLease = null;
-    process.exit(0);
-  };
-  process.on("SIGINT", () => void stop());
-  process.on("SIGTERM", () => void stop());
+  injectLifecycleFault("BEFORE_OFFICIAL_REFRESH");
+  // Read-only dashboard statistics remain non-blocking until Phase 4 adds the
+  // strict official-risk startup barrier.
+  void refreshOfficialStats({ force: true })
+    .then((b) => setDashboardOfficial(b))
+    .catch((e) => console.error(`[official] refresh failed: ${String(e?.message || e).slice(0, 160)}`));
 
   do {
+    if (abortController.signal.aborted) break;
     for (const market of cfg.markets) {
       for (const rt of runtimes) {
+        if (abortController.signal.aborted) break;
         try {
           // 首连失败（如 Ext 429）时每轮重试，避免整场卡死
           if (!rt.seeded && rt.lastError) {
@@ -906,6 +949,11 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
           await tickOne(rt, market, cfg);
         } catch (e: any) {
           const msg = String(e?.message || e).slice(0, 200);
+          if (/RUNTIME_LEASE_(?:LOST|MISSING|GENERATION_MISMATCH|SOCKET_LOST)/.test(msg)) {
+            leaseLossError = e;
+            abortController.abort();
+            break;
+          }
           const transient = isTransientReadError(msg);
           console.error(
             `[${rt.ex.id}] tick failed${transient ? " (transient)" : ""}: ${msg}`
@@ -971,10 +1019,28 @@ export async function runLoop(opts?: { once?: boolean }): Promise<void> {
         .catch(() => {});
     }
     if (opts?.once) break;
-    await sleep(cfg.tickMs);
+    await sleep(cfg.tickMs, abortController.signal);
   } while (true);
-
-  await stop();
+  if (leaseLossError) throw new Error("RUNTIME_LEASE_LOST_DURING_RUN", { cause: leaseLossError });
+  } finally {
+    process.off("SIGINT", requestStop);
+    process.off("SIGTERM", requestStop);
+    if (dash) {
+      try { await new Promise<void>((resolve) => dash!.close(() => resolve())); }
+      catch { /* cleanup only */ }
+      dash = null;
+    }
+    for (const rt of runtimes) {
+      try { rt.ex.disconnect(); } catch { /* cleanup only */ }
+    }
+    leaseHeartbeat?.stop();
+    leaseHeartbeat = null;
+    if (experimentLease) {
+      await experimentLease.release();
+      experimentLease = null;
+    }
+    abortController.abort();
+  }
 }
 
 export async function runStatus(): Promise<void> {
