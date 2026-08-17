@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { FillMode, Nord, NordUser, Side, calcCurrPosLiqPrice } from "@n1xyz/nord-ts";
 import { Connection } from "@solana/web3.js";
 import type { Intent, VenueSnapshot } from "../types.js";
 import { loadEnv } from "../loadEnv.js";
@@ -46,6 +45,7 @@ export class N1Executor implements VenueExecutor {
   private nord: any = null;
   private user: any = null;
   private accountId: number | null = null;
+  private sdk: any = null;
   private sessionExpiresAt = 0;
   constructor(private dryRun: boolean) {}
 
@@ -59,12 +59,13 @@ export class N1Executor implements VenueExecutor {
       throw new Error(`缺少 N1 keypair：${keyPath}（设 N1_KEYPAIR_PATH 或放 secrets/id.json）`);
     }
     const secret = Uint8Array.from(JSON.parse(fs.readFileSync(keyPath, "utf8")));
-    this.nord = await Nord.new({
+    this.sdk = (await import("@n1xyz/nord-ts")) as any;
+    this.nord = await this.sdk.Nord.new({
       app: process.env.N1_APP_PUBLIC_KEY || DEFAULT_APP,
       solanaConnection: new Connection(process.env.N1_SOLANA_RPC || DEFAULT_SOLANA, "confirmed"),
       webServerUrl: process.env.N1_API_URL || DEFAULT_API,
     });
-    this.user = NordUser.fromPrivateKey(this.nord, secret);
+    this.user = this.sdk.NordUser.fromPrivateKey(this.nord, secret);
     await this.user.updateAccountId();
     await this.user.fetchInfo();
     const ids = this.user.accountIds ?? [];
@@ -76,6 +77,7 @@ export class N1Executor implements VenueExecutor {
     this.nord = null;
     this.user = null;
     this.accountId = null;
+    this.sdk = null;
   }
 
   private ensure(): void {
@@ -166,7 +168,7 @@ export class N1Executor implements VenueExecutor {
         const mmfBase =
           Number.isFinite(mmf) && notional > 0 ? mmf / notional : NaN;
         if (sz > 0 && equity > 0 && Number.isFinite(mmfBase) && mmfBase > 0) {
-          const liq = calcCurrPosLiqPrice({
+          const liq = this.sdk.calcCurrPosLiqPrice({
             baseSize: sz,
             isLong,
             indexPrice: mid,
@@ -225,13 +227,13 @@ export class N1Executor implements VenueExecutor {
           const tag = `grid:${intent.order.side}:${intent.order.level}:${intent.order.price}`;
           const receipt = await this.user.placeOrder({
             marketId: MARKET_ID,
-            side: intent.order.side === "buy" ? Side.Bid : Side.Ask,
-            fillMode: FillMode.PostOnly,
+            side: intent.order.side === "buy" ? this.sdk.Side.Bid : this.sdk.Side.Ask,
+            fillMode: this.sdk.FillMode.PostOnly,
             isReduceOnly: false,
             size: intent.order.size,
             price: intent.order.price,
             accountId: this.accountId,
-            clientOrderId: clientOrderId(tag),
+            clientOrderId: clientOrderId(intent.order.clientOrderId || tag),
           });
           if (!receipt.orderId) throw new Error("N1 place missing orderId");
           result.placed += 1;
@@ -274,13 +276,13 @@ export class N1Executor implements VenueExecutor {
     if (Math.abs(pos) < 1e-12) return;
     const mid = snap.mid > 0 ? snap.mid : 0;
     if (!(mid > 0)) throw new Error("closePosition: no mid");
-    const side = pos > 0 ? Side.Ask : Side.Bid;
+    const side = pos > 0 ? this.sdk.Side.Ask : this.sdk.Side.Bid;
     const price = pos > 0 ? mid * 0.992 : mid * 1.008;
     await this.ensureSession();
     const receipt = await this.user.placeOrder({
       marketId: MARKET_ID,
       side,
-      fillMode: FillMode.ImmediateOrCancel,
+      fillMode: this.sdk.FillMode.ImmediateOrCancel,
       isReduceOnly: true,
       size: Math.abs(pos),
       price,

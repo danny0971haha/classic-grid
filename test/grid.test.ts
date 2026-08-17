@@ -6,6 +6,7 @@ import {
   buildGrid,
   computeRisk,
   seedOrders,
+  planFromFillsAndSeed,
 } from "../src/grid.js";
 
 function checkVenue(label: string, gridCount: number, expectEach: number, mid: number) {
@@ -67,6 +68,30 @@ function checkVenue(label: string, gridCount: number, expectEach: number, mid: n
 for (const mid of [65_000, 97_500, 120_000]) {
   checkVenue(`ext/n1@${mid}`, 80, 40, mid);
   checkVenue(`ris/dec@${mid}`, 50, 25, mid);
+}
+
+{
+  const levels = [99_000, 100_000, 101_000];
+  const plan = planFromFillsAndSeed({
+    market: "BTC",
+    mid: 100_000,
+    levels,
+    spacing: 1_000,
+    mode: "neutral",
+    sizeBase: 0.001,
+    openOrders: [
+      { id: "manual", market: "BTC", side: "buy", price: 99_000, size: 0.002, level: 0 },
+    ],
+    prevActive: new Map([["gone", { levelIndex: 2, side: "sell", price: 101_000, size: 0.001 }]]),
+    maxWrites: 10,
+    seeded: true,
+    ownershipPrefix: "cg:test:",
+    anchorEpoch: 42,
+  });
+  assert.equal(plan.intents.some((i) => i.type === "cancel" && i.orderId === "manual"), false);
+  assert.equal(plan.filled.length, 0, "missing open order is not a proven fill");
+  const places = plan.intents.filter((i) => i.type === "place");
+  assert.ok(places.every((i) => i.type === "place" && i.order.clientOrderId?.startsWith("cg:test:42-")));
 }
 
 console.log("grid.test.ts OK");

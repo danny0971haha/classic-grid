@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { calculateLiquidationPriceUsd } from "@ellipsis-labs/rise";
 import type { Intent, VenueSnapshot } from "../types.js";
+import { readExperimentLeverage } from "../config.js";
 import { loadEnv } from "../loadEnv.js";
 import { dryApply, type ApplyResult, type VenueExecutor } from "./types.js";
 
@@ -75,10 +76,12 @@ export class RisexExecutor implements VenueExecutor {
     await this.ex.init();
     if (process.env.GRID_SKIP_LEVERAGE !== "1" && process.env.RISE_SKIP_LEVERAGE !== "1") {
       // RISEx 所上杠杆硬顶约 25：优先 RISEX_LEVERAGE，默认 25，不被 GRID_LEVERAGE=30 带偏
-      const riseLev = Math.max(
-        1,
-        Number(process.env.RISEX_LEVERAGE || process.env.RISE_LEVERAGE || 25) || 25
-      );
+      const riseLev =
+        readExperimentLeverage() ??
+        Math.max(
+          1,
+          Number(process.env.RISEX_LEVERAGE || process.env.RISE_LEVERAGE || 25) || 25
+        );
       await this.ex.setLeverage(this.marketId("BTC"), riseLev);
     }
   }

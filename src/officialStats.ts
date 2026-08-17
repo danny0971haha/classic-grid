@@ -280,7 +280,8 @@ async function fetchN1(sinceMs: number): Promise<OfficialVenueDay> {
       return empty("n1", `缺少 keypair：${keyPath}`);
     }
     // 延迟加载，避免官方统计拖垮无 N1 时的启动
-    const { Nord, NordUser } = await import("@n1xyz/nord-ts");
+    const nordSdk = (await import("@n1xyz/nord-ts")) as any;
+    const { Nord, NordUser } = nordSdk;
     const { Connection } = await import("@solana/web3.js");
     const secret = Uint8Array.from(JSON.parse(fs.readFileSync(keyPath, "utf8")));
     const nord = await Nord.new({

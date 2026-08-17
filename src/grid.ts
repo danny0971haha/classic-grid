@@ -227,6 +227,9 @@ export function planFromFillsAndSeed(p: {
   /** 达限后不再 place（如 RISEx 50/市场） */
   maxOpenOrders?: number;
   skipBand?: number;
+  /** When set, only orders carrying this prefix are owned/cancellable by this run. */
+  ownershipPrefix?: string;
+  anchorEpoch?: number;
 }): {
   intents: Intent[];
   nextActive: Map<string, { levelIndex: number; side: Side; price: number; size: number }>;
@@ -243,12 +246,18 @@ export function planFromFillsAndSeed(p: {
 
   for (const o of p.openOrders) {
     const idx = matchLevelIndex(o.price, p.levels, p.spacing);
-    // 对不上当前格线，或同档已有单 → 视为错位/叠单，撤掉腾名额
-    if (idx < 0 || occupied.has(idx)) {
+    const owned = !p.ownershipPrefix || String(o.clientOrderId || "").startsWith(p.ownershipPrefix);
+    if (idx >= 0) occupied.add(idx);
+    // Never cancel or claim manual/other-bot orders.
+    if (!owned) continue;
+    const expectedSize = Math.abs(Number(o.size) - p.sizeBase) <= Math.max(1e-10, p.sizeBase * 0.001);
+    const expectedIdentity = !p.ownershipPrefix ||
+      String(o.clientOrderId || "") === `${p.ownershipPrefix}${p.anchorEpoch ?? 0}-${o.side}-${idx}`;
+    // Owned but malformed/duplicated orders are safe to cancel.
+    if (idx < 0 || !expectedSize || !expectedIdentity || nextActiveHasLevel(nextActive, idx, o.side)) {
       orphanCancels.push(o.id);
       continue;
     }
-    occupied.add(idx);
     nextActive.set(o.id, {
       levelIndex: idx,
       side: o.side,
@@ -263,20 +272,9 @@ export function planFromFillsAndSeed(p: {
   }
   const cancelsPlanned = intents.length;
 
+  // An absent open order is ambiguous (filled, cancelled, rejected, or stale read).
+  // Exact fills must come from the venue fill feed/journal; never infer them here.
   const filled: Array<{ side: Side; levelIndex: number; price: number }> = [];
-  for (const [id, prev] of p.prevActive) {
-    if (nextActive.has(id)) continue;
-    // 仍有同 level 同方向单 → 不像成交，跳过
-    let still = false;
-    for (const a of nextActive.values()) {
-      if (a.levelIndex === prev.levelIndex && a.side === prev.side) {
-        still = true;
-        break;
-      }
-    }
-    if (still) continue;
-    filled.push({ side: prev.side, levelIndex: prev.levelIndex, price: prev.price });
-  }
 
   let completedRungs = 0;
   let placeSlots =
@@ -287,7 +285,10 @@ export function planFromFillsAndSeed(p: {
   const pushPlace = (order: DesiredOrder): boolean => {
     if (placeSlots <= 0) return false;
     if (intents.length >= p.maxWrites) return false;
-    intents.push({ type: "place", order });
+    const clientOrderId = p.ownershipPrefix
+      ? `${p.ownershipPrefix}${p.anchorEpoch ?? 0}-${order.side}-${order.level}`
+      : order.clientOrderId;
+    intents.push({ type: "place", order: { ...order, clientOrderId } });
     placeSlots -= 1;
     return true;
   };
@@ -344,4 +345,15 @@ export function planFromFillsAndSeed(p: {
   }
 
   return { intents, nextActive, filled, completedRungs };
+}
+
+function nextActiveHasLevel(
+  active: Map<string, { levelIndex: number; side: Side }>,
+  levelIndex: number,
+  side: Side
+): boolean {
+  for (const row of active.values()) {
+    if (row.levelIndex === levelIndex && row.side === side) return true;
+  }
+  return false;
 }

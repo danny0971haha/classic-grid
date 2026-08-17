@@ -375,6 +375,8 @@ export class PopdexExecutor implements VenueExecutor {
       throw new Error("PopDEX 未 connect");
     }
     const hash = await this.wallet.sendTransaction({
+      account: this.account,
+      chain: undefined,
       to,
       data,
       value: 0n,
