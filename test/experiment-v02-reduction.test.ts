@@ -12,6 +12,7 @@ import {
   initializeRiskStateStore,
   isForcedHaltInMemoryOnly,
   loadRiskState,
+  persistAuthoritativeRiskState,
   persistRiskState,
   type ExperimentRiskState,
 } from "../src/experimentRisk.js";
@@ -19,6 +20,7 @@ import {
   ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE,
   boundFlattenQty,
   classifyExposureReducingSide,
+  createVenueReductionTransport,
   experimentAllowsReseed,
   isOwnedRiskIncreasingOrder,
   reductionClientOrderId,
@@ -26,12 +28,15 @@ import {
   verifyFlattenSnapshot,
 } from "../src/experimentReduction.js";
 import type { Intent } from "../src/types.js";
+import { ExtendedExecutor } from "../src/venues/extended.js";
 import {
   LIMITS,
   MARKET,
   OWNER_PREFIX,
   SCOPE,
   freshSnapshot,
+  inspectDurablePair,
+  inspectDurablePairInFreshProcess,
   ownedOrder,
   scriptedTransport,
   unownedOrder,
@@ -83,6 +88,7 @@ async function runHalt(p: {
   leaseGeneration?: string;
   assertLeaseCurrent?: () => void;
   persistOptions?: Parameters<typeof runActualNotionalHardHalt>[0]["persistOptions"];
+  onDurableAuthorityInspected?: Parameters<typeof runActualNotionalHardHalt>[0]["onDurableAuthorityInspected"];
 }) {
   return runActualNotionalHardHalt({
     experimentId: p.id,
@@ -98,6 +104,7 @@ async function runHalt(p: {
     scopeKey: SCOPE,
     persistOptions: p.persistOptions,
     state: p.state,
+    onDurableAuthorityInspected: p.onDurableAuthorityInspected,
   });
 }
 
@@ -793,6 +800,7 @@ describe("Checkpoint B actual-notional hard halt", () => {
     const id = "b22-stale";
     seedRunning(id, dir, "lease-1");
     persistRiskState(id, { ...emptyRiskState(SCOPE), leaseGeneration: "lease-2" }, dir);
+    const before = inspectDurablePairInFreshProcess(id, dir);
     const evaluated = evaluateExperimentRisk(
       riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
       LIMITS,
@@ -819,6 +827,526 @@ describe("Checkpoint B actual-notional hard halt", () => {
     assert.equal(transport.flattenCalls, 0);
     assert.equal(result.cancel?.outcome, "NOT_SENT");
     assert.equal(result.state.halted, true);
-    assert.notEqual(loadRiskState(id, dir, SCOPE).haltStatus, "RUNNING");
+    const after = inspectDurablePairInFreshProcess(id, dir);
+    assert.deepEqual(after, before);
+    assert.equal(after.haltStatus, "RUNNING");
+    assert.equal(after.leaseGeneration, "lease-2");
+  });
+
+  it("BC1 stale lease before HALTING -> durable primary/backup bytes and generation remain unchanged", async () => {
+    const dir = tmpDir("bc1");
+    const id = "bc1-stale-lease";
+    const running = seedRunning(id, dir, "lease-2");
+    const before = inspectDurablePairInFreshProcess(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      leaseGeneration: "lease-1",
+      assertLeaseCurrent() {
+        throw new Error("RUNTIME_LEASE_GENERATION_MISMATCH");
+      },
+    });
+    const after = inspectDurablePairInFreshProcess(id, dir);
+    assert.deepEqual(after, before);
+    assert.equal(after.primarySha256, before.primarySha256);
+    assert.equal(after.backupSha256, before.backupSha256);
+    assert.equal(after.storeGeneration, before.storeGeneration);
+    assert.equal(after.envelopeSha256, before.envelopeSha256);
+    assert.equal(transport.cancelCalls, 0);
+    assert.equal(transport.flattenCalls, 0);
+    assert.equal(result.state.halted, true);
+    assert.equal(loadRiskState(id, dir, SCOPE).haltStatus, "RUNNING");
+  });
+
+  it("BC2 stale caller haltId cannot overwrite a newer durable halt incident", async () => {
+    const dir = tmpDir("bc2");
+    const id = "bc2-haltid";
+    seedRunning(id, dir);
+    persistRiskState(id, {
+      ...emptyRiskState(SCOPE),
+      halted: true,
+      haltStatus: "HALTED_UNFLAT",
+      haltId: "durable-newer-halt",
+      haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+      leaseGeneration: "lease-2",
+      acknowledged: false,
+      updatedAt: "2026-08-23T00:00:00.000Z",
+    }, dir);
+    const before = inspectDurablePairInFreshProcess(id, dir);
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "REJECTED",
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: {
+        ...emptyRiskState(SCOPE),
+        halted: true,
+        haltStatus: "HALTING",
+        haltId: "stale-caller-halt",
+        haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+        leaseGeneration: "lease-1",
+        acknowledged: false,
+        updatedAt: "2026-08-23T00:00:00.000Z",
+      },
+      positionQty: 0.0018,
+      transport,
+      leaseGeneration: "lease-2",
+    });
+    const after = inspectDurablePairInFreshProcess(id, dir);
+    assert.equal(result.haltId, "durable-newer-halt");
+    assert.equal(result.state.haltId, "durable-newer-halt");
+    assert.notEqual(result.state.haltId, "stale-caller-halt");
+    assert.equal(after.haltId, "durable-newer-halt");
+    assert.notEqual(after.haltId, "stale-caller-halt");
+    if (after.storeGeneration === before.storeGeneration) {
+      assert.equal(after.envelopeSha256, before.envelopeSha256);
+      assert.equal(after.primarySha256, before.primarySha256);
+    }
+    assert.equal(after.haltId, before.haltId);
+  });
+
+  it("BC3 accepted HALTING/final writes are bound to the current active lease generation", async () => {
+    const dir = tmpDir("bc3");
+    const id = "bc3-active-lease";
+    seedRunning(id, dir, "lease-1");
+    persistRiskState(id, { ...emptyRiskState(SCOPE), leaseGeneration: "lease-1" }, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      { ...emptyRiskState(SCOPE), leaseGeneration: "lease-1" }
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0, leaseGeneration: "lease-2" }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      leaseGeneration: "lease-2",
+    });
+    assert.equal(result.state.haltStatus, "HALTED_FLAT");
+    const durable = inspectDurablePairInFreshProcess(id, dir);
+    assert.equal(durable.haltStatus, "HALTED_FLAT");
+    assert.equal(durable.leaseGeneration, "lease-2");
+    assert.equal(loadRiskState(id, dir, SCOPE).leaseGeneration, "lease-2");
+  });
+
+  it("BC4 predecessor generation/hash changes before commit -> no stale mutation", async () => {
+    const dir = tmpDir("bc4");
+    const id = "bc4-pred";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: { ...evaluated.next, haltId: "stale-owner-halt" },
+      positionQty: 0.0018,
+      transport,
+      onDurableAuthorityInspected() {
+        persistRiskState(id, {
+          ...emptyRiskState(SCOPE),
+          halted: true,
+          haltStatus: "HALTED_UNFLAT",
+          haltId: "newer-intervening-halt",
+          haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+          leaseGeneration: "lease-1",
+          acknowledged: false,
+          updatedAt: "2026-08-23T00:00:01.000Z",
+        }, dir);
+      },
+    });
+    const after = inspectDurablePairInFreshProcess(id, dir);
+    assert.equal(after.haltId, "newer-intervening-halt");
+    assert.notEqual(after.haltId, "stale-owner-halt");
+    assert.equal(after.haltStatus, "HALTED_UNFLAT");
+    assert.notEqual(after.haltStatus, "HALTED_FLAT");
+    assert.equal(transport.flattenCalls, 0);
+    assert.equal(result.state.halted, true);
+  });
+
+  it("BC5 lease lost after flatten ACK but before snapshot -> never HALTED_FLAT", async () => {
+    const dir = tmpDir("bc5");
+    const id = "bc5-lease-snap";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const lease = { lost: false };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+      onFlatten() {
+        lease.lost = true;
+      },
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      assertLeaseCurrent() {
+        if (lease.lost) throw new Error("RUNTIME_LEASE_LOST");
+      },
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(transport.snapshotCalls, 0);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.notEqual(loadRiskState(id, dir, SCOPE).haltStatus, "HALTED_FLAT");
+  });
+
+  it("BC6 lease lost after snapshot response but before final persist -> no stale final mutation", async () => {
+    const dir = tmpDir("bc6");
+    const id = "bc6-lease-final";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const lease = { phase: "open" as "open" | "after-snap" };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => {
+        const snap = freshSnapshot({ positionQty: 0 });
+        lease.phase = "after-snap";
+        return snap;
+      },
+    });
+    const before = inspectDurablePair(id, dir);
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      persistOptions: {
+        onAtomicWriteStep(step, target) {
+          if (lease.phase === "after-snap" && path.basename(target) === "risk-state.json" && step === "BEFORE_RENAME") {
+            throw new Error("RUNTIME_LEASE_LOST");
+          }
+        },
+      },
+      assertLeaseCurrent() {
+        if (lease.phase === "after-snap") throw new Error("RUNTIME_LEASE_LOST");
+      },
+    });
+    const after = inspectDurablePairInFreshProcess(id, dir);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(after.haltStatus, "HALTED_FLAT");
+    assert.notEqual(loadRiskState(id, dir, SCOPE).haltStatus, "HALTED_FLAT");
+    assert.notEqual(after.envelopeSha256, before.envelopeSha256, "HALTING write may commit while lease is current");
+    assert.equal(after.haltStatus, "HALTING");
+    assert.equal(after.haltId, evaluated.next.haltId);
+  });
+
+  it("BC7 missing snapshot lease generation/provenance -> verification rejected", () => {
+    const missingLease = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        leaseGeneration: undefined,
+        observedAt: "2026-08-23T00:00:20.000Z",
+      }),
+      mutationAttemptAtMs: Date.parse("2026-08-23T00:00:10.000Z"),
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs: Date.parse("2026-08-23T00:00:20.000Z"),
+      expectedLeaseGeneration: "lease-1",
+    });
+    assert.equal(missingLease.ok, false);
+    if (missingLease.ok) assert.fail("missing snapshot lease generation must be rejected");
+    else assert.equal(missingLease.reasonCode, "SNAPSHOT_FENCE_MISMATCH");
+
+    const missingProvenance = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        observationId: "",
+        sourceGeneration: "",
+        observedAt: "2026-08-23T00:00:20.000Z",
+      }),
+      mutationAttemptAtMs: Date.parse("2026-08-23T00:00:10.000Z"),
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs: Date.parse("2026-08-23T00:00:20.000Z"),
+      expectedLeaseGeneration: "lease-1",
+    });
+    assert.equal(missingProvenance.ok, false);
+  });
+
+  it("BC8 generic or cached snapshot cannot be locally promoted to authoritative fresh evidence", async () => {
+    const transport = createVenueReductionTransport({
+      apply: async () => ({ placed: 0, cancelled: 0, failed: 0, errors: [] }),
+      closePosition: async () => undefined,
+      snapshot: async () => ({
+        venue: "extended",
+        market: MARKET,
+        mid: 100_000,
+        position: 0,
+        openOrders: [],
+        observedAt: new Date().toISOString(),
+      }),
+      assertLeaseCurrent: () => undefined,
+    });
+    const generic = await transport.fetchFreshSnapshot({
+      market: MARKET,
+      mutationAttemptAtMs: Date.now() - 1,
+      leaseGeneration: "lease-1",
+    });
+    assert.notEqual(generic.freshness, "fresh");
+    assert.equal(generic.observationId, "");
+    assert.equal(generic.sourceGeneration, "");
+    assert.equal(generic.leaseGeneration, undefined);
+
+    const dir = tmpDir("bc8");
+    const id = "bc8-generic";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const haltTransport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: [generic],
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport: haltTransport,
+    });
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("BC9 fresh non-flat retry recalculates side/quantity from latest position and uses safe deterministic attempt identity", async () => {
+    const dir = tmpDir("bc9");
+    const id = "bc9-retry-qty";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.002 }),
+      LIMITS,
+      running
+    );
+    const incident = evaluated.next.haltId as string;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: 0.001,
+        observationId: `after-${attempt}`,
+        sourceGeneration: `g-after-${attempt}`,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.002,
+      transport,
+    });
+    assert.ok(transport.flattenCalls >= 2, "fresh non-flat must retry");
+    assert.equal(transport.flattenRequests[0]?.qty, 0.002);
+    assert.equal(transport.flattenRequests[0]?.side, "sell");
+    assert.equal(transport.flattenRequests[1]?.qty, 0.001);
+    assert.equal(transport.flattenRequests[1]?.side, "sell");
+    assert.ok((transport.flattenRequests[1]?.qty ?? 1) <= 0.001 + 1e-15);
+    assert.equal(transport.flattenClientOrderIds[0], reductionClientOrderId(incident, 1));
+    assert.equal(transport.flattenClientOrderIds[1], reductionClientOrderId(incident, 2));
+    assert.notEqual(transport.flattenClientOrderIds[0], transport.flattenClientOrderIds[1]);
+    assert.equal(result.verifiedFlat, false);
+  });
+
+  it("BC10 UNKNOWN flatten does not create a blind second mutation", async () => {
+    const dir = tmpDir("bc10");
+    const id = "bc10-unknown";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "UNKNOWN",
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("BC11 opposite-side oversized owned non-reduce-only order is cancelled or blocks HALTED_FLAT", async () => {
+    const leftover = ownedOrder({ side: "sell", size: 0.01, id: "ex-sell-oversize" });
+    assert.equal(isOwnedRiskIncreasingOrder(leftover, OWNER_PREFIX, 0.001), true);
+    const verified = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        openOrders: [leftover],
+        observedAt: "2026-08-23T00:00:20.000Z",
+      }),
+      mutationAttemptAtMs: Date.parse("2026-08-23T00:00:10.000Z"),
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs: Date.parse("2026-08-23T00:00:20.000Z"),
+      expectedLeaseGeneration: "lease-1",
+    });
+    assert.equal(verified.ok, false);
+
+    const dir = tmpDir("bc11");
+    const id = "bc11-cross";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.001 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({
+        positionQty: 0,
+        openOrders: [leftover],
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.001,
+      openOrders: [leftover],
+      transport,
+    });
+    assert.ok(
+      (transport.cancelledOrders[0] || []).some((row) => row.id === "ex-sell-oversize"),
+      "oversized opposite-side owned order must be cancelled"
+    );
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("BC12 loop-level risk-state persistence is fenced at its actual write boundary", () => {
+    const dir = tmpDir("bc12");
+    const id = "bc12-loop-persist";
+    seedRunning(id, dir);
+    const before = inspectDurablePair(id, dir);
+    assert.throws(
+      () => persistAuthoritativeRiskState(id, {
+        ...emptyRiskState(SCOPE),
+        halted: true,
+        haltStatus: "HALTING",
+        haltId: "bc12-halt",
+        haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+        leaseGeneration: "lease-1",
+        acknowledged: false,
+        updatedAt: "2026-08-23T00:00:00.000Z",
+      }, dir),
+      /RISK_STATE_LEASE_AUTHORITY_MISSING/
+    );
+    assert.deepEqual(inspectDurablePair(id, dir), before);
+
+    const lost = { hit: 0 };
+    assert.throws(
+      () => persistAuthoritativeRiskState(id, {
+        ...emptyRiskState(SCOPE),
+        halted: true,
+        haltStatus: "HALTING",
+        haltId: "bc12-halt",
+        haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+        leaseGeneration: "lease-1",
+        acknowledged: false,
+        updatedAt: "2026-08-23T00:00:00.000Z",
+      }, dir, {
+        assertLeaseCurrent() {
+          lost.hit += 1;
+          if (lost.hit > 1) throw new Error("RUNTIME_LEASE_LOST");
+        },
+        onAtomicWriteStep(step, target) {
+          if (path.basename(target) === "risk-state.json" && step === "BEFORE_RENAME") {
+            throw new Error("RUNTIME_LEASE_LOST");
+          }
+        },
+      }),
+      /RUNTIME_LEASE_LOST/
+    );
+    assert.deepEqual(inspectDurablePair(id, dir), before);
+    assert.ok(lost.hit >= 1);
+  });
+
+  it("BC13 Extended reduction rejects stale lease/request mismatch and cannot increase absolute exposure", async () => {
+    const ex = new ExtendedExecutor(true);
+    ex.setLeaseGeneration(5);
+    const base = {
+      market: MARKET,
+      targetAbsPositionQty: 0 as const,
+      incidentId: "halt-bc13",
+      positionQty: 0.001,
+      attempt: 1,
+    };
+    const stale = await ex.reduceExposure({
+      ...base,
+      leaseGeneration: "4",
+      side: "sell",
+      qty: 0.001,
+    });
+    assert.equal(stale.outcome, "NOT_SENT");
+    assert.match(String(stale.reasonCode), /STALE|LEASE/);
+
+    const increasing = await ex.reduceExposure({
+      ...base,
+      leaseGeneration: "5",
+      side: "buy",
+      qty: 0.001,
+    });
+    assert.equal(increasing.outcome, "NOT_SENT");
+    assert.match(String(increasing.reasonCode), /EXPOSURE|SIDE/);
+
+    const oversized = await ex.reduceExposure({
+      ...base,
+      leaseGeneration: "5",
+      side: "sell",
+      qty: 0.01,
+    });
+    assert.equal(oversized.outcome, "NOT_SENT");
+    assert.match(String(oversized.reasonCode), /QTY|EXPOSURE|POSITION/);
   });
 });

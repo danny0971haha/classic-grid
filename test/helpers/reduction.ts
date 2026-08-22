@@ -1,3 +1,8 @@
+import crypto from "node:crypto";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { LiveOrder } from "../../src/types.js";
 import type {
   AuthoritativeReductionSnapshot,
@@ -6,6 +11,9 @@ import type {
   ReductionTransport,
   ReductionWriteOutcome,
 } from "../../src/experimentReduction.js";
+import { reductionClientOrderId } from "../../src/experimentReduction.js";
+
+const BYTE_WORKER = fileURLToPath(new URL("../fixtures/experiment-risk-byte-worker.ts", import.meta.url));
 
 export const OWNER_PREFIX = "cg:classic-v02-dryrun:";
 export const SCOPE = "extended:BTC";
@@ -55,7 +63,9 @@ export function freshSnapshot(partial: Partial<AuthoritativeReductionSnapshot> =
     openOrders: partial.openOrders ?? [],
     mid: partial.mid ?? 100_000,
     freshness: partial.freshness ?? "fresh",
-    leaseGeneration: partial.leaseGeneration ?? "lease-1",
+    leaseGeneration: Object.prototype.hasOwnProperty.call(partial, "leaseGeneration")
+      ? partial.leaseGeneration
+      : "lease-1",
   };
 }
 
@@ -106,7 +116,7 @@ export function scriptedTransport(script: {
         return result;
       }
       const outcome = flattenQueue.shift() ?? (typeof script.flatten === "string" ? script.flatten : "ACK");
-      const clientOrderId = `cg-reduce:${request.incidentId}:flatten`;
+      const clientOrderId = reductionClientOrderId(request.incidentId, request.attempt ?? 1);
       transport.flattenClientOrderIds.push(clientOrderId);
       return { outcome, clientOrderId };
     },
@@ -120,4 +130,51 @@ export function scriptedTransport(script: {
     },
   };
   return transport;
+}
+
+export type DurablePairBytes = {
+  primarySha256: string;
+  backupSha256: string;
+  storeGeneration: number;
+  envelopeSha256: string;
+  haltStatus: string;
+  haltId: string | null;
+  leaseGeneration: string | null;
+};
+
+export function inspectDurablePair(experimentId: string, baseDir: string): DurablePairBytes {
+  const primary = path.join(baseDir, experimentId, "risk-state.json");
+  const backup = `${primary}.bak`;
+  const primaryRaw = fs.readFileSync(primary, "utf8");
+  const backupRaw = fs.readFileSync(backup, "utf8");
+  const envelope = JSON.parse(primaryRaw) as {
+    storeGeneration: number;
+    envelopeSha256: string;
+    payload: { haltStatus: string; haltId: string | null; leaseGeneration: string | null };
+  };
+  return {
+    primarySha256: crypto.createHash("sha256").update(primaryRaw, "utf8").digest("hex"),
+    backupSha256: crypto.createHash("sha256").update(backupRaw, "utf8").digest("hex"),
+    storeGeneration: envelope.storeGeneration,
+    envelopeSha256: envelope.envelopeSha256,
+    haltStatus: envelope.payload.haltStatus,
+    haltId: envelope.payload.haltId,
+    leaseGeneration: envelope.payload.leaseGeneration,
+  };
+}
+
+export function inspectDurablePairInFreshProcess(experimentId: string, baseDir: string): DurablePairBytes {
+  const result = spawnSync(process.execPath, ["--import", "tsx", BYTE_WORKER], {
+    env: {
+      ...process.env,
+      CLASSIC_RISK_ID: experimentId,
+      CLASSIC_RISK_DIR: baseDir,
+    },
+    encoding: "utf8",
+  });
+  const line = String(result.stdout || "").trim().split("\n").filter(Boolean).at(-1);
+  if (result.status !== 0 || !line) {
+    throw new Error(result.stderr || result.stdout || "durable byte worker failed");
+  }
+  return JSON.parse(line) as DurablePairBytes;
 }

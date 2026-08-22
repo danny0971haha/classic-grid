@@ -163,6 +163,8 @@ test("relevant WS update inside REST window forces a clean retry", async () => {
   assert.equal(accountReads, 2);
   if (!result.ok) assert.fail("observation retry unexpectedly failed");
   assert.equal(result.snapshot.generation.leaseGeneration, 11);
+  assert.ok(result.snapshot.generation.sourceGeneration.includes(result.snapshot.generation.observationId));
+  assert.ok(result.snapshot.generation.sourceGeneration.includes("11"));
   assert.equal(result.snapshot.generation.wsSeqStart, 2);
   assert.equal(result.snapshot.generation.wsSeqEnd, 2);
   assert.equal(result.snapshot.generation.relevantWsEventsDuringWindow, 0);
