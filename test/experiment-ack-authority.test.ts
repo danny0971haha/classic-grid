@@ -23,6 +23,7 @@ import {
   type AtomicWriteStep,
 } from "../src/experimentStorage.js";
 import { withEnv } from "./helpers/env.js";
+import { liveLease } from "./helpers/gate0Corrective.js";
 
 const WORKER = fileURLToPath(new URL("./fixtures/experiment-risk-crash-worker.ts", import.meta.url));
 const SCOPE = "extended:BTC";
@@ -66,11 +67,12 @@ function halted(partial: Partial<ExperimentRiskState> = {}): ExperimentRiskState
 }
 
 function assertFailClosedOrCompleteAck(state: any, label: string): void {
-  if (state.haltStatus === "RUNNING") {
+    if (state.haltStatus === "RUNNING") {
     assert.equal(state.halted, false, label);
     assert.equal(state.haltId, null, label);
     assert.deepEqual(state.haltReasons, [], label);
     assert.equal(state.acknowledged, true, `${label}: RUNNING after crash must be a complete ACK`);
+    assert.ok(state.lastAcknowledgement?.haltId, `${label}: RUNNING after crash must retain ACK lineage`);
     return;
   }
   assert.equal(state.halted, true, `${label}: ${JSON.stringify(state)}`);
@@ -209,6 +211,7 @@ describe("Gate 0 durable ACK authority", () => {
     const first = seedHalted(id, dir, halted({ haltId: "halt-H1" }));
     const result = withEnv({ EXPERIMENT_HALT_ACK: "halt-H1" }, () => {
       const acknowledged = acknowledgeDurableHalt(id, first, dir, {
+        activeLease: liveLease("lease-1"),
         onAckStep(step) {
           if (step === "AFTER_PREDECESSOR_INSPECTION") {
             persistRiskState(id, halted({
@@ -236,6 +239,7 @@ describe("Gate 0 durable ACK authority", () => {
     const primary = riskStatePath(id, dir);
     const result = withEnv({ EXPERIMENT_HALT_ACK: "halt-H1" }, () =>
       acknowledgeDurableHalt(id, first, dir, {
+        activeLease: liveLease("lease-1"),
         onAckStep(step) {
           if (step === "AFTER_PREDECESSOR_INSPECTION") {
             const current = JSON.parse(fs.readFileSync(primary, "utf8"));
@@ -317,6 +321,7 @@ describe("Gate 0 durable ACK authority", () => {
     const primary = riskStatePath(id, dir);
     const result = withEnv({ EXPERIMENT_HALT_ACK: "halt-H1" }, () => {
       const acknowledged = acknowledgeDurableHalt(id, caller, dir, {
+        activeLease: liveLease("lease-1"),
         onAtomicWriteStep(step, target) {
           if (target === primary && step === "BEFORE_RENAME") throw new Error("primary commit failed");
         },
@@ -338,6 +343,7 @@ describe("Gate 0 durable ACK authority", () => {
     const primary = riskStatePath(id, dir);
     const result = withEnv({ EXPERIMENT_HALT_ACK: "halt-H1" }, () => {
       const acknowledged = acknowledgeDurableHalt(id, caller, dir, {
+        activeLease: liveLease("lease-1"),
         onAckStep(step) {
           if (step === "BEFORE_FINAL_VERIFICATION") {
             fs.writeFileSync(primary, "truncated-after-commit", "utf8");
@@ -358,7 +364,7 @@ describe("Gate 0 durable ACK authority", () => {
     const id = "ack-happy";
     const caller = seedHalted(id, dir, halted({ haltId: "halt-unique-123" }));
     const result = withEnv({ EXPERIMENT_HALT_ACK: "halt-unique-123" }, () => {
-      const acknowledged = acknowledgeDurableHalt(id, caller, dir);
+      const acknowledged = acknowledgeDurableHalt(id, caller, dir, { activeLease: liveLease("lease-1") });
       return { acknowledged, tokenRemaining: process.env.EXPERIMENT_HALT_ACK };
     });
     assert.equal(result.acknowledged.accepted, true);
@@ -451,7 +457,7 @@ describe("Gate 0 halt identity invariant", () => {
     const id = "id-new-incident";
     const first = seedHalted(id, dir, halted({ haltId: "halt-old" }));
     const acked = withEnv({ EXPERIMENT_HALT_ACK: "halt-old" }, () =>
-      acknowledgeDurableHalt(id, first, dir)
+      acknowledgeDurableHalt(id, first, dir, { activeLease: liveLease("lease-1") })
     );
     assert.equal(acked.accepted, true);
     const second = evaluateExperimentRisk(

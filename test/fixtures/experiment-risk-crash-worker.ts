@@ -1,7 +1,9 @@
 import fs from "node:fs";
+import path from "node:path";
 import {
   acknowledgeDurableHalt,
   emptyRiskState,
+  experimentDir,
   loadRiskState,
   persistRiskState,
   type AckLifecycleStep,
@@ -9,9 +11,10 @@ import {
   type HaltStatus,
   type RiskStateStoreOptions,
 } from "../../src/experimentRisk.js";
+import { beginRuntimeSession } from "../../src/runtimeLease.js";
 import type { AtomicWriteStep } from "../../src/experimentStorage.js";
 
-type WorkerAction = "seed-halted" | "seed-running" | "ack" | "reload" | "persist-newer-halt";
+type WorkerAction = "seed-halted" | "seed-running" | "ack" | "reload" | "persist-newer-halt" | "startup-check";
 
 const ATOMIC_STEPS: AtomicWriteStep[] = [
   "BEFORE_TEMP_OPEN",
@@ -61,11 +64,28 @@ function crashIf(step: string, targetPath: string): void {
   if (crashStep !== step) return;
   if (crashTarget && !targetPath.endsWith(crashTarget) && targetPath !== crashTarget) return;
   process.stderr.write(`CRASH ${step} ${targetPath}\n`);
+  const ready = String(process.env.CLASSIC_RISK_READY_FILE || "").trim();
+  if (ready) {
+    fs.mkdirSync(path.dirname(ready), { recursive: true });
+    fs.writeFileSync(ready, `${step}\n${targetPath}\n`);
+  }
+  if (process.env.CLASSIC_RISK_HARD_KILL === "1") {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);
+  }
   process.exit(33);
 }
 
 function storeOptions(): RiskStateStoreOptions {
+  const generation = process.env.CLASSIC_RISK_ACTIVE_LEASE || process.env.CLASSIC_RISK_LEASE || "lease-1";
+  const scopeKey = process.env.CLASSIC_RISK_SCOPE || "extended:BTC";
   return {
+    activeLease: {
+      generation,
+      scopeKey,
+      assertCurrent() {
+        if (process.env.CLASSIC_RISK_LEASE_LOST === "1") throw new Error("RUNTIME_LEASE_LOST");
+      },
+    },
     onAtomicWriteStep(step, targetPath) {
       crashIf(step, targetPath);
     },
@@ -83,6 +103,7 @@ function printState(label: string, state: ExperimentRiskState): void {
     haltId: state.haltId,
     haltReasons: state.haltReasons,
     acknowledged: state.acknowledged,
+    lastAcknowledgement: state.lastAcknowledgement,
     scopeKey: state.scopeKey,
     leaseGeneration: state.leaseGeneration,
   })}\n`);
@@ -139,7 +160,30 @@ try {
   if (action === "reload") {
     const state = loadRiskState(experimentId, baseDir, process.env.CLASSIC_RISK_SCOPE || undefined);
     printState("reload", state);
-    process.exit(state.halted ? 0 : 0);
+    process.exit(0);
+  }
+
+  if (action === "startup-check") {
+    const begun = beginRuntimeSession({
+      experimentDir: experimentDir(experimentId, baseDir),
+      experimentId,
+      scopeKey: process.env.CLASSIC_RISK_SCOPE || "extended:BTC",
+      leaseGeneration: process.env.CLASSIC_RISK_ACTIVE_LEASE || process.env.CLASSIC_RISK_LEASE || "lease-1",
+    });
+    const state = loadRiskState(experimentId, baseDir, process.env.CLASSIC_RISK_SCOPE || undefined);
+    process.stdout.write(`${JSON.stringify({
+      label: "startup-check",
+      allowsTrading: begun.allowsTrading,
+      reasonCode: begun.reasonCode,
+      halted: state.halted,
+      haltStatus: state.haltStatus,
+      haltId: state.haltId,
+      haltReasons: state.haltReasons,
+      acknowledged: state.acknowledged,
+      lastAcknowledgement: state.lastAcknowledgement,
+      leaseGeneration: state.leaseGeneration,
+    })}\n`);
+    process.exit(begun.allowsTrading ? 0 : 5);
   }
 
   process.stderr.write(`unknown action ${action}\n`);

@@ -15,6 +15,7 @@ import {
 } from "../src/experimentRisk.js";
 import { createChecksummedEnvelopeV2, serializeChecksummedEnvelopeV2 } from "../src/experimentStorage.js";
 import { withEnv } from "./helpers/env.js";
+import { liveLease } from "./helpers/gate0Corrective.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -189,7 +190,9 @@ describe("experiment risk guards", () => {
     );
     assert.equal(staticYes.halted, true);
     const cleared = withEnv({ EXPERIMENT_HALT_ACK: "halt-unique-123" }, () =>
-      acknowledgeHaltIfRequested(id, loadRiskState(id, dir), dir)
+      acknowledgeHaltIfRequested(id, loadRiskState(id, dir), dir, {
+        activeLease: liveLease("lease-1", "UNSCOPED"),
+      })
     );
     assert.equal(cleared.halted, false);
     assert.equal(cleared.acknowledged, true);
