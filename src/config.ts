@@ -106,13 +106,16 @@ export const ALL_VENUES: VenueId[] = [
   "popdex",
 ];
 
+export type ExperimentSpecVersion = "0.1.0" | "0.2.0";
+
 export type ExperimentConfig = {
   enabled: boolean;
   id: string;
-  specVersion: "0.1.0";
+  specVersion: ExperimentSpecVersion;
   capitalUsd: number;
   leverage: number;
   marginFraction: number;
+  marginBudgetUsd: number;
   gridCount: number;
   halfBandPct: number;
   maxGrossNotionalUsd: number;
@@ -121,18 +124,64 @@ export type ExperimentConfig = {
   boundaryBufferPct: number;
 };
 
-const EXPERIMENT_SPEC_VERSION = "0.1.0" as const;
-const EXPERIMENT_DEFAULTS = {
+type ExperimentProfile = {
+  capitalUsd: number;
+  leverage: number;
+  marginFraction: number;
+  marginBudgetUsd: number;
+  gridCount: number;
+  halfBandPct: number;
+  maxGrossNotionalUsd: number;
+  dailyLossUsd: number;
+  maxDrawdownUsd: number;
+  boundaryBufferPct: number;
+  tickMs: number;
+};
+
+const EXPERIMENT_PROFILE_V01 = {
   capitalUsd: 50,
   leverage: 10,
   marginFraction: 0.3,
+  marginBudgetUsd: 15,
   gridCount: 12,
   halfBandPct: 0.03,
   maxGrossNotionalUsd: 150,
   dailyLossUsd: 2.5,
   maxDrawdownUsd: 5,
   boundaryBufferPct: 0.01,
-} as const;
+  tickMs: 15_000,
+} as const satisfies ExperimentProfile;
+
+const EXPERIMENT_PROFILE_V02 = {
+  capitalUsd: 100,
+  leverage: 5,
+  marginFraction: 0.3,
+  marginBudgetUsd: 30,
+  gridCount: 10,
+  halfBandPct: 0.03,
+  maxGrossNotionalUsd: 150,
+  dailyLossUsd: 5,
+  maxDrawdownUsd: 10,
+  boundaryBufferPct: 0.01,
+  tickMs: 15_000,
+} as const satisfies ExperimentProfile;
+
+const EXPERIMENT_PROFILES: Record<ExperimentSpecVersion, ExperimentProfile> = {
+  "0.1.0": EXPERIMENT_PROFILE_V01,
+  "0.2.0": EXPERIMENT_PROFILE_V02,
+};
+
+/** Historical v0.1 defaults. Kept intact; v0.2 uses its own frozen profile. */
+const EXPERIMENT_DEFAULTS = EXPERIMENT_PROFILE_V01;
+
+function parseExperimentSpecVersion(enabled: boolean): ExperimentSpecVersion {
+  const raw = String(process.env.EXPERIMENT_SPEC_VERSION ?? "").trim();
+  if (!enabled) return "0.1.0";
+  // Absent version keeps v0.1 historical behavior. It must not select v0.2.
+  if (raw === "") return "0.1.0";
+  if (raw === "0.1.0" || raw === "0.2.0") return raw;
+  throw new Error("EXPERIMENT_SPEC_VERSION_UNSUPPORTED");
+}
 
 function truthy(v: string | undefined): boolean {
   return ["1", "true", "yes", "YES"].includes(String(v || "").trim());
@@ -174,17 +223,40 @@ function numEnv(raw: string | undefined, fallback: number): number {
 
 export function parseExperimentConfig(): ExperimentConfig {
   const enabled = truthy(process.env.EXPERIMENT_MODE);
+  const specVersion = parseExperimentSpecVersion(enabled);
+  const profile = EXPERIMENT_PROFILES[specVersion];
   const id = String(process.env.EXPERIMENT_ID || "").trim();
+  if (specVersion === "0.2.0") {
+    return {
+      enabled,
+      id: id || (enabled ? "grid-ab-v0.1-classic-local" : ""),
+      specVersion,
+      capitalUsd: profile.capitalUsd,
+      leverage: profile.leverage,
+      marginFraction: profile.marginFraction,
+      marginBudgetUsd: profile.marginBudgetUsd,
+      gridCount: profile.gridCount,
+      halfBandPct: profile.halfBandPct,
+      maxGrossNotionalUsd: profile.maxGrossNotionalUsd,
+      dailyLossUsd: profile.dailyLossUsd,
+      maxDrawdownUsd: profile.maxDrawdownUsd,
+      boundaryBufferPct: profile.boundaryBufferPct,
+    };
+  }
+  const capitalUsd = Math.max(0, numEnv(process.env.EXPERIMENT_CAPITAL_USD, EXPERIMENT_DEFAULTS.capitalUsd));
+  const leverage = Math.max(1, numEnv(process.env.EXPERIMENT_LEVERAGE, EXPERIMENT_DEFAULTS.leverage));
+  const marginFraction = Math.min(
+    1,
+    Math.max(0.05, numEnv(process.env.EXPERIMENT_MARGIN_FRAC, EXPERIMENT_DEFAULTS.marginFraction))
+  );
   return {
     enabled,
     id: id || (enabled ? "grid-ab-v0.1-classic-local" : ""),
-    specVersion: EXPERIMENT_SPEC_VERSION,
-    capitalUsd: Math.max(0, numEnv(process.env.EXPERIMENT_CAPITAL_USD, EXPERIMENT_DEFAULTS.capitalUsd)),
-    leverage: Math.max(1, numEnv(process.env.EXPERIMENT_LEVERAGE, EXPERIMENT_DEFAULTS.leverage)),
-    marginFraction: Math.min(
-      1,
-      Math.max(0.05, numEnv(process.env.EXPERIMENT_MARGIN_FRAC, EXPERIMENT_DEFAULTS.marginFraction))
-    ),
+    specVersion,
+    capitalUsd,
+    leverage,
+    marginFraction,
+    marginBudgetUsd: Number((capitalUsd * marginFraction).toFixed(6)),
     gridCount: Math.max(2, Math.round(numEnv(process.env.EXPERIMENT_GRID_COUNT, EXPERIMENT_DEFAULTS.gridCount))),
     halfBandPct: Math.max(
       0.0001,
@@ -213,7 +285,7 @@ export function parseExperimentConfig(): ExperimentConfig {
 export function readExperimentLeverage(): number | null {
   loadEnv();
   if (!truthy(process.env.EXPERIMENT_MODE)) return null;
-  return Math.max(1, numEnv(process.env.EXPERIMENT_LEVERAGE, EXPERIMENT_DEFAULTS.leverage));
+  return parseExperimentConfig().leverage;
 }
 
 export function formatExperimentBanner(cfg: RuntimeConfig): string {
@@ -313,7 +385,9 @@ export function loadRuntimeConfig(): RuntimeConfig {
     .split(",")
     .map((s) => s.trim().toUpperCase())
     .filter(Boolean);
-  const tickMs = Math.max(1000, Number(process.env.TICK_MS || 15_000) || 15_000);
+  const tickMs = experiment.enabled && experiment.specVersion === "0.2.0"
+    ? EXPERIMENT_PROFILE_V02.tickMs
+    : Math.max(1000, Number(process.env.TICK_MS || 15_000) || 15_000);
   const leverage = Math.max(
     1,
     Number(process.env.GRID_LEVERAGE || LEVERAGE) || LEVERAGE
@@ -426,6 +500,9 @@ export function assertLiveAllowed(cfg: RuntimeConfig): void {
   }
   if (!cfg.experiment.enabled) return;
   const e = cfg.experiment;
+  if (e.specVersion === "0.2.0") {
+    throw new Error("拒绝实盘：v0.2 尚未授权 live（EXPERIMENT_V02_LIVE_FORBIDDEN）");
+  }
   if (cfg.venues.length !== 1 || cfg.markets.length !== 1) {
     throw new Error("拒绝实盘：v0.1 实验必须恰好 1 个 venue 与 1 个 market");
   }
