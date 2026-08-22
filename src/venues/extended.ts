@@ -2,9 +2,12 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Intent, VenueSnapshot } from "../types.js";
 import {
+  ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE,
   boundFlattenQty,
+  classifyExposureReducingSide,
   classifyTransportError,
   reductionClientOrderId,
+  type AuthoritativeReductionSnapshot,
   type ReductionRequest,
   type ReductionResult,
 } from "../experimentReduction.js";
@@ -67,6 +70,41 @@ type ExtendedExchange = ExtendedStrictExchangeFacade & {
 function marketName(market: string): string {
   const m = market.toUpperCase();
   return m.includes("-") ? m : `${m}-USD`;
+}
+
+export function toAuthoritativeReductionSnapshot(
+  result: Extract<ExtendedObservationResult, { ok: true }>,
+  market: string
+): AuthoritativeReductionSnapshot {
+  const snap = result.snapshot;
+  const generation = snap.generation;
+  const normalizedMarket = marketName(market);
+  const positions = snap.positions.filter((position) => position.market === normalizedMarket);
+  const signedPosition = positions.reduce(
+    (sum, position) => sum + Math.abs(position.size) * (position.side === "SHORT" ? -1 : 1),
+    0
+  );
+  return {
+    observedAt: generation.generatedAt,
+    observationId: generation.observationId,
+    sourceGeneration: generation.sourceGeneration,
+    capturedAtMs: Date.parse(generation.generatedAt),
+    positionQty: signedPosition,
+    openOrders: snap.openOrders
+      .filter((order) => order.market === normalizedMarket)
+      .map((order) => ({
+        id: order.externalId || order.id,
+        market,
+        side: order.side === "SELL" ? "sell" : "buy",
+        price: order.price,
+        size: Math.max(0, order.qty - order.filledQty),
+        level: 0,
+        clientOrderId: order.externalId,
+      })),
+    mid: snap.markPrice.markPrice,
+    freshness: "fresh",
+    leaseGeneration: String(generation.leaseGeneration),
+  };
 }
 
 export class ExtendedExecutor implements VenueExecutor {
@@ -288,14 +326,46 @@ export class ExtendedExecutor implements VenueExecutor {
     await ex.closePosition(this.marketId(market));
   }
 
+  async authoritativeReductionSnapshot(p: {
+    market: string;
+    mutationAttemptAtMs: number;
+    leaseGeneration: string;
+  }): Promise<AuthoritativeReductionSnapshot> {
+    const result = await this.strictSnapshot(p.market);
+    if (!result.ok) {
+      throw new Error(
+        `EXTENDED_STRICT_SNAPSHOT_${result.reasonCode}:${result.failedSources.join(",")}`
+      );
+    }
+    return toAuthoritativeReductionSnapshot(result, p.market);
+  }
+
+  /**
+   * Sized reduce-only close. Vendor `closePosition(marketId, sizeBase)` is not treated
+   * as an idempotent full-close: quantity, side, lease, and attempt identity are enforced.
+   */
   async reduceExposure(request: ReductionRequest & { side: "buy" | "sell"; qty: number }): Promise<ReductionResult> {
-    const clientOrderId = reductionClientOrderId(request.incidentId);
+    const clientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
+    if (request.leaseGeneration !== String(this.leaseGeneration)) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "STALE_LEASE_GENERATION" };
+    }
     if (request.targetAbsPositionQty !== 0) {
       return { outcome: "NOT_SENT", clientOrderId, reasonCode: "UNSUPPORTED_PARTIAL_REDUCTION" };
     }
-    const qty = boundFlattenQty(request.qty, request.qty);
-    if (!(qty > 0)) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "INVALID_FLATTEN_QTY" };
+    if (!Number.isFinite(request.positionQty)) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "MISSING_POSITION_QTY" };
+    }
+    const reducing = classifyExposureReducingSide(request.positionQty);
+    if (reducing !== request.side) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "EXPOSURE_INCREASING_SIDE" };
+    }
+    const maxQty = Math.abs(request.positionQty);
+    if (!(request.qty > 0) || request.qty > maxQty + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "QTY_EXCEEDS_POSITION" };
+    }
+    const qty = boundFlattenQty(request.positionQty, request.qty);
+    if (!(qty > 0) || qty > maxQty) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "EXPOSURE_INCREASING_QTY" };
     }
     if (this.dryRun) {
       return { outcome: "NOT_SENT", clientOrderId, reasonCode: "DRY_RUN_NO_TRANSPORT" };

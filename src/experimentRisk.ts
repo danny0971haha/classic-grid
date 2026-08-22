@@ -498,6 +498,77 @@ export function loadRiskState(
   ], expectedScope, options);
 }
 
+function fileSha256(filePath: string, options: RiskStateStoreOptions): string | null {
+  try {
+    const storage = options.fileSystem || fs;
+    if (!storage.existsSync(filePath)) return null;
+    const raw = storage.readFileSync(filePath, "utf8");
+    return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+export type DurableRiskAuthority =
+  | {
+      ok: true;
+      payload: ExperimentRiskState;
+      storeGeneration: number;
+      envelopeSha256: string;
+      primaryRawSha256: string;
+      backupRawSha256: string;
+    }
+  | {
+      ok: false;
+      reasons: string[];
+      payload: ExperimentRiskState;
+      primaryRawSha256: string | null;
+      backupRawSha256: string | null;
+    };
+
+export function inspectDurableRiskAuthority(
+  experimentId: string,
+  baseDir?: string,
+  options: RiskStateStoreOptions = {}
+): DurableRiskAuthority {
+  const primaryPath = riskStatePath(experimentId, baseDir);
+  const backupPath = `${primaryPath}.bak`;
+  const primaryRawSha256 = fileSha256(primaryPath, options);
+  const backupRawSha256 = fileSha256(backupPath, options);
+  const pair = inspectAuthoritativePair(experimentId, baseDir, options);
+  if (pair.ok) {
+    return {
+      ok: true,
+      payload: pair.payload,
+      storeGeneration: pair.envelope.storeGeneration,
+      envelopeSha256: pair.envelope.envelopeSha256,
+      primaryRawSha256: primaryRawSha256 || "",
+      backupRawSha256: backupRawSha256 || "",
+    };
+  }
+  return {
+    ok: false,
+    reasons: pair.reasons,
+    payload: pair.evidence,
+    primaryRawSha256,
+    backupRawSha256,
+  };
+}
+
+/** Checkpoint B writes must carry active-lease authority; missing authority is not optional wiring. */
+export function persistAuthoritativeRiskState(
+  experimentId: string,
+  state: ExperimentRiskState,
+  baseDir?: string,
+  options: RiskStateStoreOptions = {}
+): void {
+  if (typeof options.assertLeaseCurrent !== "function") {
+    throw new Error("RISK_STATE_LEASE_AUTHORITY_MISSING");
+  }
+  options.assertLeaseCurrent();
+  persistRiskState(experimentId, state, baseDir, options);
+}
+
 export function persistRiskState(
   experimentId: string,
   state: ExperimentRiskState,

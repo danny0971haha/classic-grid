@@ -1,11 +1,12 @@
-import { randomUUID } from "node:crypto";
 import type { ApplyResult, Intent, LiveOrder, Side, VenueSnapshot } from "./types.js";
 import {
   ensureIncidentHaltIdentity,
   experimentDir,
+  inspectDurableRiskAuthority,
   latchForcedHaltInMemory,
   loadRiskState,
-  persistRiskState,
+  persistAuthoritativeRiskState,
+  type DurableRiskAuthority,
   type ExperimentRiskState,
   type HaltStatus,
   type ReductionPhase,
@@ -26,6 +27,8 @@ export type ReductionRequest = {
   targetAbsPositionQty: 0;
   incidentId: string;
   leaseGeneration: string;
+  positionQty: number;
+  attempt: number;
 };
 
 export type ReductionResult = {
@@ -94,6 +97,7 @@ export type ActualNotionalHaltParams = {
   nowMs?: () => number;
   maxFlattenAttempts?: number;
   qtyStep?: number;
+  onDurableAuthorityInspected?: (authority: DurableRiskAuthority) => void;
 };
 
 function errText(error: unknown): string {
@@ -108,8 +112,14 @@ function isNonEmptyHaltId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
-export function reductionClientOrderId(incidentId: string): string {
-  return `cg-reduce:${incidentId}:flatten`;
+function isAuthorityLoss(error: unknown): boolean {
+  return /LEASE|PREDECESSOR_CHANGED|LEASE_AUTHORITY/i.test(errText(error));
+}
+
+export function reductionClientOrderId(incidentId: string, attempt = 1): string {
+  return Number.isSafeInteger(attempt) && attempt > 1
+    ? `cg-reduce:${incidentId}:flatten:${attempt}`
+    : `cg-reduce:${incidentId}:flatten`;
 }
 
 export function experimentAllowsReseed(state: ExperimentRiskState): boolean {
@@ -142,8 +152,17 @@ export function isOwnedRiskIncreasingOrder(
   const clientOrderId = String(order.clientOrderId || "");
   if (!clientOrderId.startsWith(ownershipPrefix)) return false;
   if (order.reduceOnly === true) return false;
-  if (positionQty > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) return order.side === "buy";
-  if (positionQty < -ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) return order.side === "sell";
+  const remaining = Math.max(0, Number(order.size) || 0);
+  if (!Number.isFinite(positionQty) || !Number.isFinite(remaining)) return true;
+  if (Math.abs(positionQty) <= ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) return true;
+  if (positionQty > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
+    if (order.side === "buy") return true;
+    return remaining > positionQty + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE;
+  }
+  if (positionQty < -ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
+    if (order.side === "sell") return true;
+    return remaining > Math.abs(positionQty) + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE;
+  }
   return true;
 }
 
@@ -173,12 +192,10 @@ export function verifyFlattenSnapshot(p: {
   const observedMs = Date.parse(snapshot.observedAt);
   if (observedMs < p.mutationAttemptAtMs) return { ok: false, reasonCode: "STALE_OR_PRE_WRITE" };
   if (p.nowMs - observedMs > REDUCTION_SNAPSHOT_MAX_AGE_MS) return { ok: false, reasonCode: "STALE_OBSERVATION" };
-  if (
-    p.expectedLeaseGeneration
-    && snapshot.leaseGeneration
-    && snapshot.leaseGeneration !== p.expectedLeaseGeneration
-  ) {
-    return { ok: false, reasonCode: "SNAPSHOT_FENCE_MISMATCH" };
+  if (p.expectedLeaseGeneration) {
+    if (!snapshot.leaseGeneration || snapshot.leaseGeneration !== p.expectedLeaseGeneration) {
+      return { ok: false, reasonCode: "SNAPSHOT_FENCE_MISMATCH" };
+    }
   }
   if (Math.abs(snapshot.positionQty) > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
     return { ok: false, reasonCode: "POSITION_NOT_FLAT" };
@@ -237,6 +254,11 @@ export function createVenueReductionTransport(p: {
   closePosition: (market: string) => Promise<void>;
   reduceExposure?: (request: ReductionRequest & { side: Side; qty: number }) => Promise<ReductionResult>;
   snapshot: (market: string) => Promise<VenueSnapshot>;
+  observeAuthoritative?: (input: {
+    market: string;
+    mutationAttemptAtMs: number;
+    leaseGeneration: string;
+  }) => Promise<AuthoritativeReductionSnapshot>;
   assertLeaseCurrent: () => void;
   nowMs?: () => number;
 }): ReductionTransport {
@@ -260,7 +282,7 @@ export function createVenueReductionTransport(p: {
     },
     async submitFlatten(request) {
       p.assertLeaseCurrent();
-      const clientOrderId = reductionClientOrderId(request.incidentId);
+      const clientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
       if (p.reduceExposure) {
         const result = await p.reduceExposure(request);
         return { ...result, clientOrderId: result.clientOrderId || clientOrderId };
@@ -277,18 +299,19 @@ export function createVenueReductionTransport(p: {
       }
     },
     async fetchFreshSnapshot(input) {
+      if (p.observeAuthoritative) {
+        return p.observeAuthoritative(input);
+      }
       const snap = await p.snapshot(input.market);
-      const capturedAtMs = (p.nowMs ?? Date.now)();
       return {
         observedAt: snap.observedAt ?? "",
-        observationId: randomUUID(),
-        sourceGeneration: snap.observedAt ? `obs:${snap.observedAt}:${capturedAtMs}` : "",
-        capturedAtMs,
+        observationId: "",
+        sourceGeneration: "",
+        capturedAtMs: (p.nowMs ?? Date.now)(),
         positionQty: snap.position,
         openOrders: snap.openOrders,
         mid: snap.mid,
-        freshness: "fresh",
-        leaseGeneration: input.leaseGeneration,
+        freshness: "cached",
       };
     },
   };
@@ -301,8 +324,64 @@ export async function runActualNotionalHardHalt(
   const nowMs = p.nowMs ?? Date.now;
   const maxFlattenAttempts = Math.max(1, Math.min(3, p.maxFlattenAttempts ?? MAX_FLATTEN_ATTEMPTS));
   const qtyStep = p.qtyStep ?? ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE;
+  const persistOptions: RiskStateStoreOptions = {
+    ...p.persistOptions,
+    assertLeaseCurrent: p.assertLeaseCurrent,
+  };
 
-  let durable = loadRiskState(p.experimentId, p.baseDir, p.scopeKey, p.persistOptions);
+  loadRiskState(p.experimentId, p.baseDir, p.scopeKey, persistOptions);
+  const authority = inspectDurableRiskAuthority(p.experimentId, p.baseDir, persistOptions);
+  p.onDurableAuthorityInspected?.(authority);
+
+  let cancel: ActualNotionalHaltResult["cancel"] = null;
+  let flatten: ReductionResult | null = null;
+  let verifiedFlat = false;
+  let lifecycle: ReductionLifecycle = "HALTING";
+  let lastSnap: AuthoritativeReductionSnapshot | null = null;
+
+  const failClosedNoWrite = (
+    reason: string,
+    extras: { cancel?: ActualNotionalHaltResult["cancel"]; flatten?: ReductionResult | null } = {}
+  ): ActualNotionalHaltResult => {
+    errors.push(reason);
+    const evidence = authority.payload;
+    const next = latchForcedHaltInMemory(
+      p.experimentId,
+      {
+        ...evidence,
+        haltReasons: unique([...evidence.haltReasons, ...p.reasons, reason, "ACTUAL_NOTIONAL_CAP"]),
+      },
+      reason,
+      persistOptions
+    );
+    markUnresolvedSession(p, p.leaseGeneration);
+    cancel = extras.cancel ?? cancel ?? { outcome: "NOT_SENT", reasonCode: reason };
+    flatten = extras.flatten ?? flatten;
+    lifecycle = next.reductionPhase || "HALT_FAILED";
+    return {
+      state: next,
+      lifecycle,
+      haltId: next.haltId as string,
+      flatten,
+      cancel,
+      verifiedFlat: false,
+      reseedAllowed: false,
+      errors,
+    };
+  };
+
+  if (typeof p.assertLeaseCurrent !== "function" || !p.leaseGeneration) {
+    return failClosedNoWrite("REDUCTION_LEASE_AUTHORITY_MISSING");
+  }
+  if (!authority.ok) {
+    return failClosedNoWrite(authority.reasons[0] || "RISK_STATE_ACK_DURABLE_PAIR_UNPROVEN");
+  }
+
+  let predecessor = {
+    storeGeneration: authority.storeGeneration,
+    envelopeSha256: authority.envelopeSha256,
+  };
+  const durable = authority.payload;
   const memory = p.state;
   const reasons = unique([
     ...durable.haltReasons,
@@ -310,30 +389,22 @@ export async function runActualNotionalHardHalt(
     ...p.reasons,
     "ACTUAL_NOTIONAL_CAP",
   ]);
-  const preservedId = isNonEmptyHaltId(memory?.haltId)
-    ? memory.haltId
-    : (isNonEmptyHaltId(durable.haltId) ? durable.haltId : undefined);
+  const haltId = isNonEmptyHaltId(durable.haltId)
+    ? durable.haltId
+    : (isNonEmptyHaltId(memory?.haltId) ? memory.haltId : undefined);
 
   let state = ensureIncidentHaltIdentity({
     ...durable,
-    ...memory,
     halted: true,
-    haltStatus: memory?.haltStatus && memory.haltStatus !== "RUNNING"
-      ? memory.haltStatus
-      : (durable.haltStatus !== "RUNNING" ? durable.haltStatus : "HALTING"),
-    haltId: preservedId ?? durable.haltId,
+    haltStatus: durable.haltStatus !== "RUNNING" ? durable.haltStatus : "HALTING",
+    haltId: haltId ?? null,
     haltReasons: reasons,
     acknowledged: false,
-    scopeKey: p.scopeKey ?? memory?.scopeKey ?? durable.scopeKey,
-    leaseGeneration: durable.leaseGeneration ?? memory?.leaseGeneration ?? p.leaseGeneration,
+    scopeKey: p.scopeKey ?? durable.scopeKey ?? memory?.scopeKey ?? null,
+    leaseGeneration: p.leaseGeneration,
     updatedAt: new Date().toISOString(),
-  }, p.persistOptions);
-
-  const haltId = state.haltId as string;
-  let lifecycle: ReductionLifecycle = "HALTING";
-  let cancel: ActualNotionalHaltResult["cancel"] = null;
-  let flatten: ReductionResult | null = null;
-  let verifiedFlat = false;
+  }, persistOptions);
+  const incidentId = state.haltId as string;
 
   const resultOf = (
     next: ExperimentRiskState,
@@ -341,7 +412,7 @@ export async function runActualNotionalHardHalt(
   ): ActualNotionalHaltResult => ({
     state: next,
     lifecycle: nextLifecycle,
-    haltId,
+    haltId: incidentId,
     flatten,
     cancel,
     verifiedFlat,
@@ -350,36 +421,77 @@ export async function runActualNotionalHardHalt(
   });
 
   const persistPhase = (haltStatus: HaltStatus, phase: ReductionPhase): ExperimentRiskState => {
-    const next = withHalt({ ...state, haltReasons: reasons, haltId }, haltStatus, phase, p.persistOptions);
-    persistRiskState(p.experimentId, next, p.baseDir, p.persistOptions);
-    state = next;
-    return next;
+    const leaseErr = tryAssertLease(p.assertLeaseCurrent);
+    if (leaseErr) throw new Error(leaseErr);
+    const next = withHalt({
+      ...state,
+      haltReasons: reasons,
+      haltId: incidentId,
+      leaseGeneration: p.leaseGeneration,
+    }, haltStatus, phase, persistOptions);
+    persistAuthoritativeRiskState(p.experimentId, next, p.baseDir, {
+      ...persistOptions,
+      expectedPredecessor: predecessor,
+    });
+    const after = inspectDurableRiskAuthority(p.experimentId, p.baseDir, persistOptions);
+    if (!after.ok) throw new Error(after.reasons[0] || "RISK_STATE_POST_WRITE_VERIFY_FAILED");
+    predecessor = {
+      storeGeneration: after.storeGeneration,
+      envelopeSha256: after.envelopeSha256,
+    };
+    state = after.payload;
+    return state;
   };
 
-  if (state.haltStatus === "HALTED_FLAT") {
+  if (durable.haltStatus === "HALTED_FLAT") {
     lifecycle = "HALTED_FLAT";
     return resultOf(state, lifecycle);
   }
 
-  try {
-    persistPhase("HALTING", "HALTING");
-  } catch (error) {
-    errors.push(`persist HALTING: ${errText(error)}`);
-    state = latchForcedHaltInMemory(p.experimentId, state, "RISK_STATE_PERSIST_FAILED", p.persistOptions);
-    markUnresolvedSession(p, state.leaseGeneration);
+  const leaseBeforePersist = tryAssertLease(p.assertLeaseCurrent);
+  if (leaseBeforePersist) {
+    return failClosedNoWrite(leaseBeforePersist);
+  }
+
+  if (durable.haltStatus === "RUNNING") {
+    try {
+      persistPhase("HALTING", "HALTING");
+    } catch (error) {
+      errors.push(`persist HALTING: ${errText(error)}`);
+      if (isAuthorityLoss(error)) {
+        return failClosedNoWrite(errText(error));
+      }
+      state = latchForcedHaltInMemory(p.experimentId, state, "RISK_STATE_PERSIST_FAILED", persistOptions);
+      markUnresolvedSession(p, state.leaseGeneration);
+    }
   }
 
   const finalize = (haltStatus: Exclude<HaltStatus, "RUNNING">, phase: ReductionPhase): ActualNotionalHaltResult => {
+    const leaseErr = tryAssertLease(p.assertLeaseCurrent);
+    if (leaseErr) {
+      verifiedFlat = false;
+      errors.push(leaseErr);
+      state = latchForcedHaltInMemory(
+        p.experimentId,
+        { ...state, haltStatus, haltReasons: unique([...state.haltReasons, leaseErr]) },
+        leaseErr,
+        persistOptions
+      );
+      markUnresolvedSession(p, p.leaseGeneration);
+      lifecycle = haltStatus === "HALTED_FLAT" ? "HALT_FAILED" : phase;
+      return resultOf(state, lifecycle);
+    }
     lifecycle = phase;
     try {
       persistPhase(haltStatus, phase);
     } catch (error) {
       errors.push(`persist final: ${errText(error)}`);
+      verifiedFlat = false;
       state = latchForcedHaltInMemory(
         p.experimentId,
         { ...state, haltStatus: "HALT_FAILED", haltReasons: unique([...state.haltReasons, "RISK_STATE_PERSIST_FAILED"]) },
         "RISK_STATE_PERSIST_FAILED",
-        p.persistOptions
+        persistOptions
       );
       markUnresolvedSession(p, state.leaseGeneration);
       lifecycle = "HALT_FAILED";
@@ -401,7 +513,7 @@ export async function runActualNotionalHardHalt(
     p.assertLeaseCurrent();
     cancel = await p.transport.cancelOwnedOrders({
       market: p.market,
-      incidentId: haltId,
+      incidentId,
       leaseGeneration: p.leaseGeneration,
       orders: ownedRiskIncreasing,
     });
@@ -412,24 +524,25 @@ export async function runActualNotionalHardHalt(
 
   const leaseBeforeFlatten = tryAssertLease(p.assertLeaseCurrent);
   if (leaseBeforeFlatten) {
-    flatten = { outcome: "NOT_SENT", clientOrderId: reductionClientOrderId(haltId), reasonCode: leaseBeforeFlatten };
+    flatten = { outcome: "NOT_SENT", clientOrderId: reductionClientOrderId(incidentId), reasonCode: leaseBeforeFlatten };
     return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
   }
 
   lifecycle = "REDUCING_EXPOSURE";
-  const side = classifyExposureReducingSide(p.positionQty);
-  const qty = boundFlattenQty(p.positionQty, Math.abs(p.positionQty), qtyStep);
-  const request: ReductionRequest & { side: Side; qty: number } = {
+  let request: ReductionRequest & { side: Side; qty: number } = {
     market: p.market,
     targetAbsPositionQty: 0,
-    incidentId: haltId,
+    incidentId,
     leaseGeneration: p.leaseGeneration,
-    side: side ?? "sell",
-    qty,
+    positionQty: p.positionQty,
+    attempt: 1,
+    side: classifyExposureReducingSide(p.positionQty) ?? "sell",
+    qty: boundFlattenQty(p.positionQty, Math.abs(p.positionQty), qtyStep),
   };
-  const clientOrderId = reductionClientOrderId(haltId);
+  const clientOrderId = reductionClientOrderId(incidentId, request.attempt);
+  const canFlatten = classifyExposureReducingSide(p.positionQty) && request.qty > 0;
 
-  if (side && qty > 0) {
+  if (canFlatten) {
     try {
       p.assertLeaseCurrent();
       const submitted = await p.transport.submitFlatten(request);
@@ -441,26 +554,35 @@ export async function runActualNotionalHardHalt(
     flatten = { outcome: "ACK", clientOrderId, reasonCode: "ALREADY_FLAT_POSITION" };
   }
 
-  if (flatten.outcome === "REJECTED" || (flatten.outcome === "NOT_SENT" && side && qty > 0)) {
-    return finalize(flatten.outcome === "REJECTED" ? "HALTED_UNFLAT" : "HALTED_UNFLAT", "HALTED_UNFLAT");
+  if (flatten.outcome === "REJECTED" || (flatten.outcome === "NOT_SENT" && canFlatten)) {
+    return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
   }
 
-  let lastSnap: AuthoritativeReductionSnapshot | null = null;
   const mutationAttemptAtMs = nowMs();
-  const verifyOnce = async (): Promise<SnapshotVerification> => {
+  const verifyOnce = async (): Promise<{
+    verification: SnapshotVerification;
+    snap: AuthoritativeReductionSnapshot;
+  }> => {
+    const beforeRead = tryAssertLease(p.assertLeaseCurrent);
+    if (beforeRead) throw new Error(beforeRead);
     const snap = await p.transport.fetchFreshSnapshot({
       market: p.market,
       mutationAttemptAtMs,
       leaseGeneration: p.leaseGeneration,
     });
+    const afterRead = tryAssertLease(p.assertLeaseCurrent);
+    if (afterRead) throw new Error(afterRead);
     lastSnap = snap;
-    return verifyFlattenSnapshot({
-      snapshot: snap,
-      mutationAttemptAtMs,
-      ownershipPrefix: p.ownershipPrefix,
-      nowMs: nowMs(),
-      expectedLeaseGeneration: p.leaseGeneration,
-    });
+    return {
+      snap,
+      verification: verifyFlattenSnapshot({
+        snapshot: snap,
+        mutationAttemptAtMs,
+        ownershipPrefix: p.ownershipPrefix,
+        nowMs: nowMs(),
+        expectedLeaseGeneration: p.leaseGeneration,
+      }),
+    };
   };
 
   const acceptVerified = (haltStatus: Exclude<HaltStatus, "RUNNING">): ActualNotionalHaltResult => {
@@ -471,44 +593,59 @@ export async function runActualNotionalHardHalt(
 
   if (flatten.outcome === "UNKNOWN") {
     try {
-      const verified = await verifyOnce();
-      verifiedFlat = verified.ok;
-      if (!verified.ok) errors.push(verified.reasonCode);
+      const { verification } = await verifyOnce();
+      verifiedFlat = verification.ok;
+      if (!verification.ok) errors.push(verification.reasonCode);
     } catch (error) {
       errors.push(errText(error));
+      verifiedFlat = false;
     }
     return acceptVerified(lastSnap ? "HALTED_UNFLAT" : "HALT_FAILED");
   }
 
   for (let attempt = 1; attempt <= maxFlattenAttempts; attempt++) {
     try {
-      const verified = await verifyOnce();
-      if (verified.ok) {
+      const { verification, snap } = await verifyOnce();
+      if (verification.ok) {
         verifiedFlat = true;
         break;
       }
-      errors.push(verified.reasonCode);
-      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE/.test(verified.reasonCode)) {
+      errors.push(verification.reasonCode);
+      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE/.test(verification.reasonCode)) {
         break;
       }
-      if (attempt >= maxFlattenAttempts || !side || !(qty > 0)) break;
+      if (attempt >= maxFlattenAttempts) break;
       if (tryAssertLease(p.assertLeaseCurrent)) break;
+      const latestQty = snap.positionQty;
+      const retrySide = classifyExposureReducingSide(latestQty);
+      const retryQty = boundFlattenQty(latestQty, Math.abs(latestQty), qtyStep);
+      if (!retrySide || !(retryQty > 0)) break;
+      const bytesChanged = retrySide !== request.side || retryQty !== request.qty;
+      request = {
+        ...request,
+        side: retrySide,
+        qty: retryQty,
+        positionQty: latestQty,
+        attempt: bytesChanged ? request.attempt + 1 : request.attempt,
+      };
       const retry = await p.transport.submitFlatten(request);
-      flatten = { ...retry, clientOrderId: retry.clientOrderId || clientOrderId };
+      flatten = { ...retry, clientOrderId: retry.clientOrderId || reductionClientOrderId(incidentId, request.attempt) };
       if (retry.outcome !== "ACK") {
         if (retry.outcome === "UNKNOWN") {
           try {
             const again = await verifyOnce();
-            verifiedFlat = again.ok;
-            if (!again.ok) errors.push(again.reasonCode);
+            verifiedFlat = again.verification.ok;
+            if (!again.verification.ok) errors.push(again.verification.reasonCode);
           } catch (error) {
             errors.push(errText(error));
+            verifiedFlat = false;
           }
         }
         break;
       }
     } catch (error) {
       errors.push(errText(error));
+      verifiedFlat = false;
       break;
     }
   }

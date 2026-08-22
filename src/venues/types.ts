@@ -1,5 +1,9 @@
 import type { ApplyResult, Intent, Side, VenueId, VenueSnapshot } from "../types.js";
-import type { ReductionRequest, ReductionResult } from "../experimentReduction.js";
+import type {
+  AuthoritativeReductionSnapshot,
+  ReductionRequest,
+  ReductionResult,
+} from "../experimentReduction.js";
 import type { ExtendedObservationResult } from "./extendedObservation.js";
 
 export type VenueExecutor = {
@@ -23,6 +27,12 @@ export type VenueExecutor = {
   setLeaseGeneration?(generation: number): void;
   /** Venue-native strict read result, when the adapter supports one. */
   strictSnapshot?(market: string): Promise<ExtendedObservationResult>;
+  /** Adapter-produced post-write observation. Must not be synthesized by the reduction wrapper. */
+  authoritativeReductionSnapshot?(p: {
+    market: string;
+    mutationAttemptAtMs: number;
+    leaseGeneration: string;
+  }): Promise<AuthoritativeReductionSnapshot>;
 };
 
 export function dryApply(venue: VenueId, intents: Intent[]): ApplyResult {

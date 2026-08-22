@@ -19,7 +19,7 @@ import {
   worstCaseGrossNotionalUsd,
   experimentDir,
   loadRiskState,
-  persistRiskState,
+  persistAuthoritativeRiskState,
   type ExperimentRiskState,
 } from "./experimentRisk.js";
 import {
@@ -154,7 +154,11 @@ async function applyExperimentGuards(p: {
     experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "FORCED_HALT_IN_MEMORY_ONLY");
   }
   try {
-    if (!persistenceFailed) persistRiskState(cfg.experiment.id, experimentRiskState);
+    if (!persistenceFailed) {
+      persistAuthoritativeRiskState(cfg.experiment.id, experimentRiskState, undefined, {
+        assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      });
+    }
   } catch (error: any) {
     persistenceFailed = true;
     experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "RISK_STATE_PERSIST_FAILED");
@@ -222,6 +226,9 @@ async function applyExperimentGuards(p: {
             }
           : undefined,
         snapshot: (killMarket) => rt.ex.snapshot(killMarket),
+        observeAuthoritative: rt.ex.authoritativeReductionSnapshot
+          ? (input) => rt.ex.authoritativeReductionSnapshot!(input)
+          : undefined,
         assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
       }),
       assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
