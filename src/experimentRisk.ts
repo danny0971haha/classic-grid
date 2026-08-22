@@ -60,10 +60,38 @@ export type ExperimentRiskState = {
   updatedAt: string;
 };
 
+export type AckLifecycleStep =
+  | "BEFORE_PREDECESSOR_INSPECTION"
+  | "AFTER_PREDECESSOR_INSPECTION"
+  | "BEFORE_COMMIT"
+  | "AFTER_COMMIT"
+  | "BEFORE_FINAL_VERIFICATION";
+
+export type PersistRiskStateResult = {
+  state: ExperimentRiskState;
+  persistenceProven: boolean;
+  reasons: string[];
+};
+
+export type AcknowledgeHaltResult = {
+  state: ExperimentRiskState;
+  accepted: boolean;
+  persistenceProven: boolean;
+  acknowledgedHaltId: string | null;
+  reasons: string[];
+};
+
 export type RiskStateStoreOptions = StorageOptions & {
   now?: () => Date;
   randomId?: () => string;
+  onAckStep?: (step: AckLifecycleStep, targetPath: string) => void;
+  expectedPredecessor?: {
+    storeGeneration: number;
+    envelopeSha256: string;
+  };
 };
+
+const forcedHaltLatches = new Map<string, { haltId: string; reasons: string[] }>();
 
 const RISK_STATE_KIND = "experiment-risk-state";
 const UNSCOPED = "UNSCOPED";
@@ -123,13 +151,20 @@ function isNullableFinite(value: unknown): boolean {
   return value === null || (typeof value === "number" && Number.isFinite(value));
 }
 
+function isNonEmptyHaltId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
 function isExperimentRiskState(value: unknown): value is ExperimentRiskState {
   const row = value as Partial<ExperimentRiskState> | null;
   if (!row || typeof row !== "object") return false;
   if (typeof row.halted !== "boolean" || !HALT_STATUSES.includes(row.haltStatus as HaltStatus)) return false;
-  if (row.halted === (row.haltStatus === "RUNNING")) return false;
-  if (!(row.haltId === null || typeof row.haltId === "string")) return false;
   if (!Array.isArray(row.haltReasons) || !row.haltReasons.every((reason) => typeof reason === "string")) return false;
+  if (row.haltStatus === "RUNNING") {
+    if (row.halted !== false || row.haltId !== null || row.haltReasons.length !== 0) return false;
+  } else if (row.halted !== true || !isNonEmptyHaltId(row.haltId) || row.acknowledged !== false) {
+    return false;
+  }
   if (!(row.scopeKey === null || typeof row.scopeKey === "string")) return false;
   if (!(row.leaseGeneration === null || typeof row.leaseGeneration === "string")) return false;
   if (!isNullableFinite(row.startingEquityUsd) || !isNullableFinite(row.highWaterMarkUsd)) return false;
@@ -137,6 +172,41 @@ function isExperimentRiskState(value: unknown): value is ExperimentRiskState {
   if (typeof row.drawdownFromHwmUsd !== "number" || !Number.isFinite(row.drawdownFromHwmUsd) || row.drawdownFromHwmUsd < 0) return false;
   if (typeof row.acknowledged !== "boolean") return false;
   return typeof row.updatedAt === "string" && Number.isFinite(Date.parse(row.updatedAt));
+}
+
+export function ensureIncidentHaltIdentity(
+  state: ExperimentRiskState,
+  options?: RiskStateStoreOptions
+): ExperimentRiskState {
+  if (state.haltStatus === "RUNNING" && !state.halted) {
+    return { ...state, haltId: null };
+  }
+  return {
+    ...state,
+    halted: true,
+    haltStatus: state.haltStatus === "RUNNING" ? "HALTING" : state.haltStatus,
+    haltId: isNonEmptyHaltId(state.haltId) ? state.haltId : newHaltId(options),
+    acknowledged: false,
+  };
+}
+
+export function isForcedHaltInMemoryOnly(experimentId: string): boolean {
+  return forcedHaltLatches.has(experimentId);
+}
+
+export function latchForcedHaltInMemory(
+  experimentId: string,
+  state: ExperimentRiskState,
+  reasons: string | string[],
+  options: RiskStateStoreOptions = {}
+): ExperimentRiskState {
+  const additions = Array.isArray(reasons) ? reasons : [reasons];
+  const halted = ensureIncidentHaltIdentity(
+    forceHalt(state, [...additions, "FORCED_HALT_IN_MEMORY_ONLY"], state.scopeKey || undefined, options),
+    options
+  );
+  forcedHaltLatches.set(experimentId, { haltId: halted.haltId as string, reasons: halted.haltReasons });
+  return halted;
 }
 
 function normalizeLegacyState(raw: any, expectedScope: string | undefined, options: RiskStateStoreOptions): ExperimentRiskState | null {
@@ -165,16 +235,17 @@ function normalizeLegacyState(raw: any, expectedScope: string | undefined, optio
 
 function forceHalt(
   state: ExperimentRiskState,
-  reason: string,
+  reason: string | string[],
   expectedScope: string | undefined,
   options: RiskStateStoreOptions
 ): ExperimentRiskState {
+  const additions = Array.isArray(reason) ? reason : [reason];
   return {
     ...state,
     halted: true,
     haltStatus: "HALT_FAILED",
-    haltId: state.haltId || newHaltId(options),
-    haltReasons: Array.from(new Set([...state.haltReasons, reason])),
+    haltId: isNonEmptyHaltId(state.haltId) ? state.haltId : newHaltId(options),
+    haltReasons: Array.from(new Set([...state.haltReasons, ...additions])),
     scopeKey: expectedScope || state.scopeKey,
     acknowledged: false,
     updatedAt: nowIso(options),
@@ -406,6 +477,16 @@ export function persistRiskState(
     throw new Error("RISK_STATE_NO_VALID_PREDECESSOR");
   }
 
+  if (
+    options.expectedPredecessor &&
+    (
+      predecessor.storeGeneration !== options.expectedPredecessor.storeGeneration ||
+      predecessor.envelopeSha256 !== options.expectedPredecessor.envelopeSha256
+    )
+  ) {
+    throw new Error("RISK_STATE_PREDECESSOR_CHANGED");
+  }
+
   const writtenAt = nowIso(options);
   const next = createChecksummedEnvelopeV2({
     kind: RISK_STATE_KIND,
@@ -419,29 +500,222 @@ export function persistRiskState(
     payload: state,
   });
   writeEnvelope(primaryPath, next, options);
+  const verified = inspectRiskCopy(primaryPath, experimentId, scopeKey, options);
+  if (verified.condition !== "VALID" || !verified.envelope) {
+    throw new Error("RISK_STATE_POST_WRITE_VERIFY_FAILED");
+  }
+  if (
+    verified.envelope.storeGeneration !== predecessor.storeGeneration + 1 ||
+    verified.envelope.previousEnvelopeSha256 !== predecessor.envelopeSha256 ||
+    verified.envelope.payload.haltStatus !== state.haltStatus ||
+    verified.envelope.payload.haltId !== state.haltId ||
+    verified.envelope.payload.halted !== state.halted
+  ) {
+    throw new Error("RISK_STATE_POST_WRITE_MISMATCH");
+  }
 }
 
-/** Clear exactly one halt by presenting its unique halt id. Static YES is rejected. */
-export function acknowledgeHaltIfRequested(
+type AckPairInspection =
+  | { ok: true; envelope: ChecksummedEnvelopeV2<ExperimentRiskState>; payload: ExperimentRiskState }
+  | { ok: false; reasons: string[]; evidence: ExperimentRiskState };
+
+function inspectAuthoritativePair(
   experimentId: string,
-  state: ExperimentRiskState,
-  baseDir?: string
-): ExperimentRiskState {
-  if (!state.halted) return state;
+  baseDir: string | undefined,
+  options: RiskStateStoreOptions
+): AckPairInspection {
+  const primaryPath = riskStatePath(experimentId, baseDir);
+  const backupPath = `${primaryPath}.bak`;
+  const primary = inspectRiskCopy(primaryPath, experimentId, undefined, options);
+  const backup = inspectRiskCopy(backupPath, experimentId, undefined, options);
+  if (primary.condition === "VALID" && primary.envelope && backup.condition === "VALID" && backup.envelope) {
+    const pairError = pairFailureReason(primary.envelope, backup.envelope);
+    if (pairError) {
+      return {
+        ok: false,
+        reasons: [pairError, "RISK_STATE_ACK_DURABLE_PAIR_UNPROVEN"],
+        evidence: primary.envelope.payload,
+      };
+    }
+    return { ok: true, envelope: primary.envelope, payload: primary.envelope.payload };
+  }
+  const evidence =
+    primary.condition === "VALID" && primary.envelope
+      ? primary.envelope.payload
+      : backup.condition === "VALID" && backup.envelope
+        ? backup.envelope.payload
+        : failClosedState([
+          "RISK_STATE_ACK_DURABLE_PAIR_UNPROVEN",
+          copyConditionReason(primary.condition, "PRIMARY"),
+          copyConditionReason(backup.condition, "BACKUP"),
+        ], undefined, options);
+  return {
+    ok: false,
+    reasons: [
+      "RISK_STATE_ACK_DURABLE_PAIR_UNPROVEN",
+      copyConditionReason(primary.condition, "PRIMARY"),
+      copyConditionReason(backup.condition, "BACKUP"),
+    ],
+    evidence,
+  };
+}
+
+function runAckStep(options: RiskStateStoreOptions, step: AckLifecycleStep, targetPath: string): void {
+  options.onAckStep?.(step, targetPath);
+}
+
+function rejectAck(state: ExperimentRiskState, reasons: string[], options: RiskStateStoreOptions): AcknowledgeHaltResult {
+  const next = state.halted && isNonEmptyHaltId(state.haltId)
+    ? { ...state, acknowledged: false }
+    : forceHalt(state, reasons, state.scopeKey || undefined, options);
+  return {
+    state: next,
+    accepted: false,
+    persistenceProven: false,
+    acknowledgedHaltId: null,
+    reasons,
+  };
+}
+
+/** Durable compare-and-commit ACK. Caller state is a stale-binding claim, never write authority. */
+export function acknowledgeDurableHalt(
+  experimentId: string,
+  callerState: ExperimentRiskState,
+  baseDir?: string,
+  options: RiskStateStoreOptions = {}
+): AcknowledgeHaltResult {
+  const primaryPath = riskStatePath(experimentId, baseDir);
+  if (isForcedHaltInMemoryOnly(experimentId)) {
+    return rejectAck(callerState, ["FORCED_HALT_IN_MEMORY_ONLY"], options);
+  }
+
+  runAckStep(options, "BEFORE_PREDECESSOR_INSPECTION", primaryPath);
+  const first = inspectAuthoritativePair(experimentId, baseDir, options);
+  if (!first.ok) return rejectAck(first.evidence, first.reasons, options);
+  const bound = {
+    storeGeneration: first.envelope.storeGeneration,
+    envelopeSha256: first.envelope.envelopeSha256,
+    haltId: first.payload.haltId,
+    scopeKey: first.payload.scopeKey,
+    leaseGeneration: first.payload.leaseGeneration,
+  };
+  runAckStep(options, "AFTER_PREDECESSOR_INSPECTION", primaryPath);
+
+  if (!callerState.halted || callerState.haltStatus === "RUNNING" || !isNonEmptyHaltId(callerState.haltId)) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_CALLER_NOT_HALTED"], options);
+  }
+  if (callerState.haltId !== first.payload.haltId) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_CALLER_HALT_ID_STALE"], options);
+  }
+  if ((callerState.scopeKey || UNSCOPED) !== (first.payload.scopeKey || UNSCOPED)) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_CALLER_SCOPE_STALE"], options);
+  }
+  if (callerState.leaseGeneration !== first.payload.leaseGeneration) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_CALLER_LEASE_STALE"], options);
+  }
+  if (!first.payload.halted || first.payload.haltStatus === "RUNNING" || !isNonEmptyHaltId(first.payload.haltId)) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_NOT_HALTED"], options);
+  }
+
   const ack = String(process.env.EXPERIMENT_HALT_ACK || "").trim();
-  if (!state.haltId || ack !== state.haltId) return state;
+  if (!ack) {
+    return {
+      state: first.payload,
+      accepted: false,
+      persistenceProven: false,
+      acknowledgedHaltId: null,
+      reasons: [],
+    };
+  }
+  if (ack !== first.payload.haltId) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_MISMATCH"], options);
+  }
+
+  runAckStep(options, "BEFORE_COMMIT", primaryPath);
+  const second = inspectAuthoritativePair(experimentId, baseDir, options);
+  if (
+    !second.ok ||
+    second.envelope.storeGeneration !== bound.storeGeneration ||
+    second.envelope.envelopeSha256 !== bound.envelopeSha256 ||
+    second.payload.haltId !== bound.haltId ||
+    (second.payload.scopeKey || UNSCOPED) !== (bound.scopeKey || UNSCOPED) ||
+    second.payload.leaseGeneration !== bound.leaseGeneration
+  ) {
+    return rejectAck(
+      second.ok ? second.payload : second.evidence,
+      ["RISK_STATE_ACK_PREDECESSOR_CHANGED", ...(second.ok ? [] : second.reasons)],
+      options
+    );
+  }
+
   const next: ExperimentRiskState = {
-    ...state,
+    ...second.payload,
     halted: false,
     haltStatus: "RUNNING",
     haltId: null,
     haltReasons: [],
     acknowledged: true,
-    updatedAt: new Date().toISOString(),
+    updatedAt: nowIso(options),
   };
-  persistRiskState(experimentId, next, baseDir);
+  try {
+    persistRiskState(experimentId, next, baseDir, {
+      ...options,
+      expectedPredecessor: {
+        storeGeneration: bound.storeGeneration,
+        envelopeSha256: bound.envelopeSha256,
+      },
+    });
+  } catch {
+    return rejectAck(second.payload, ["RISK_STATE_PERSIST_FAILED"], options);
+  }
+
+  runAckStep(options, "AFTER_COMMIT", primaryPath);
+  runAckStep(options, "BEFORE_FINAL_VERIFICATION", primaryPath);
+  const verified = inspectAuthoritativePair(experimentId, baseDir, options);
+  const accepted = Boolean(
+    verified.ok &&
+    verified.payload.halted === false &&
+    verified.payload.haltStatus === "RUNNING" &&
+    verified.payload.haltId === null &&
+    verified.payload.acknowledged === true &&
+    verified.payload.haltReasons.length === 0 &&
+    verified.envelope.storeGeneration === bound.storeGeneration + 1 &&
+    verified.envelope.previousEnvelopeSha256 === bound.envelopeSha256 &&
+    (verified.payload.scopeKey || UNSCOPED) === (bound.scopeKey || UNSCOPED) &&
+    verified.payload.leaseGeneration === bound.leaseGeneration
+  );
+  if (!accepted) {
+    return rejectAck(
+      verified.ok ? forceHalt(verified.payload, "RISK_STATE_ACK_VERIFY_FAILED", verified.payload.scopeKey || undefined, options) : verified.evidence,
+      ["RISK_STATE_ACK_VERIFY_FAILED", ...(verified.ok ? [] : verified.reasons)],
+      options
+    );
+  }
+
+  if (!verified.ok) {
+    return rejectAck(verified.evidence, ["RISK_STATE_ACK_VERIFY_FAILED", ...verified.reasons], options);
+  }
   delete process.env.EXPERIMENT_HALT_ACK;
-  return next;
+  console.info(
+    `[experiment] halt acknowledged haltId=${bound.haltId} experiment=${experimentId} scope=${bound.scopeKey || UNSCOPED} lease=${bound.leaseGeneration || ""} storeGeneration=${verified.envelope.storeGeneration}`
+  );
+  return {
+    state: verified.payload,
+    accepted: true,
+    persistenceProven: true,
+    acknowledgedHaltId: bound.haltId,
+    reasons: [],
+  };
+}
+
+/** Compatibility wrapper: returns only the resulting state. */
+export function acknowledgeHaltIfRequested(
+  experimentId: string,
+  state: ExperimentRiskState,
+  baseDir?: string,
+  options: RiskStateStoreOptions = {}
+): ExperimentRiskState {
+  return acknowledgeDurableHalt(experimentId, state, baseDir, options).state;
 }
 
 /** Cancels are not subtracted until a fresh exchange snapshot confirms them gone. */
@@ -503,7 +777,7 @@ export function evaluateExperimentRisk(
     reduceOnly = true;
     next.halted = true;
     next.haltStatus = state.halted ? state.haltStatus : "HALTING";
-    next.haltId = state.haltId || crypto.randomUUID();
+    next.haltId = isNonEmptyHaltId(state.haltId) ? state.haltId : crypto.randomUUID();
     next.haltReasons = reasons.length ? reasons : state.haltReasons;
     next.acknowledged = false;
   }

@@ -13,6 +13,8 @@ import {
   emptyRiskState,
   evaluateExperimentRisk,
   filterRiskIncreasingIntents,
+  isForcedHaltInMemoryOnly,
+  latchForcedHaltInMemory,
   worstCaseGrossNotionalUsd,
   experimentDir,
   loadRiskState,
@@ -121,17 +123,15 @@ async function applyExperimentGuards(p: {
     experimentRiskState
   );
   experimentRiskState = next;
-  let persistenceFailed = false;
+  let persistenceFailed = isForcedHaltInMemoryOnly(cfg.experiment.id);
+  if (persistenceFailed && !experimentRiskState.halted) {
+    experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "FORCED_HALT_IN_MEMORY_ONLY");
+  }
   try {
-    persistRiskState(cfg.experiment.id, experimentRiskState);
+    if (!persistenceFailed) persistRiskState(cfg.experiment.id, experimentRiskState);
   } catch (error: any) {
     persistenceFailed = true;
-    experimentRiskState = {
-      ...experimentRiskState,
-      halted: true,
-      haltStatus: "HALT_FAILED",
-      haltReasons: Array.from(new Set([...experimentRiskState.haltReasons, "RISK_STATE_PERSIST_FAILED"])),
-    };
+    experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "RISK_STATE_PERSIST_FAILED");
     console.error(`[experiment] risk-state persist failed: ${String(error?.message || error).slice(0, 160)}`);
   }
   emitExp("SNAPSHOT", {
@@ -748,7 +748,18 @@ export async function runLoop(opts?: {
       leaseGeneration: String(experimentLease.generation),
     };
     experimentLease.assertCurrent();
-    persistRiskState(cfg.experiment.id, experimentRiskState);
+    if (!isForcedHaltInMemoryOnly(cfg.experiment.id)) {
+      try {
+        persistRiskState(cfg.experiment.id, experimentRiskState);
+      } catch (error: any) {
+        experimentRiskState = latchForcedHaltInMemory(
+          cfg.experiment.id,
+          experimentRiskState,
+          "RISK_STATE_PERSIST_FAILED"
+        );
+        console.error(`[experiment] startup risk-state persist failed: ${String(error?.message || error).slice(0, 160)}`);
+      }
+    }
     if (experimentRiskState.halted) {
       console.warn(
         `[experiment] HALTED ${experimentRiskState.haltStatus} reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=${experimentRiskState.haltId} once to resume`

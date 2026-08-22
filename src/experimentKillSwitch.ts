@@ -1,9 +1,13 @@
 import type { VenueSnapshot } from "./types.js";
 import {
+  ensureIncidentHaltIdentity,
+  isForcedHaltInMemoryOnly,
+  latchForcedHaltInMemory,
   loadRiskState,
   persistRiskState,
   type ExperimentRiskState,
   type HaltStatus,
+  type RiskStateStoreOptions,
 } from "./experimentRisk.js";
 
 export type KillSwitchExecutor = {
@@ -47,6 +51,7 @@ export async function runExperimentKillSwitch(p: {
   maxAttempts?: number;
   positionTolerance?: number;
   retryDelayMs?: number;
+  persistOptions?: RiskStateStoreOptions;
   onEvent?: (event: "CANCEL" | "ERROR" | "RISK_HALT" | "SNAPSHOT", fields: Record<string, unknown>) => void;
 }): Promise<KillSwitchResult> {
   const errors: string[] = [];
@@ -58,17 +63,21 @@ export async function runExperimentKillSwitch(p: {
   let snap: VenueSnapshot | null = null;
   let attempts = 0;
 
-  let state = loadRiskState(p.experimentId, p.baseDir, p.scopeKey);
-  state = {
+  let state = loadRiskState(p.experimentId, p.baseDir, p.scopeKey, p.persistOptions);
+  state = ensureIncidentHaltIdentity({
     ...state,
     halted: true,
     haltStatus: "HALTING",
     haltReasons: Array.from(new Set([...state.haltReasons, ...p.reasons])),
     acknowledged: false,
     updatedAt: new Date().toISOString(),
-  };
-  try { persistRiskState(p.experimentId, state, p.baseDir); }
-  catch (error) { errors.push(`persist HALTING: ${errText(error)}`); }
+  }, p.persistOptions);
+  try {
+    persistRiskState(p.experimentId, state, p.baseDir, p.persistOptions);
+  } catch (error) {
+    errors.push(`persist HALTING: ${errText(error)}`);
+    state = latchForcedHaltInMemory(p.experimentId, state, "RISK_STATE_PERSIST_FAILED", p.persistOptions);
+  }
 
   for (attempts = 1; attempts <= maxAttempts; attempts++) {
     try {
@@ -114,17 +123,22 @@ export async function runExperimentKillSwitch(p: {
     : snap
       ? "HALTED_UNFLAT"
       : "HALT_FAILED";
-  state = {
+  state = ensureIncidentHaltIdentity({
     ...state,
     halted: true,
     haltStatus: status,
+    acknowledged: false,
     updatedAt: new Date().toISOString(),
-  };
-  try { persistRiskState(p.experimentId, state, p.baseDir); }
-  catch (error) {
+  }, p.persistOptions);
+  try {
+    persistRiskState(p.experimentId, state, p.baseDir, p.persistOptions);
+  } catch (error) {
     errors.push(`persist final: ${errText(error)}`);
     status = "HALT_FAILED";
-    state = { ...state, haltStatus: status };
+    state = latchForcedHaltInMemory(p.experimentId, { ...state, haltStatus: status }, "RISK_STATE_PERSIST_FAILED", p.persistOptions);
+  }
+  if (isForcedHaltInMemoryOnly(p.experimentId) && !state.haltReasons.includes("FORCED_HALT_IN_MEMORY_ONLY")) {
+    state = { ...state, haltReasons: Array.from(new Set([...state.haltReasons, "FORCED_HALT_IN_MEMORY_ONLY"])) };
   }
   safeEvent(p.onEvent, "RISK_HALT", {
     risk_flags: state.haltReasons,
