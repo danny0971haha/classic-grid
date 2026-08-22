@@ -9,6 +9,7 @@ import {
   inspectChecksummedEnvelopeV2,
   serializeChecksummedEnvelopeV2,
   type ChecksummedEnvelopeV2,
+  type EnvelopeInspection,
 } from "./experimentStorage.js";
 
 export interface RuntimeLeaseRecordV2 {
@@ -415,4 +416,302 @@ export function startRuntimeLeaseHeartbeat(p: {
 export async function withLeaseFence<T>(lease: RuntimeLease, operation: () => Promise<T>): Promise<T> {
   lease.assertCurrent();
   return operation();
+}
+
+export type RuntimeSessionStatus = "OPEN" | "CLEAN_SHUTDOWN" | "RECONCILIATION_REQUIRED";
+
+export type RuntimeSessionMarker = {
+  experimentId: string;
+  scopeKey: string;
+  leaseGeneration: string;
+  sessionId: string;
+  status: RuntimeSessionStatus;
+  openedAt: string;
+  closedAt: string | null;
+  reasonCodes: string[];
+};
+
+export type RuntimeSessionOptions = {
+  experimentDir: string;
+  experimentId: string;
+  scopeKey: string;
+  leaseGeneration: string;
+  now?: () => Date;
+  randomId?: () => string;
+};
+
+export type RuntimeSessionBeginResult = {
+  allowsTrading: boolean;
+  reasonCode: string | null;
+  session: RuntimeSessionMarker | null;
+};
+
+const SESSION_KIND = "classic-grid.runtime-session.v1";
+const SESSION_FILE = "runtime-session.json";
+const SESSION_STATUSES: RuntimeSessionStatus[] = ["OPEN", "CLEAN_SHUTDOWN", "RECONCILIATION_REQUIRED"];
+
+export function runtimeSessionPath(experimentDir: string): string {
+  return path.join(experimentDir, SESSION_FILE);
+}
+
+function sessionNow(options: RuntimeSessionOptions): string {
+  return (options.now?.() || new Date()).toISOString();
+}
+
+function isRuntimeSessionMarker(value: unknown): value is RuntimeSessionMarker {
+  const row = value as Partial<RuntimeSessionMarker> | null;
+  if (!row || typeof row !== "object") return false;
+  if (typeof row.experimentId !== "string" || typeof row.scopeKey !== "string") return false;
+  if (typeof row.leaseGeneration !== "string" || typeof row.sessionId !== "string" || !row.sessionId) return false;
+  if (!SESSION_STATUSES.includes(row.status as RuntimeSessionStatus)) return false;
+  if (typeof row.openedAt !== "string" || !Number.isFinite(Date.parse(row.openedAt))) return false;
+  if (!(row.closedAt === null || (typeof row.closedAt === "string" && Number.isFinite(Date.parse(row.closedAt))))) return false;
+  return Array.isArray(row.reasonCodes) && row.reasonCodes.every((reason) => typeof reason === "string");
+}
+
+function inspectSessionCopy(
+  filePath: string,
+  options: RuntimeSessionOptions
+): EnvelopeInspection<RuntimeSessionMarker> {
+  const inspected = inspectChecksummedEnvelopeV2(filePath, {
+    kind: SESSION_KIND,
+    experimentId: options.experimentId,
+    scopeKey: options.scopeKey,
+    validatePayload: isRuntimeSessionMarker,
+  });
+  if (inspected.condition === "VALID" && inspected.envelope) {
+    const payload = inspected.envelope.payload;
+    if (
+      payload.experimentId !== options.experimentId ||
+      payload.scopeKey !== inspected.envelope.scopeKey ||
+      payload.leaseGeneration !== inspected.envelope.leaseGeneration
+    ) {
+      return { condition: "CORRUPT", raw: inspected.raw, diagnosticCode: "RUNTIME_SESSION_IDENTITY_MISMATCH" };
+    }
+  }
+  return inspected;
+}
+
+function sessionPairError(
+  primary: ChecksummedEnvelopeV2<RuntimeSessionMarker>,
+  backup: ChecksummedEnvelopeV2<RuntimeSessionMarker>
+): string | null {
+  if (backup.storeGeneration > primary.storeGeneration) return "RUNTIME_SESSION_BACKUP_NEWER";
+  if (backup.storeGeneration === primary.storeGeneration) {
+    return backup.envelopeSha256 === primary.envelopeSha256 ? null : "RUNTIME_SESSION_GENERATION_HASH_CONFLICT";
+  }
+  if (backup.storeGeneration !== primary.storeGeneration - 1) return "RUNTIME_SESSION_GENERATION_GAP";
+  if (primary.previousEnvelopeSha256 !== backup.envelopeSha256) return "RUNTIME_SESSION_CHAIN_MISMATCH";
+  return null;
+}
+
+function riskStateFilesExist(experimentDir: string): boolean {
+  const primary = path.join(experimentDir, "risk-state.json");
+  return fs.existsSync(primary) || fs.existsSync(`${primary}.bak`);
+}
+
+function writeSessionEnvelope(
+  options: RuntimeSessionOptions,
+  marker: RuntimeSessionMarker,
+  predecessor: ChecksummedEnvelopeV2<RuntimeSessionMarker> | null
+): RuntimeSessionMarker {
+  const primaryPath = runtimeSessionPath(options.experimentDir);
+  const backupPath = `${primaryPath}.bak`;
+  const writtenAt = sessionNow(options);
+  const next = createChecksummedEnvelopeV2({
+    kind: SESSION_KIND,
+    experimentId: options.experimentId,
+    scopeKey: options.scopeKey,
+    storeGeneration: (predecessor?.storeGeneration || 0) + 1,
+    leaseGeneration: marker.leaseGeneration,
+    createdAt: predecessor?.createdAt || writtenAt,
+    writtenAt,
+    previousEnvelopeSha256: predecessor?.envelopeSha256 || null,
+    payload: marker,
+  });
+  if (predecessor) {
+    const currentPrimary = inspectSessionCopy(primaryPath, options);
+    if (currentPrimary.condition === "VALID" && currentPrimary.raw) {
+      atomicWriteFile(backupPath, currentPrimary.raw);
+    } else {
+      atomicWriteFile(backupPath, serializeChecksummedEnvelopeV2(predecessor));
+    }
+  }
+  atomicWriteFile(primaryPath, serializeChecksummedEnvelopeV2(next));
+  const verified = inspectSessionCopy(primaryPath, options);
+  if (
+    verified.condition !== "VALID" ||
+    !verified.envelope ||
+    verified.envelope.payload.status !== marker.status ||
+    verified.envelope.payload.sessionId !== marker.sessionId ||
+    verified.envelope.payload.leaseGeneration !== marker.leaseGeneration
+  ) {
+    throw new Error("RUNTIME_SESSION_VERIFY_FAILED");
+  }
+  if (!predecessor && verified.raw) atomicWriteFile(backupPath, verified.raw);
+  return verified.envelope.payload;
+}
+
+function inspectSessionPair(options: RuntimeSessionOptions): {
+  condition: "VALID" | "MISSING" | "CORRUPT" | "CONFLICT" | "UNPROVEN";
+  diagnosticCode: string;
+  envelope: ChecksummedEnvelopeV2<RuntimeSessionMarker> | null;
+  raw: string | null;
+} {
+  const primaryPath = runtimeSessionPath(options.experimentDir);
+  const primary = inspectSessionCopy(primaryPath, options);
+  const backup = inspectSessionCopy(`${primaryPath}.bak`, options);
+  if (primary.condition === "MISSING" && backup.condition === "MISSING") {
+    return { condition: "MISSING", diagnosticCode: "RUNTIME_SESSION_MISSING", envelope: null, raw: null };
+  }
+  if (primary.condition === "VALID" && primary.envelope && backup.condition === "VALID" && backup.envelope) {
+    const pairError = sessionPairError(primary.envelope, backup.envelope);
+    if (pairError) {
+      return { condition: pairError.includes("CONFLICT") ? "CONFLICT" : "UNPROVEN", diagnosticCode: pairError, envelope: primary.envelope, raw: primary.raw || null };
+    }
+    return { condition: "VALID", diagnosticCode: "VALID", envelope: primary.envelope, raw: primary.raw || null };
+  }
+  if (primary.condition === "VALID" && primary.envelope && (backup.condition === "MISSING" || backup.condition === "CORRUPT")) {
+    return { condition: "UNPROVEN", diagnosticCode: "RUNTIME_SESSION_BACKUP_UNPROVEN", envelope: primary.envelope, raw: primary.raw || null };
+  }
+  if (primary.condition !== "VALID" && backup.condition === "VALID" && backup.envelope) {
+    return { condition: "UNPROVEN", diagnosticCode: "RUNTIME_SESSION_PRIMARY_UNPROVEN", envelope: backup.envelope, raw: backup.raw || null };
+  }
+  return { condition: "CORRUPT", diagnosticCode: "RUNTIME_SESSION_UNPROVEN", envelope: null, raw: null };
+}
+
+export function inspectRuntimeSession(options: RuntimeSessionOptions): {
+  condition: "VALID" | "MISSING" | "CORRUPT" | "CONFLICT" | "STALE" | "UNPROVEN";
+  diagnosticCode: string;
+  session: RuntimeSessionMarker | null;
+} {
+  const pair = inspectSessionPair(options);
+  if (pair.condition !== "VALID" || !pair.envelope) {
+    return { condition: pair.condition, diagnosticCode: pair.diagnosticCode, session: pair.envelope?.payload || null };
+  }
+  if (pair.envelope.payload.leaseGeneration !== options.leaseGeneration) {
+    return { condition: "STALE", diagnosticCode: "RUNTIME_SESSION_STALE_LEASE", session: pair.envelope.payload };
+  }
+  return { condition: "VALID", diagnosticCode: "VALID", session: pair.envelope.payload };
+}
+
+export function requireVerifiedOpenSession(options: RuntimeSessionOptions): RuntimeSessionMarker {
+  const inspected = inspectRuntimeSession(options);
+  if (inspected.condition === "MISSING") throw new Error("RUNTIME_SESSION_MISSING");
+  if (inspected.condition === "STALE") throw new Error("RUNTIME_SESSION_STALE");
+  if (inspected.condition !== "VALID" || !inspected.session) throw new Error(inspected.diagnosticCode || "RUNTIME_SESSION_UNPROVEN");
+  if (inspected.session.status !== "OPEN") throw new Error("RUNTIME_SESSION_NOT_OPEN");
+  return inspected.session;
+}
+
+export function beginRuntimeSession(options: RuntimeSessionOptions): RuntimeSessionBeginResult {
+  fs.mkdirSync(options.experimentDir, { recursive: true });
+  const pair = inspectSessionPair(options);
+  if (pair.condition === "MISSING") {
+    if (riskStateFilesExist(options.experimentDir)) {
+      return { allowsTrading: false, reasonCode: "RUNTIME_SESSION_MISSING_AFTER_PRIOR_RUNTIME", session: null };
+    }
+    try {
+      const openedAt = sessionNow(options);
+      const session = writeSessionEnvelope(options, {
+        experimentId: options.experimentId,
+        scopeKey: options.scopeKey,
+        leaseGeneration: options.leaseGeneration,
+        sessionId: options.randomId?.() || crypto.randomUUID(),
+        status: "OPEN",
+        openedAt,
+        closedAt: null,
+        reasonCodes: [],
+      }, null);
+      return { allowsTrading: true, reasonCode: null, session };
+    } catch {
+      return { allowsTrading: false, reasonCode: "RUNTIME_SESSION_CREATE_FAILED", session: null };
+    }
+  }
+  if (pair.condition !== "VALID" || !pair.envelope) {
+    return { allowsTrading: false, reasonCode: pair.diagnosticCode, session: pair.envelope?.payload || null };
+  }
+  const current = pair.envelope.payload;
+  if (current.status === "RECONCILIATION_REQUIRED") {
+    return { allowsTrading: false, reasonCode: "RECONCILIATION_REQUIRED", session: current };
+  }
+  if (current.status === "OPEN") {
+    try {
+      const marked = writeSessionEnvelope(options, {
+        ...current,
+        status: "RECONCILIATION_REQUIRED",
+        closedAt: sessionNow(options),
+        reasonCodes: Array.from(new Set([...current.reasonCodes, "UNCLEAN_PREVIOUS_SESSION"])),
+      }, pair.envelope);
+      return { allowsTrading: false, reasonCode: "RECONCILIATION_REQUIRED", session: marked };
+    } catch {
+      return { allowsTrading: false, reasonCode: "RECONCILIATION_REQUIRED", session: current };
+    }
+  }
+  if (current.status === "CLEAN_SHUTDOWN") {
+    if (current.experimentId !== options.experimentId || current.scopeKey !== options.scopeKey) {
+      return { allowsTrading: false, reasonCode: "RUNTIME_SESSION_STALE", session: current };
+    }
+    try {
+      const openedAt = sessionNow(options);
+      const session = writeSessionEnvelope(options, {
+        experimentId: options.experimentId,
+        scopeKey: options.scopeKey,
+        leaseGeneration: options.leaseGeneration,
+        sessionId: options.randomId?.() || crypto.randomUUID(),
+        status: "OPEN",
+        openedAt,
+        closedAt: null,
+        reasonCodes: [],
+      }, pair.envelope);
+      return { allowsTrading: true, reasonCode: null, session };
+    } catch {
+      return { allowsTrading: false, reasonCode: "RUNTIME_SESSION_CREATE_FAILED", session: current };
+    }
+  }
+  return { allowsTrading: false, reasonCode: "RUNTIME_SESSION_UNPROVEN", session: current };
+}
+
+export function completeRuntimeSession(options: RuntimeSessionOptions): void {
+  const pair = inspectSessionPair(options);
+  if (pair.condition !== "VALID" || !pair.envelope || pair.envelope.payload.status !== "OPEN") {
+    throw new Error("RUNTIME_SESSION_NOT_OPEN");
+  }
+  if (pair.envelope.payload.leaseGeneration !== options.leaseGeneration) {
+    throw new Error("RUNTIME_SESSION_STALE");
+  }
+  writeSessionEnvelope(options, {
+    ...pair.envelope.payload,
+    status: "CLEAN_SHUTDOWN",
+    closedAt: sessionNow(options),
+  }, pair.envelope);
+}
+
+export function markRuntimeSessionReconciliationRequired(
+  options: RuntimeSessionOptions & { reasonCodes?: string[] }
+): void {
+  const pair = inspectSessionPair(options);
+  const reasons = options.reasonCodes || ["RECONCILIATION_REQUIRED"];
+  if (pair.condition === "VALID" && pair.envelope) {
+    writeSessionEnvelope(options, {
+      ...pair.envelope.payload,
+      status: "RECONCILIATION_REQUIRED",
+      closedAt: sessionNow(options),
+      reasonCodes: Array.from(new Set([...pair.envelope.payload.reasonCodes, ...reasons])),
+    }, pair.envelope);
+    return;
+  }
+  if (pair.condition === "MISSING") {
+    const openedAt = sessionNow(options);
+    writeSessionEnvelope(options, {
+      experimentId: options.experimentId,
+      scopeKey: options.scopeKey,
+      leaseGeneration: options.leaseGeneration,
+      sessionId: options.randomId?.() || crypto.randomUUID(),
+      status: "RECONCILIATION_REQUIRED",
+      openedAt,
+      closedAt: openedAt,
+      reasonCodes: reasons,
+    }, null);
+  }
 }

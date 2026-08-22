@@ -1,6 +1,7 @@
 import type { VenueSnapshot } from "./types.js";
 import {
   ensureIncidentHaltIdentity,
+  experimentDir,
   isForcedHaltInMemoryOnly,
   latchForcedHaltInMemory,
   loadRiskState,
@@ -9,6 +10,7 @@ import {
   type HaltStatus,
   type RiskStateStoreOptions,
 } from "./experimentRisk.js";
+import { markRuntimeSessionReconciliationRequired } from "./runtimeLease.js";
 
 export type KillSwitchExecutor = {
   cancelAll(market: string): Promise<void>;
@@ -39,6 +41,24 @@ function safeEvent(
 
 function errText(error: unknown): string {
   return String((error as any)?.message || error).slice(0, 300);
+}
+
+function markUnresolvedSession(p: {
+  experimentId: string;
+  baseDir?: string;
+  scopeKey?: string;
+}, leaseGeneration: string | null): void {
+  try {
+    markRuntimeSessionReconciliationRequired({
+      experimentDir: experimentDir(p.experimentId, p.baseDir),
+      experimentId: p.experimentId,
+      scopeKey: p.scopeKey || "UNSCOPED",
+      leaseGeneration: leaseGeneration || "",
+      reasonCodes: ["RISK_STATE_PERSIST_FAILED"],
+    });
+  } catch {
+    /* leftover OPEN or missing+risk-state still fail-closes the next start */
+  }
 }
 
 export async function runExperimentKillSwitch(p: {
@@ -77,6 +97,7 @@ export async function runExperimentKillSwitch(p: {
   } catch (error) {
     errors.push(`persist HALTING: ${errText(error)}`);
     state = latchForcedHaltInMemory(p.experimentId, state, "RISK_STATE_PERSIST_FAILED", p.persistOptions);
+    markUnresolvedSession(p, state.leaseGeneration);
   }
 
   for (attempts = 1; attempts <= maxAttempts; attempts++) {
@@ -136,6 +157,7 @@ export async function runExperimentKillSwitch(p: {
     errors.push(`persist final: ${errText(error)}`);
     status = "HALT_FAILED";
     state = latchForcedHaltInMemory(p.experimentId, { ...state, haltStatus: status }, "RISK_STATE_PERSIST_FAILED", p.persistOptions);
+    markUnresolvedSession(p, state.leaseGeneration);
   }
   if (isForcedHaltInMemoryOnly(p.experimentId) && !state.haltReasons.includes("FORCED_HALT_IN_MEMORY_ONLY")) {
     state = { ...state, haltReasons: Array.from(new Set([...state.haltReasons, "FORCED_HALT_IN_MEMORY_ONLY"])) };

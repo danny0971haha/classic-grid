@@ -28,6 +28,9 @@ import {
 import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "./softResume.js";
 import {
   acquireRuntimeLease,
+  beginRuntimeSession,
+  completeRuntimeSession,
+  markRuntimeSessionReconciliationRequired,
   startRuntimeLeaseHeartbeat,
   type RuntimeLease,
   type RuntimeLeaseHeartbeat,
@@ -89,6 +92,28 @@ async function applyExperimentGuards(p: {
   const { rt, market, cfg, snap } = p;
   const g = rt.params;
   if (!cfg.experiment.enabled || !g) return "ok";
+  if (!experimentSessionAllowsTrading) {
+    const kill = await runExperimentKillSwitch({
+      ex: {
+        cancelAll: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.cancelAll(killMarket);
+        },
+        closePosition: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.closePosition(killMarket);
+        },
+        snapshot: (killMarket) => rt.ex.snapshot(killMarket),
+      },
+      market,
+      reasons: ["RECONCILIATION_REQUIRED"],
+      experimentId: cfg.experiment.id,
+      scopeKey: experimentScopeKey,
+      onEvent: (event, fields) => emitExp(event, { venue: rt.ex.id, ...fields }),
+    });
+    experimentRiskState = kill.state;
+    return "halt";
+  }
   const off = getOfficialCache()?.venues?.[rt.ex.id];
   const planned = worstCaseGrossNotionalUsd({
     positionQty: snap.position,
@@ -132,6 +157,16 @@ async function applyExperimentGuards(p: {
   } catch (error: any) {
     persistenceFailed = true;
     experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "RISK_STATE_PERSIST_FAILED");
+    experimentSessionAllowsTrading = false;
+    try {
+      markRuntimeSessionReconciliationRequired({
+        experimentDir: experimentDir(cfg.experiment.id),
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+        reasonCodes: ["RISK_STATE_PERSIST_FAILED"],
+      });
+    } catch { /* leftover OPEN still blocks the next start */ }
     console.error(`[experiment] risk-state persist failed: ${String(error?.message || error).slice(0, 160)}`);
   }
   emitExp("SNAPSHOT", {
@@ -200,6 +235,7 @@ let experimentRiskState: ExperimentRiskState = emptyRiskState();
 let experimentRestartCount = 0;
 let experimentScopeKey = "";
 let experimentLease: RuntimeLease | null = null;
+let experimentSessionAllowsTrading = false;
 let experimentOwnershipPrefix = "";
 
 function assertExperimentLeaseCurrent(cfg: RuntimeConfig): void {
@@ -686,6 +722,7 @@ export async function runLoop(opts?: {
   const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.dryRun ? "dry-run" : "")).trim();
   experimentScopeKey = `${accountScope}:${cfg.venues.join("+")}:${cfg.markets.join("+")}`;
   experimentOwnershipPrefix = `cg:${cfg.experiment.id}:`;
+  experimentSessionAllowsTrading = false;
   const abortController = new AbortController();
   let leaseHeartbeat: RuntimeLeaseHeartbeat | null = null;
   let leaseLossError: unknown = null;
@@ -738,27 +775,37 @@ export async function runLoop(opts?: {
       },
     });
     injectLifecycleFault("BEFORE_RISK_LOAD");
-    experimentRiskState = acknowledgeHaltIfRequested(
-      cfg.experiment.id,
-      loadRiskState(cfg.experiment.id, undefined, experimentScopeKey)
-    );
-    experimentRiskState = {
-      ...experimentRiskState,
+    const session = beginRuntimeSession({
+      experimentDir: experimentDir(cfg.experiment.id),
+      experimentId: cfg.experiment.id,
       scopeKey: experimentScopeKey,
       leaseGeneration: String(experimentLease.generation),
-    };
-    experimentLease.assertCurrent();
-    if (!isForcedHaltInMemoryOnly(cfg.experiment.id)) {
-      try {
-        persistRiskState(cfg.experiment.id, experimentRiskState);
-      } catch (error: any) {
-        experimentRiskState = latchForcedHaltInMemory(
-          cfg.experiment.id,
-          experimentRiskState,
-          "RISK_STATE_PERSIST_FAILED"
-        );
-        console.error(`[experiment] startup risk-state persist failed: ${String(error?.message || error).slice(0, 160)}`);
-      }
+    });
+    experimentSessionAllowsTrading = session.allowsTrading;
+    if (!session.allowsTrading) {
+      console.error(`[experiment] startup fail-closed: ${session.reasonCode || "RECONCILIATION_REQUIRED"}`);
+      experimentRiskState = latchForcedHaltInMemory(
+        cfg.experiment.id,
+        loadRiskState(cfg.experiment.id, undefined, experimentScopeKey),
+        session.reasonCode || "RECONCILIATION_REQUIRED"
+      );
+    } else {
+      experimentLease.assertCurrent();
+      experimentRiskState = acknowledgeHaltIfRequested(
+        cfg.experiment.id,
+        loadRiskState(cfg.experiment.id, undefined, experimentScopeKey),
+        undefined,
+        {
+          activeLease: {
+            generation: String(experimentLease.generation),
+            scopeKey: experimentScopeKey,
+            assertCurrent: () => experimentLease!.assertCurrent(),
+          },
+          sessionAllowsClear: true,
+          assertLeaseCurrent: () => experimentLease!.assertCurrent(),
+        }
+      );
+      experimentLease.assertCurrent();
     }
     if (experimentRiskState.halted) {
       console.warn(
@@ -1051,9 +1098,21 @@ export async function runLoop(opts?: {
     leaseHeartbeat?.stop();
     leaseHeartbeat = null;
     if (experimentLease) {
+      try {
+        if (experimentSessionAllowsTrading && !isForcedHaltInMemoryOnly(cfg.experiment.id)) {
+          experimentLease.assertCurrent();
+          completeRuntimeSession({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: String(experimentLease.generation),
+          });
+        }
+      } catch { /* unclean OPEN / RECONCILIATION_REQUIRED remains durable */ }
       await experimentLease.release();
       experimentLease = null;
     }
+    experimentSessionAllowsTrading = false;
     abortController.abort();
   }
 }

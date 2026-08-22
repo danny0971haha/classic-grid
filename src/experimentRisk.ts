@@ -45,6 +45,22 @@ export type RiskMarketInput = {
   maxInputAgeMs?: number;
 };
 
+export type HaltAcknowledgementRecord = {
+  haltId: string;
+  acknowledgedAt: string;
+  scopeKey: string;
+  predecessorStoreGeneration: number;
+  predecessorEnvelopeSha256: string;
+  priorLeaseGeneration: string | null;
+  activeLeaseGeneration: string;
+};
+
+export type ActiveLeaseAuthority = {
+  generation: string;
+  scopeKey: string;
+  assertCurrent: () => void;
+};
+
 export type ExperimentRiskState = {
   halted: boolean;
   haltStatus: HaltStatus;
@@ -57,6 +73,7 @@ export type ExperimentRiskState = {
   drawdownFromStartUsd: number;
   drawdownFromHwmUsd: number;
   acknowledged: boolean;
+  lastAcknowledgement: HaltAcknowledgementRecord | null;
   updatedAt: string;
 };
 
@@ -85,6 +102,9 @@ export type RiskStateStoreOptions = StorageOptions & {
   now?: () => Date;
   randomId?: () => string;
   onAckStep?: (step: AckLifecycleStep, targetPath: string) => void;
+  activeLease?: ActiveLeaseAuthority;
+  sessionAllowsClear?: boolean;
+  assertLeaseCurrent?: () => void;
   expectedPredecessor?: {
     storeGeneration: number;
     envelopeSha256: string;
@@ -118,6 +138,7 @@ export function emptyRiskState(scopeKey: string | null = null): ExperimentRiskSt
     drawdownFromStartUsd: 0,
     drawdownFromHwmUsd: 0,
     acknowledged: false,
+    lastAcknowledgement: null,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -155,13 +176,32 @@ function isNonEmptyHaltId(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+export function isHaltAcknowledgementRecord(value: unknown): value is HaltAcknowledgementRecord {
+  if (!value || typeof value !== "object") return false;
+  const row = value as Partial<HaltAcknowledgementRecord>;
+  return (
+    isNonEmptyHaltId(row.haltId) &&
+    typeof row.acknowledgedAt === "string" && Number.isFinite(Date.parse(row.acknowledgedAt)) &&
+    typeof row.scopeKey === "string" &&
+    Number.isSafeInteger(row.predecessorStoreGeneration) && (row.predecessorStoreGeneration as number) >= 1 &&
+    typeof row.predecessorEnvelopeSha256 === "string" && /^[a-f0-9]{64}$/.test(row.predecessorEnvelopeSha256) &&
+    (row.priorLeaseGeneration === null || typeof row.priorLeaseGeneration === "string") &&
+    isNonEmptyHaltId(row.activeLeaseGeneration)
+  );
+}
+
 function isExperimentRiskState(value: unknown): value is ExperimentRiskState {
   const row = value as Partial<ExperimentRiskState> | null;
   if (!row || typeof row !== "object") return false;
   if (typeof row.halted !== "boolean" || !HALT_STATUSES.includes(row.haltStatus as HaltStatus)) return false;
   if (!Array.isArray(row.haltReasons) || !row.haltReasons.every((reason) => typeof reason === "string")) return false;
+  const ackRecord = row.lastAcknowledgement === undefined || row.lastAcknowledgement === null
+    ? null
+    : row.lastAcknowledgement;
+  if (ackRecord !== null && !isHaltAcknowledgementRecord(ackRecord)) return false;
   if (row.haltStatus === "RUNNING") {
     if (row.halted !== false || row.haltId !== null || row.haltReasons.length !== 0) return false;
+    if (row.acknowledged === true && !isHaltAcknowledgementRecord(ackRecord)) return false;
   } else if (row.halted !== true || !isNonEmptyHaltId(row.haltId) || row.acknowledged !== false) {
     return false;
   }
@@ -227,6 +267,7 @@ function normalizeLegacyState(raw: any, expectedScope: string | undefined, optio
     drawdownFromStartUsd: Math.max(0, Number(raw?.drawdownFromStartUsd) || 0),
     drawdownFromHwmUsd: Math.max(0, Number(raw?.drawdownFromHwmUsd) || 0),
     acknowledged: Boolean(raw?.acknowledged),
+    lastAcknowledgement: isHaltAcknowledgementRecord(raw?.lastAcknowledgement) ? raw.lastAcknowledgement : null,
     updatedAt: Number.isFinite(Date.parse(String(raw?.updatedAt || ""))) ? String(raw.updatedAt) : nowIso(options),
   };
   if (expectedScope && state.scopeKey && state.scopeKey !== expectedScope) return null;
@@ -443,6 +484,19 @@ export function persistRiskState(
   baseDir?: string,
   options: RiskStateStoreOptions = {}
 ): void {
+  const userHook = options.onAtomicWriteStep;
+  const assertLease = options.assertLeaseCurrent;
+  if (assertLease || userHook) {
+    options = {
+      ...options,
+      onAtomicWriteStep(step, targetPath) {
+        if (assertLease && (step === "BEFORE_TEMP_OPEN" || step === "BEFORE_RENAME")) {
+          assertLease();
+        }
+        userHook?.(step, targetPath);
+      },
+    };
+  }
   if (!isExperimentRiskState(state)) throw new Error("RISK_STATE_PAYLOAD_INVALID");
   const primaryPath = riskStatePath(experimentId, baseDir);
   const backupPath = `${primaryPath}.bak`;
@@ -499,6 +553,7 @@ export function persistRiskState(
     previousEnvelopeSha256: predecessor.envelopeSha256,
     payload: state,
   });
+  options.assertLeaseCurrent?.();
   writeEnvelope(primaryPath, next, options);
   const verified = inspectRiskCopy(primaryPath, experimentId, scopeKey, options);
   if (verified.condition !== "VALID" || !verified.envelope) {
@@ -509,7 +564,10 @@ export function persistRiskState(
     verified.envelope.previousEnvelopeSha256 !== predecessor.envelopeSha256 ||
     verified.envelope.payload.haltStatus !== state.haltStatus ||
     verified.envelope.payload.haltId !== state.haltId ||
-    verified.envelope.payload.halted !== state.halted
+    verified.envelope.payload.halted !== state.halted ||
+    verified.envelope.payload.leaseGeneration !== state.leaseGeneration ||
+    verified.envelope.payload.lastAcknowledgement?.haltId !== state.lastAcknowledgement?.haltId ||
+    verified.envelope.payload.lastAcknowledgement?.activeLeaseGeneration !== state.lastAcknowledgement?.activeLeaseGeneration
   ) {
     throw new Error("RISK_STATE_POST_WRITE_MISMATCH");
   }
@@ -630,6 +688,20 @@ export function acknowledgeDurableHalt(
   if (ack !== first.payload.haltId) {
     return rejectAck(first.payload, ["RISK_STATE_ACK_MISMATCH"], options);
   }
+  if (!options.activeLease?.generation || typeof options.activeLease.assertCurrent !== "function") {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_LEASE_AUTHORITY_MISSING"], options);
+  }
+  if ((options.activeLease.scopeKey || UNSCOPED) !== (first.payload.scopeKey || UNSCOPED)) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_ACTIVE_SCOPE_MISMATCH"], options);
+  }
+  if (options.sessionAllowsClear === false) {
+    return rejectAck(first.payload, ["RISK_STATE_ACK_SESSION_NOT_OPEN"], options);
+  }
+  try {
+    options.activeLease.assertCurrent();
+  } catch (error: any) {
+    return rejectAck(first.payload, [String(error?.message || "RUNTIME_LEASE_LOST").split(":")[0] || "RUNTIME_LEASE_LOST"], options);
+  }
 
   runAckStep(options, "BEFORE_COMMIT", primaryPath);
   const second = inspectAuthoritativePair(experimentId, baseDir, options);
@@ -648,30 +720,51 @@ export function acknowledgeDurableHalt(
     );
   }
 
+  const activeLease = options.activeLease;
+  const lastAcknowledgement: HaltAcknowledgementRecord = {
+    haltId: bound.haltId as string,
+    acknowledgedAt: nowIso(options),
+    scopeKey: bound.scopeKey || UNSCOPED,
+    predecessorStoreGeneration: bound.storeGeneration,
+    predecessorEnvelopeSha256: bound.envelopeSha256,
+    priorLeaseGeneration: bound.leaseGeneration,
+    activeLeaseGeneration: activeLease.generation,
+  };
   const next: ExperimentRiskState = {
     ...second.payload,
     halted: false,
     haltStatus: "RUNNING",
     haltId: null,
     haltReasons: [],
+    leaseGeneration: activeLease.generation,
     acknowledged: true,
+    lastAcknowledgement,
     updatedAt: nowIso(options),
   };
   try {
+    activeLease.assertCurrent();
     persistRiskState(experimentId, next, baseDir, {
       ...options,
+      assertLeaseCurrent: () => activeLease.assertCurrent(),
       expectedPredecessor: {
         storeGeneration: bound.storeGeneration,
         envelopeSha256: bound.envelopeSha256,
       },
     });
-  } catch {
-    return rejectAck(second.payload, ["RISK_STATE_PERSIST_FAILED"], options);
+  } catch (error: any) {
+    const code = String(error?.message || "RISK_STATE_PERSIST_FAILED").split(":")[0];
+    return rejectAck(second.payload, [code || "RISK_STATE_PERSIST_FAILED"], options);
   }
 
   runAckStep(options, "AFTER_COMMIT", primaryPath);
   runAckStep(options, "BEFORE_FINAL_VERIFICATION", primaryPath);
+  try {
+    activeLease.assertCurrent();
+  } catch (error: any) {
+    return rejectAck(second.payload, [String(error?.message || "RUNTIME_LEASE_LOST").split(":")[0] || "RUNTIME_LEASE_LOST"], options);
+  }
   const verified = inspectAuthoritativePair(experimentId, baseDir, options);
+  const record = verified.ok ? verified.payload.lastAcknowledgement : null;
   const accepted = Boolean(
     verified.ok &&
     verified.payload.halted === false &&
@@ -682,7 +775,13 @@ export function acknowledgeDurableHalt(
     verified.envelope.storeGeneration === bound.storeGeneration + 1 &&
     verified.envelope.previousEnvelopeSha256 === bound.envelopeSha256 &&
     (verified.payload.scopeKey || UNSCOPED) === (bound.scopeKey || UNSCOPED) &&
-    verified.payload.leaseGeneration === bound.leaseGeneration
+    verified.payload.leaseGeneration === activeLease.generation &&
+    record &&
+    record.haltId === bound.haltId &&
+    record.predecessorStoreGeneration === bound.storeGeneration &&
+    record.predecessorEnvelopeSha256 === bound.envelopeSha256 &&
+    record.priorLeaseGeneration === bound.leaseGeneration &&
+    record.activeLeaseGeneration === activeLease.generation
   );
   if (!accepted) {
     return rejectAck(
@@ -697,7 +796,7 @@ export function acknowledgeDurableHalt(
   }
   delete process.env.EXPERIMENT_HALT_ACK;
   console.info(
-    `[experiment] halt acknowledged haltId=${bound.haltId} experiment=${experimentId} scope=${bound.scopeKey || UNSCOPED} lease=${bound.leaseGeneration || ""} storeGeneration=${verified.envelope.storeGeneration}`
+    `[experiment] halt acknowledged haltId=${bound.haltId} experiment=${experimentId} scope=${bound.scopeKey || UNSCOPED} priorLease=${bound.leaseGeneration || ""} activeLease=${activeLease.generation} storeGeneration=${verified.envelope.storeGeneration}`
   );
   return {
     state: verified.payload,
