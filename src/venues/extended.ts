@@ -1,6 +1,13 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Intent, VenueSnapshot } from "../types.js";
+import {
+  boundFlattenQty,
+  classifyTransportError,
+  reductionClientOrderId,
+  type ReductionRequest,
+  type ReductionResult,
+} from "../experimentReduction.js";
 import { readExperimentLeverage } from "../config.js";
 import { loadEnv } from "../loadEnv.js";
 import { ExtendedAccountStream } from "./extendedAccountStream.js";
@@ -279,6 +286,30 @@ export class ExtendedExecutor implements VenueExecutor {
     }
     const ex = this.ensure();
     await ex.closePosition(this.marketId(market));
+  }
+
+  async reduceExposure(request: ReductionRequest & { side: "buy" | "sell"; qty: number }): Promise<ReductionResult> {
+    const clientOrderId = reductionClientOrderId(request.incidentId);
+    if (request.targetAbsPositionQty !== 0) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "UNSUPPORTED_PARTIAL_REDUCTION" };
+    }
+    const qty = boundFlattenQty(request.qty, request.qty);
+    if (!(qty > 0)) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "INVALID_FLATTEN_QTY" };
+    }
+    if (this.dryRun) {
+      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "DRY_RUN_NO_TRANSPORT" };
+    }
+    try {
+      await this.ensure().closePosition(this.marketId(request.market), qty);
+      return { outcome: "ACK", clientOrderId };
+    } catch (error) {
+      return {
+        outcome: classifyTransportError(error),
+        clientOrderId,
+        reasonCode: String((error as { message?: string })?.message || error).slice(0, 200),
+      };
+    }
   }
 
   async verifyExperimentPreflight(market: string, leverage: number): Promise<void> {

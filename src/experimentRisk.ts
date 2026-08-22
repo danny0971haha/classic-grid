@@ -23,6 +23,15 @@ export type HaltStatus =
   | "HALTED_FLAT"
   | "HALT_FAILED";
 
+export type ReductionPhase =
+  | "NORMAL"
+  | "HALTING"
+  | "CANCELLING_OWNED_RISK"
+  | "REDUCING_EXPOSURE"
+  | "HALTED_UNFLAT"
+  | "HALTED_FLAT"
+  | "HALT_FAILED";
+
 export type ExperimentRiskLimits = {
   maxGrossNotionalUsd: number;
   dailyLossUsd: number;
@@ -75,6 +84,7 @@ export type ExperimentRiskState = {
   acknowledged: boolean;
   lastAcknowledgement: HaltAcknowledgementRecord | null;
   updatedAt: string;
+  reductionPhase?: ReductionPhase | null;
 };
 
 export type AckLifecycleStep =
@@ -116,6 +126,15 @@ const forcedHaltLatches = new Map<string, { haltId: string; reasons: string[] }>
 const RISK_STATE_KIND = "experiment-risk-state";
 const UNSCOPED = "UNSCOPED";
 const HALT_STATUSES: HaltStatus[] = ["RUNNING", "HALTING", "HALTED_UNFLAT", "HALTED_FLAT", "HALT_FAILED"];
+const REDUCTION_PHASES: ReductionPhase[] = [
+  "NORMAL",
+  "HALTING",
+  "CANCELLING_OWNED_RISK",
+  "REDUCING_EXPOSURE",
+  "HALTED_UNFLAT",
+  "HALTED_FLAT",
+  "HALT_FAILED",
+];
 
 function nowIso(options?: RiskStateStoreOptions): string {
   return (options?.now?.() || new Date()).toISOString();
@@ -211,6 +230,7 @@ function isExperimentRiskState(value: unknown): value is ExperimentRiskState {
   if (typeof row.drawdownFromStartUsd !== "number" || !Number.isFinite(row.drawdownFromStartUsd) || row.drawdownFromStartUsd < 0) return false;
   if (typeof row.drawdownFromHwmUsd !== "number" || !Number.isFinite(row.drawdownFromHwmUsd) || row.drawdownFromHwmUsd < 0) return false;
   if (typeof row.acknowledged !== "boolean") return false;
+  if (row.reductionPhase != null && !REDUCTION_PHASES.includes(row.reductionPhase as ReductionPhase)) return false;
   return typeof row.updatedAt === "string" && Number.isFinite(Date.parse(row.updatedAt));
 }
 
@@ -867,7 +887,11 @@ export function evaluateExperimentRisk(
     if (longAdverse || shortAdverse) { halt = true; reasons.push("RISK_BOUNDARY_BREACH"); }
   }
   if (input.plannedGrossNotionalUsd > limits.maxGrossNotionalUsd + 1e-9) { reduceOnly = true; reasons.push("PLANNED_NOTIONAL_CAP"); }
-  if (input.positionNotionalUsd > limits.maxGrossNotionalUsd + 1e-9) { reduceOnly = true; reasons.push("ACTUAL_NOTIONAL_CAP"); }
+  if (input.positionNotionalUsd > limits.maxGrossNotionalUsd + 1e-9) {
+    halt = true;
+    reduceOnly = true;
+    reasons.push("ACTUAL_NOTIONAL_CAP");
+  }
   if (state.halted) {
     halt = true;
     for (const reason of state.haltReasons) if (!reasons.includes(reason)) reasons.push(reason);

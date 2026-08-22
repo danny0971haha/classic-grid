@@ -1,4 +1,5 @@
-import type { ApplyResult, Intent, VenueId, VenueSnapshot } from "../types.js";
+import type { ApplyResult, Intent, Side, VenueId, VenueSnapshot } from "../types.js";
+import type { ReductionRequest, ReductionResult } from "../experimentReduction.js";
 import type { ExtendedObservationResult } from "./extendedObservation.js";
 
 export type VenueExecutor = {
@@ -10,6 +11,8 @@ export type VenueExecutor = {
   cancelAll(market: string): Promise<void>;
   /** 尽力市价/IOC 减仓清仓；无仓则 no-op */
   closePosition(market: string): Promise<void>;
+  /** Project-owned reduce-only flatten. Optional so other venue adapters stay unchanged. */
+  reduceExposure?(request: ReductionRequest & { side: Side; qty: number }): Promise<ReductionResult>;
   /** Live experiment must refuse venues without both capabilities. */
   experimentCapabilities?: {
     deterministicClientOrderId: boolean;

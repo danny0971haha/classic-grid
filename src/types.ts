@@ -60,6 +60,7 @@ export type LiveOrder = DesiredOrder & {
   exchangeOrderId?: string;
   status?: string;
   filledSize?: number;
+  reduceOnly?: boolean;
 };
 
 export type VenueSnapshot = {

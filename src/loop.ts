@@ -7,6 +7,7 @@ import {
   type RuntimeConfig,
 } from "./config.js";
 import { runExperimentKillSwitch } from "./experimentKillSwitch.js";
+import { createVenueReductionTransport, runActualNotionalHardHalt } from "./experimentReduction.js";
 import {
   acknowledgeHaltIfRequested,
   combineDailyPnl,
@@ -188,6 +189,52 @@ async function applyExperimentGuards(p: {
     risk_flags: decision.reasons,
     restart_count: experimentRestartCount,
   });
+  const actualNotionalIncident =
+    decision.reasons.includes("ACTUAL_NOTIONAL_CAP")
+    || experimentRiskState.haltReasons.includes("ACTUAL_NOTIONAL_CAP");
+  if (actualNotionalIncident) {
+    const haltReasons = persistenceFailed
+      ? Array.from(new Set([...decision.reasons, "RISK_STATE_PERSIST_FAILED", "ACTUAL_NOTIONAL_CAP"]))
+      : Array.from(new Set([...decision.reasons, "ACTUAL_NOTIONAL_CAP"]));
+    console.warn(
+      `[${rt.ex.id}] RISK HALT ${haltReasons.join(",")} — owned cancel → reduce-only flatten`
+    );
+    const kill = await runActualNotionalHardHalt({
+      experimentId: cfg.experiment.id,
+      market,
+      ownershipPrefix: experimentOwnershipPrefix,
+      positionQty: snap.position,
+      openOrders: snap.openOrders,
+      reasons: haltReasons,
+      transport: createVenueReductionTransport({
+        apply: async (intents) => {
+          assertExperimentLeaseCurrent(cfg);
+          return rt.ex.apply(intents);
+        },
+        closePosition: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.closePosition(killMarket);
+        },
+        reduceExposure: rt.ex.reduceExposure
+          ? async (request) => {
+              assertExperimentLeaseCurrent(cfg);
+              return rt.ex.reduceExposure!(request);
+            }
+          : undefined,
+        snapshot: (killMarket) => rt.ex.snapshot(killMarket),
+        assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      }),
+      assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+      scopeKey: experimentScopeKey,
+      persistOptions: {
+        assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      },
+      state: experimentRiskState,
+    });
+    experimentRiskState = kill.state;
+    return "halt";
+  }
   if (decision.halt || persistenceFailed) {
     const haltReasons = persistenceFailed
       ? Array.from(new Set([...decision.reasons, "RISK_STATE_PERSIST_FAILED"]))
@@ -401,6 +448,11 @@ async function tickOne(
   cfg: RuntimeConfig
 ): Promise<void> {
   assertExperimentLeaseCurrent(cfg);
+  if (cfg.experiment.enabled && experimentRiskState.halted && !(rt.params && rt.built)) {
+    const snap = await rt.ex.snapshot(market);
+    await applyExperimentGuards({ rt, market, cfg, snap });
+    return;
+  }
   // Pause suppresses strategy writes, but hard-risk evaluation and kill remain active.
   if (isBotPaused()) {
     if (!rt.params || !rt.built) {
@@ -548,7 +600,7 @@ async function tickOne(
     plan.intents = filterRiskIncreasingIntents(plan.intents, {
       halt: false,
       reduceOnly: true,
-      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      reasons: ["PLANNED_NOTIONAL_CAP"],
     });
   }
 
