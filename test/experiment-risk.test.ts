@@ -119,8 +119,11 @@ describe("experiment risk guards", () => {
       LIMITS,
       emptyRiskState()
     );
+    assert.equal(actual.decision.halt, true);
     assert.equal(actual.decision.reduceOnly, true);
     assert.ok(actual.decision.reasons.includes("ACTUAL_NOTIONAL_CAP"));
+    assert.equal(actual.next.halted, true);
+    assert.ok(actual.next.haltId && actual.next.haltId.length > 0);
 
     const ok = evaluateExperimentRisk(
       input({ plannedGrossNotionalUsd: 150, positionNotionalUsd: 150 }),
