@@ -4,8 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { runExperimentKillSwitch } from "../src/experimentKillSwitch.js";
-import { loadRiskState, persistRiskState, emptyRiskState } from "../src/experimentRisk.js";
-import { withEnvAsync } from "./helpers/env.js";
+import {
+  acknowledgeDurableHalt,
+  emptyRiskState,
+  isForcedHaltInMemoryOnly,
+  loadRiskState,
+  persistRiskState,
+} from "../src/experimentRisk.js";
+import { withEnv, withEnvAsync } from "./helpers/env.js";
 
 describe("experiment kill switch", () => {
   it("cancels, flattens, verifies snapshot, and persists HALTED even if close fails", async () => {
@@ -95,5 +101,131 @@ describe("experiment kill switch", () => {
     });
     assert.equal(result.flat, true);
     assert.equal(result.status, "HALTED_FLAT");
+    assert.ok(result.state.haltId && result.state.haltId.length > 0);
+    assert.equal(loadRiskState("telemetry-throw-001", dir).haltId, result.state.haltId);
+  });
+
+  it("G0-KS-HALTID: mints a unique haltId in memory before persist and preserves it across the lifecycle", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-ks-haltid-"));
+    const id = "ks-haltid-001";
+    persistRiskState(id, emptyRiskState("extended:BTC"), dir);
+    let position = 0.01;
+    let orders = 1;
+    const result = await runExperimentKillSwitch({
+      ex: {
+        async cancelAll() { orders = 0; },
+        async closePosition() { position = 0; },
+        async snapshot(market: string) {
+          return { venue: "extended" as const, market, mid: 100_000, position, openOrders: orders ? [{ id: "x", market, side: "buy" as const, price: 1, size: 1, level: 1 }] : [] };
+        },
+      },
+      market: "BTC",
+      reasons: ["DAILY_LOSS"],
+      experimentId: id,
+      baseDir: dir,
+      retryDelayMs: 0,
+    });
+    assert.equal(result.halted, true);
+    assert.equal(result.status, "HALTED_FLAT");
+    assert.equal(typeof result.state.haltId, "string");
+    assert.ok(result.state.haltId && result.state.haltId.length > 0);
+    assert.equal(result.state.acknowledged, false);
+    const persisted = loadRiskState(id, dir, "extended:BTC");
+    assert.equal(persisted.haltId, result.state.haltId);
+    assert.equal(persisted.haltStatus, "HALTED_FLAT");
+  });
+
+  it("G0-KS-PERSIST-FAIL: persistence failure latches FORCED_HALT_IN_MEMORY_ONLY and still flattens", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-ks-persist-fail-"));
+    const id = "ks-persist-fail-001";
+    persistRiskState(id, emptyRiskState("extended:BTC"), dir);
+    const primary = path.join(dir, id, "risk-state.json");
+    let writes = 0;
+    let cancelCalls = 0;
+    let closeCalls = 0;
+    const result = await runExperimentKillSwitch({
+      ex: {
+        async cancelAll() { cancelCalls += 1; },
+        async closePosition() { closeCalls += 1; },
+        async snapshot(market: string) {
+          return { venue: "extended" as const, market, mid: 100_000, position: 0, openOrders: [] };
+        },
+      },
+      market: "BTC",
+      reasons: ["DAILY_LOSS"],
+      experimentId: id,
+      baseDir: dir,
+      retryDelayMs: 0,
+      persistOptions: {
+        onAtomicWriteStep(step, target) {
+          if (target === primary && step === "BEFORE_RENAME") {
+            writes += 1;
+            if (writes === 1) throw new Error("HALTING persist failed");
+          }
+        },
+      },
+    });
+    assert.equal(cancelCalls, 1);
+    assert.equal(closeCalls, 1);
+    assert.equal(result.halted, true);
+    assert.ok(result.state.haltId && result.state.haltId.length > 0);
+    assert.ok(
+      result.state.haltReasons.includes("FORCED_HALT_IN_MEMORY_ONLY")
+      || result.errors.some((e) => /persist HALTING|FORCED_HALT|HALTING persist failed/i.test(e))
+    );
+    assert.equal(isForcedHaltInMemoryOnly(id), true);
+    const ack = withEnv({ EXPERIMENT_HALT_ACK: result.state.haltId! }, () =>
+      acknowledgeDurableHalt(id, result.state, dir)
+    );
+    assert.equal(ack.accepted, false);
+    const durable = loadRiskState(id, dir, "extended:BTC");
+    assert.notEqual(durable.haltStatus, "RUNNING");
+  });
+
+  it("G0-KS-IDENTITY-PRESERVE: HALTING → HALTED_UNFLAT keeps the same haltId", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-ks-preserve-"));
+    const id = "ks-preserve-001";
+    persistRiskState(id, emptyRiskState("extended:BTC"), dir);
+    const first = await runExperimentKillSwitch({
+      ex: {
+        async cancelAll() {},
+        async closePosition() { throw new Error("still open"); },
+        async snapshot(market: string) {
+          return {
+            venue: "extended" as const,
+            market,
+            mid: 100_000,
+            position: 0.01,
+            openOrders: [{ id: "1", market, side: "buy" as const, price: 99_000, size: 0.01, level: 1 }],
+          };
+        },
+      },
+      market: "BTC",
+      reasons: ["DAILY_LOSS"],
+      experimentId: id,
+      baseDir: dir,
+      maxAttempts: 1,
+      retryDelayMs: 0,
+    });
+    assert.equal(first.status, "HALTED_UNFLAT");
+    const incident = first.state.haltId;
+    assert.ok(incident);
+    const second = await runExperimentKillSwitch({
+      ex: {
+        async cancelAll() {},
+        async closePosition() {},
+        async snapshot(market: string) {
+          return { venue: "extended" as const, market, mid: 100_000, position: 0, openOrders: [] };
+        },
+      },
+      market: "BTC",
+      reasons: ["DAILY_LOSS"],
+      experimentId: id,
+      baseDir: dir,
+      maxAttempts: 1,
+      retryDelayMs: 0,
+    });
+    assert.equal(second.state.haltId, incident);
+    assert.equal(loadRiskState(id, dir, "extended:BTC").haltId, incident);
   });
 });
