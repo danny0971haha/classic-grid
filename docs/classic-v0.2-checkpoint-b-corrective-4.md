@@ -167,30 +167,36 @@ IMPLEMENTATION_SHA=59f62c681f159d67a222660f3ae5069dff515514
 IMPLEMENTATION_TREE=a50655bbc93f4af15a5983039c3c095f674bd748
 ```
 
-SHA-bind commit (this document revision). Independent review must re-bind to the final pushed SHA and the Actions run that checked out that exact SHA.
+SHA-bind commit and its exact branch-push CI:
 
 ```text
 BASE_SHA=0179ef35359622321877475e0c4a42b60d740b61
 BASE_TREE=1ccde48b642e341b8737563cd0c78534fc8c8af4
+HEAD_SHA=45480f54d8f2f6c750847450ae4fd5405e048835
+TREE_SHA=8827639c56793ceb8e3252ef123faec9b23bb0cf
 EXACT_CHANGED_FILES=
   docs/classic-v0.2-checkpoint-b-corrective-4.md
   src/experimentReduction.ts
   src/venues/extended.ts
   test/experiment-v02-reduction.test.ts
   test/helpers/reduction.ts
-DIFF_STAT=5 files changed, 872 insertions(+), 51 deletions(-)
+DIFF_STAT=5 files changed, 906 insertions(+), 51 deletions(-)
 TEST_COMMANDS_AND_TOTALS=
   npm ci                                              exit 0
   npm run check                                       exit 0  225/225 pass
   node --import tsx --test test/experiment-v02-reduction.test.ts
                                                       exit 0  85/85 pass
   git diff --check                                    exit 0
-CI_RUN_ID=
-CI_HEAD_SHA=
-CI_CONCLUSION=
+CI_RUN_ID=32642024864
+CI_EVENT=push
+CI_URL=https://github.com/danny0971haha/classic-grid/actions/runs/32642024864
+CI_HEAD_SHA=45480f54d8f2f6c750847450ae4fd5405e048835
+CI_CONCLUSION=success
+CI_JOB=compiler-and-tests
+CI_JOB_CONCLUSION=success
 ```
 
-A later annotation commit may move `HEAD`. The handoff block is authoritative for the final pair.
+A later annotation commit may move `HEAD`. Independent review must re-bind to the final pushed SHA and the Actions run that checked out that exact SHA. The handoff block is authoritative for the final pair.
 
 ## 7. Stop authorization
 
