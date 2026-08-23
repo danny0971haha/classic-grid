@@ -212,14 +212,29 @@ That hit is the pre-existing offline vendor fixture `offline-test-not-a-live-key
 
 ## 6. Candidate binding
 
+Implementation commit:
+
 ```text
-BASE_SHA=fca48c53799cf069247131d6f25e47a67707154e
-HEAD_SHA=e9eda6d622f183d2a60ac16c9f0f2c58e5d479c8
-TREE_SHA=cc9002d5f8dd3caab1be808123217f380ca0f9e2
-CI_RUN_ID=<bound after branch push of the final HEAD>
+IMPLEMENTATION_SHA=e9eda6d622f183d2a60ac16c9f0f2c58e5d479c8
+IMPLEMENTATION_TREE=cc9002d5f8dd3caab1be808123217f380ca0f9e2
 ```
 
-Note: the SHA/tree above identify the implementation commit. A follow-up docs bind commit may move HEAD; the final handoff reports the pushed HEAD and the Actions run that checked out that exact SHA.
+SHA-bind commit and its exact branch-push CI:
+
+```text
+BASE_SHA=fca48c53799cf069247131d6f25e47a67707154e
+HEAD_SHA=90a450fa35cc3370f19ac6d2bcbdffc59a054ffc
+TREE_SHA=7784a71c315ad3d5d872c6346dc2179d5c3403e3
+CI_RUN_ID=32633798708
+CI_EVENT=push
+CI_URL=https://github.com/danny0971haha/classic-grid/actions/runs/32633798708
+CI_HEAD_SHA=90a450fa35cc3370f19ac6d2bcbdffc59a054ffc
+CI_CONCLUSION=success
+CI_JOB=compiler-and-tests
+CI_JOB_CONCLUSION=success
+```
+
+A later annotation commit may move `HEAD`. Independent review must re-bind to the final pushed SHA and the Actions run that checked out that exact SHA. The handoff block is authoritative for the final pair.
 
 ## 7. Stop authorization
 
