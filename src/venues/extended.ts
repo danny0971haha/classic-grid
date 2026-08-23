@@ -5,7 +5,7 @@ import {
   ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE,
   boundFlattenQty,
   classifyExposureReducingSide,
-  classifyTransportError,
+  normalizeReductionResult,
   reductionClientOrderId,
   type AuthoritativeReductionSnapshot,
   type ReductionRequest,
@@ -406,30 +406,15 @@ export class ExtendedExecutor implements VenueExecutor {
       const exchangeOrderId = receipt && typeof receipt === "object"
         ? String(receipt.exchangeId || receipt.exchangeOrderId || "")
         : "";
-      if (!submittedExternalId || submittedExternalId !== requestedClientOrderId) {
-        return {
-          outcome: "UNKNOWN",
-          reasonCode: "REDUCTION_IDENTITY_MISMATCH",
-          requestedClientOrderId,
-          submittedExternalId: submittedExternalId || undefined,
-          clientOrderId: requestedClientOrderId,
-          exchangeOrderId: exchangeOrderId || undefined,
-        };
-      }
-      return {
+      return normalizeReductionResult(request, {
         outcome: "ACK",
         requestedClientOrderId,
-        submittedExternalId,
+        submittedExternalId: submittedExternalId || undefined,
         clientOrderId: requestedClientOrderId,
         exchangeOrderId: exchangeOrderId || undefined,
-      };
+      });
     } catch (error) {
-      return {
-        outcome: classifyTransportError(error),
-        requestedClientOrderId,
-        clientOrderId: requestedClientOrderId,
-        reasonCode: String((error as { message?: string })?.message || error).slice(0, 200),
-      };
+      return normalizeReductionResult(request, error);
     }
   }
 

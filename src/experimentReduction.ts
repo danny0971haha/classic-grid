@@ -18,6 +18,8 @@ import { markRuntimeSessionReconciliationRequired } from "./runtimeLease.js";
 export const ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE = 1e-8;
 export const REDUCTION_SNAPSHOT_MAX_AGE_MS = 15_000;
 export const MAX_FLATTEN_ATTEMPTS = 2;
+/** Fixed local/remote skew bound. Not enlarged from fixtures. */
+export const MAX_CLOCK_SKEW_MS = 2_000;
 
 export type ReductionLifecycle = ReductionPhase;
 export type ReductionWriteOutcome = "ACK" | "REJECTED" | "UNKNOWN" | "NOT_SENT";
@@ -29,6 +31,20 @@ export type ReductionAttemptContext = {
   qty: number;
   requestStartedAtMs: number;
   verificationBarrierAtMs: number;
+};
+
+export type CancelAttemptContext = {
+  requestStartedAtMs: number;
+  verificationBarrierAtMs: number;
+  incidentId: string;
+  leaseGeneration: string;
+  targetedExchangeOrderIds: string[];
+};
+
+export type LocalTransportNotSentError = {
+  kind: "LOCAL_TRANSPORT_NOT_SENT";
+  transportCalled: false;
+  stage: "LEASE" | "PREFLIGHT";
 };
 
 export type ReductionRequest = {
@@ -48,6 +64,12 @@ export type ReductionResult = {
   exchangeOrderId?: string;
   clientOrderId?: string;
   reasonCode?: string;
+  attempt?: number;
+  side?: Side;
+  qty?: number;
+  requestStartedAtMs?: number;
+  verificationBarrierAtMs?: number;
+  physicalAttempt?: number;
 };
 
 export type AuthoritativeReductionSnapshot = {
@@ -155,46 +177,169 @@ export function boundFlattenQty(positionQty: number, requestedQty: number, qtySt
   return aligned > maxQty ? maxQty : aligned;
 }
 
-export function isOwnedRiskIncreasingOrder(
-  order: LiveOrder,
-  ownershipPrefix: string,
-  positionQty: number
-): boolean {
+export function isVenueProvenReduceOnly(order: LiveOrder): boolean {
+  return order.reduceOnly === true;
+}
+
+export function isUnsafeOwnedOpenOrder(order: LiveOrder, ownershipPrefix: string): boolean {
   if (!ownershipPrefix) return false;
   const clientOrderId = String(order.clientOrderId || "");
   if (!clientOrderId.startsWith(ownershipPrefix)) return false;
-  if (order.reduceOnly === true) return false;
-  const remaining = Math.max(0, Number(order.size) || 0);
-  if (!Number.isFinite(positionQty) || !Number.isFinite(remaining)) return true;
-  if (Math.abs(positionQty) <= ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) return true;
-  if (positionQty > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
-    if (order.side === "buy") return true;
-    return remaining > positionQty + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE;
-  }
-  if (positionQty < -ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
-    if (order.side === "sell") return true;
-    return remaining > Math.abs(positionQty) + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE;
-  }
-  return true;
+  return !isVenueProvenReduceOnly(order);
+}
+
+export function isOwnedRiskIncreasingOrder(
+  order: LiveOrder,
+  ownershipPrefix: string,
+  _positionQty?: number
+): boolean {
+  return isUnsafeOwnedOpenOrder(order, ownershipPrefix);
 }
 
 export function isExplicitVenueRejection(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
-  const rec = error as { rejectionProven?: unknown; venueAccepted?: unknown; venueRejection?: unknown };
-  return (rec.rejectionProven === true && rec.venueAccepted === false) || rec.venueRejection === true;
+  const rec = error as {
+    kind?: unknown;
+    rejectionProven?: unknown;
+    venueAccepted?: unknown;
+    venueRejection?: unknown;
+  };
+  return rec.kind === "VENUE_REJECTION"
+    || (rec.rejectionProven === true && rec.venueAccepted === false)
+    || rec.venueRejection === true;
 }
 
-export function isLocalTransportNotSent(error: unknown): boolean {
+export function isLocalTransportNotSent(error: unknown): error is LocalTransportNotSentError {
   if (!error || typeof error !== "object") return false;
-  if ((error as { transportCalled?: unknown }).transportCalled === false) return true;
-  const msg = errText(error);
-  return /RUNTIME_LEASE_|NOT_SENT|未 connect|LEASE_MISSING|GENERATION_MISMATCH/i.test(msg);
+  const rec = error as Partial<LocalTransportNotSentError>;
+  return rec.kind === "LOCAL_TRANSPORT_NOT_SENT"
+    && rec.transportCalled === false
+    && (rec.stage === "LEASE" || rec.stage === "PREFLIGHT");
 }
 
 export function classifyTransportError(error: unknown): ReductionWriteOutcome {
-  if (isExplicitVenueRejection(error)) return "REJECTED";
   if (isLocalTransportNotSent(error)) return "NOT_SENT";
+  if (isExplicitVenueRejection(error)) return "REJECTED";
   return "UNKNOWN";
+}
+
+const KNOWN_REDUCTION_OUTCOMES = new Set<ReductionWriteOutcome>(["ACK", "REJECTED", "UNKNOWN", "NOT_SENT"]);
+
+export function normalizeReductionResult(
+  request: ReductionRequest & { side: Side; qty: number },
+  rawResultOrError: unknown,
+  extras: {
+    requestStartedAtMs?: number;
+    verificationBarrierAtMs?: number;
+    physicalAttempt?: number;
+  } = {}
+): ReductionResult {
+  const bound: Omit<ReductionResult, "outcome"> = {
+    requestedClientOrderId: request.clientOrderId,
+    clientOrderId: request.clientOrderId,
+    attempt: request.attempt,
+    side: request.side,
+    qty: request.qty,
+    requestStartedAtMs: extras.requestStartedAtMs,
+    verificationBarrierAtMs: extras.verificationBarrierAtMs,
+    physicalAttempt: extras.physicalAttempt ?? request.attempt,
+  };
+  if (rawResultOrError == null || typeof rawResultOrError !== "object" || Array.isArray(rawResultOrError)) {
+    return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
+  }
+  if (isLocalTransportNotSent(rawResultOrError)) {
+    return {
+      ...bound,
+      outcome: "NOT_SENT",
+      reasonCode: rawResultOrError.stage,
+      physicalAttempt: 0,
+    };
+  }
+  const raw = rawResultOrError as Record<string, unknown>;
+  if (isExplicitVenueRejection(raw) && raw.outcome !== "ACK") {
+    return {
+      ...bound,
+      outcome: "REJECTED",
+      reasonCode: String(raw.reasonCode || raw.message || "VENUE_REJECTION"),
+    };
+  }
+  if (typeof raw.outcome !== "string" || !KNOWN_REDUCTION_OUTCOMES.has(raw.outcome as ReductionWriteOutcome)) {
+    return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
+  }
+  if (raw.outcome === "ACK") {
+    if (raw.requestedClientOrderId !== request.clientOrderId || raw.submittedExternalId !== request.clientOrderId) {
+      return {
+        ...bound,
+        outcome: "UNKNOWN",
+        reasonCode: "REDUCTION_IDENTITY_MISMATCH",
+        submittedExternalId: typeof raw.submittedExternalId === "string" ? raw.submittedExternalId : undefined,
+      };
+    }
+    return {
+      ...bound,
+      outcome: "ACK",
+      submittedExternalId: raw.submittedExternalId as string,
+      exchangeOrderId: typeof raw.exchangeOrderId === "string" ? raw.exchangeOrderId : undefined,
+    };
+  }
+  if (raw.outcome === "NOT_SENT") {
+    if (raw.transportCalled === true) {
+      return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
+    }
+    return {
+      ...bound,
+      outcome: "NOT_SENT",
+      reasonCode: String(raw.reasonCode || "NOT_SENT"),
+      physicalAttempt: extras.physicalAttempt ?? 0,
+    };
+  }
+  if (raw.outcome === "REJECTED") {
+    return { ...bound, outcome: "REJECTED", reasonCode: String(raw.reasonCode || "REJECTED") };
+  }
+  return { ...bound, outcome: "UNKNOWN", reasonCode: String(raw.reasonCode || "UNKNOWN") };
+}
+
+function verifySnapshotAuthorityFence(p: {
+  snapshot: AuthoritativeReductionSnapshot;
+  verificationBarrierAtMs: number;
+  nowMs: number;
+  expectedLeaseGeneration?: string;
+  consumedObservationIds?: Iterable<string>;
+  consumedSourceGenerations?: Iterable<string>;
+}): { ok: true } | { ok: false; reasonCode: string } {
+  const { snapshot } = p;
+  if (snapshot.freshness === "cached") return { ok: false, reasonCode: "CACHED_SNAPSHOT" };
+  if (snapshot.freshness === "pre_write") return { ok: false, reasonCode: "PRE_WRITE_SNAPSHOT" };
+  if (!snapshot.observationId || !snapshot.sourceGeneration) {
+    return { ok: false, reasonCode: "AMBIGUOUS_SOURCE_GENERATION" };
+  }
+  if (!Number.isFinite(snapshot.capturedAtMs)) {
+    return { ok: false, reasonCode: "SNAPSHOT_FENCE_MISMATCH" };
+  }
+  if (snapshot.capturedAtMs < p.verificationBarrierAtMs) {
+    return { ok: false, reasonCode: "STALE_OR_PRE_WRITE" };
+  }
+  if (snapshot.capturedAtMs > p.nowMs + MAX_CLOCK_SKEW_MS) {
+    return { ok: false, reasonCode: "FUTURE_OBSERVATION" };
+  }
+  if (!snapshot.observedAt || !Number.isFinite(Date.parse(snapshot.observedAt))) {
+    return { ok: false, reasonCode: "MISSING_OBSERVATION_TIME" };
+  }
+  const observedMs = Date.parse(snapshot.observedAt);
+  if (observedMs < p.verificationBarrierAtMs) return { ok: false, reasonCode: "STALE_OR_PRE_WRITE" };
+  if (observedMs > p.nowMs + MAX_CLOCK_SKEW_MS) return { ok: false, reasonCode: "FUTURE_OBSERVATION" };
+  if (p.nowMs - observedMs > REDUCTION_SNAPSHOT_MAX_AGE_MS) return { ok: false, reasonCode: "STALE_OBSERVATION" };
+  if (p.expectedLeaseGeneration) {
+    if (!snapshot.leaseGeneration || snapshot.leaseGeneration !== p.expectedLeaseGeneration) {
+      return { ok: false, reasonCode: "SNAPSHOT_FENCE_MISMATCH" };
+    }
+  }
+  const consumedObservationIds = new Set(p.consumedObservationIds ?? []);
+  const consumedSourceGenerations = new Set(p.consumedSourceGenerations ?? []);
+  if (consumedObservationIds.has(snapshot.observationId) || consumedSourceGenerations.has(snapshot.sourceGeneration)) {
+    return { ok: false, reasonCode: "REDUCTION_OBSERVATION_REPLAY" };
+  }
+  return { ok: true };
 }
 
 export function verifyFlattenSnapshot(p: {
@@ -207,36 +352,51 @@ export function verifyFlattenSnapshot(p: {
   consumedObservationIds?: Iterable<string>;
   consumedSourceGenerations?: Iterable<string>;
 }): SnapshotVerification {
-  const { snapshot } = p;
-  if (snapshot.freshness === "cached") return { ok: false, reasonCode: "CACHED_SNAPSHOT" };
-  if (snapshot.freshness === "pre_write") return { ok: false, reasonCode: "PRE_WRITE_SNAPSHOT" };
-  if (!snapshot.observationId || !snapshot.sourceGeneration) {
-    return { ok: false, reasonCode: "AMBIGUOUS_SOURCE_GENERATION" };
-  }
-  if (!snapshot.observedAt || !Number.isFinite(Date.parse(snapshot.observedAt))) {
-    return { ok: false, reasonCode: "MISSING_OBSERVATION_TIME" };
-  }
-  const observedMs = Date.parse(snapshot.observedAt);
-  const barrierAtMs = p.verificationBarrierAtMs ?? p.mutationAttemptAtMs;
-  if (observedMs < barrierAtMs) return { ok: false, reasonCode: "STALE_OR_PRE_WRITE" };
-  if (p.nowMs - observedMs > REDUCTION_SNAPSHOT_MAX_AGE_MS) return { ok: false, reasonCode: "STALE_OBSERVATION" };
-  if (p.expectedLeaseGeneration) {
-    if (!snapshot.leaseGeneration || snapshot.leaseGeneration !== p.expectedLeaseGeneration) {
-      return { ok: false, reasonCode: "SNAPSHOT_FENCE_MISMATCH" };
-    }
-  }
-  const consumedObservationIds = new Set(p.consumedObservationIds ?? []);
-  const consumedSourceGenerations = new Set(p.consumedSourceGenerations ?? []);
-  if (consumedObservationIds.has(snapshot.observationId) || consumedSourceGenerations.has(snapshot.sourceGeneration)) {
-    return { ok: false, reasonCode: "REDUCTION_OBSERVATION_REPLAY" };
-  }
-  if (Math.abs(snapshot.positionQty) > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
+  const fence = verifySnapshotAuthorityFence({
+    snapshot: p.snapshot,
+    verificationBarrierAtMs: p.verificationBarrierAtMs ?? p.mutationAttemptAtMs,
+    nowMs: p.nowMs,
+    expectedLeaseGeneration: p.expectedLeaseGeneration,
+    consumedObservationIds: p.consumedObservationIds,
+    consumedSourceGenerations: p.consumedSourceGenerations,
+  });
+  if (!fence.ok) return fence;
+  if (Math.abs(p.snapshot.positionQty) > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
     return { ok: false, reasonCode: "POSITION_NOT_FLAT" };
   }
-  if (snapshot.openOrders.some((order) => isOwnedRiskIncreasingOrder(order, p.ownershipPrefix, snapshot.positionQty))) {
-    return { ok: false, reasonCode: "OWNED_RISK_INCREASING_REMAINS" };
+  if (p.snapshot.openOrders.some((order) => isUnsafeOwnedOpenOrder(order, p.ownershipPrefix))) {
+    return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
   }
   return { ok: true, flat: true };
+}
+
+export function verifyCancelReconciliationSnapshot(p: {
+  snapshot: AuthoritativeReductionSnapshot;
+  verificationBarrierAtMs: number;
+  targetedOrderIds: string[];
+  ownershipPrefix: string;
+  nowMs: number;
+  expectedLeaseGeneration: string;
+  consumedObservationIds?: Iterable<string>;
+  consumedSourceGenerations?: Iterable<string>;
+}): { ok: true } | { ok: false; reasonCode: string } {
+  const fence = verifySnapshotAuthorityFence({
+    snapshot: p.snapshot,
+    verificationBarrierAtMs: p.verificationBarrierAtMs,
+    nowMs: p.nowMs,
+    expectedLeaseGeneration: p.expectedLeaseGeneration,
+    consumedObservationIds: p.consumedObservationIds,
+    consumedSourceGenerations: p.consumedSourceGenerations,
+  });
+  if (!fence.ok) return fence;
+  const remainingIds = new Set(p.snapshot.openOrders.map((order) => order.id));
+  if (p.targetedOrderIds.some((id) => remainingIds.has(id))) {
+    return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
+  }
+  if (p.snapshot.openOrders.some((order) => isUnsafeOwnedOpenOrder(order, p.ownershipPrefix))) {
+    return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
+  }
+  return { ok: true };
 }
 
 function tryAssertLease(assertLeaseCurrent: () => void): string | null {
@@ -316,23 +476,22 @@ export function createVenueReductionTransport(p: {
     async submitFlatten(request) {
       p.assertLeaseCurrent();
       if (p.reduceExposure) {
-        return p.reduceExposure(request);
+        try {
+          return normalizeReductionResult(request, await p.reduceExposure(request));
+        } catch (error) {
+          return normalizeReductionResult(request, error);
+        }
       }
       try {
         await p.closePosition(request.market);
-        return {
+        return normalizeReductionResult(request, {
           outcome: "UNKNOWN",
           clientOrderId: request.clientOrderId,
           requestedClientOrderId: request.clientOrderId,
           reasonCode: "REDUCTION_IDENTITY_UNPROVEN",
-        };
+        });
       } catch (error) {
-        return {
-          outcome: classifyTransportError(error),
-          clientOrderId: request.clientOrderId,
-          requestedClientOrderId: request.clientOrderId,
-          reasonCode: errText(error),
-        };
+        return normalizeReductionResult(request, error);
       }
     },
     async fetchFreshSnapshot(input) {
@@ -536,47 +695,120 @@ export async function runActualNotionalHardHalt(
     return resultOf(state, lifecycle);
   };
 
+  const recordHaltReason = (code: string): void => {
+    if (!code) return;
+    if (!errors.includes(code)) errors.push(code);
+    if (!reasons.includes(code)) reasons.push(code);
+  };
+
+  const consumedObservationIds = new Set<string>();
+  const consumedSourceGenerations = new Set<string>();
+  let physicalAttempt = 0;
+  let mutationAttemptAtMs = 0;
+  let currentAttempt: ReductionAttemptContext | null = null;
+  let latestPositionQty = p.positionQty;
+
+  const withheldFlatten = (reasonCode: string): ReductionResult => {
+    const withheldId = reductionClientOrderId(incidentId, 1);
+    return {
+      outcome: "NOT_SENT",
+      clientOrderId: withheldId,
+      requestedClientOrderId: withheldId,
+      reasonCode,
+      physicalAttempt: 0,
+    };
+  };
+
   const leaseBeforeCancel = tryAssertLease(p.assertLeaseCurrent);
   if (leaseBeforeCancel) {
     cancel = { outcome: "NOT_SENT", reasonCode: leaseBeforeCancel };
+    flatten = withheldFlatten(leaseBeforeCancel);
     return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
   }
 
   lifecycle = "CANCELLING_OWNED_RISK";
-  const ownedRiskIncreasing = (p.openOrders || []).filter((order) =>
-    isOwnedRiskIncreasingOrder(order, p.ownershipPrefix, p.positionQty)
+  const ownedUnsafe = (p.openOrders || []).filter((order) =>
+    isUnsafeOwnedOpenOrder(order, p.ownershipPrefix)
   );
+  const targetedExchangeOrderIds = ownedUnsafe.map((order) => order.id);
+  const cancelStartedAtMs = nowMs();
   try {
     p.assertLeaseCurrent();
     cancel = await p.transport.cancelOwnedOrders({
       market: p.market,
       incidentId,
       leaseGeneration: p.leaseGeneration,
-      orders: ownedRiskIncreasing,
+      orders: ownedUnsafe,
     });
   } catch (error) {
     cancel = { outcome: classifyTransportError(error), reasonCode: errText(error) };
   }
-  if (cancel.outcome === "UNKNOWN") errors.push("CANCEL_UNKNOWN_RECONCILE");
+  const cancelAttempt: CancelAttemptContext = {
+    requestStartedAtMs: cancelStartedAtMs,
+    verificationBarrierAtMs: nowMs(),
+    incidentId,
+    leaseGeneration: p.leaseGeneration,
+    targetedExchangeOrderIds,
+  };
+  if (cancel.outcome === "UNKNOWN") recordHaltReason("CANCEL_UNKNOWN_RECONCILE");
+
+  if (targetedExchangeOrderIds.length > 0) {
+    const beforeRead = tryAssertLease(p.assertLeaseCurrent);
+    if (beforeRead) {
+      recordHaltReason(beforeRead);
+      recordHaltReason("CANCEL_RECONCILIATION_UNPROVEN");
+      flatten = withheldFlatten("CANCEL_RECONCILIATION_UNPROVEN");
+      return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
+    }
+    let cancelSnap: AuthoritativeReductionSnapshot;
+    try {
+      cancelSnap = await p.transport.fetchFreshSnapshot({
+        market: p.market,
+        mutationAttemptAtMs: cancelAttempt.requestStartedAtMs,
+        leaseGeneration: p.leaseGeneration,
+      });
+    } catch (error) {
+      recordHaltReason(errText(error));
+      recordHaltReason("CANCEL_RECONCILIATION_UNPROVEN");
+      flatten = withheldFlatten("CANCEL_RECONCILIATION_UNPROVEN");
+      return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
+    }
+    const afterRead = tryAssertLease(p.assertLeaseCurrent);
+    if (afterRead) {
+      recordHaltReason(afterRead);
+      recordHaltReason("CANCEL_RECONCILIATION_UNPROVEN");
+      flatten = withheldFlatten("CANCEL_RECONCILIATION_UNPROVEN");
+      return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
+    }
+    const proof = verifyCancelReconciliationSnapshot({
+      snapshot: cancelSnap,
+      verificationBarrierAtMs: cancelAttempt.verificationBarrierAtMs,
+      targetedOrderIds: targetedExchangeOrderIds,
+      ownershipPrefix: p.ownershipPrefix,
+      nowMs: nowMs(),
+      expectedLeaseGeneration: p.leaseGeneration,
+      consumedObservationIds,
+      consumedSourceGenerations,
+    });
+    if (cancelSnap.observationId) consumedObservationIds.add(cancelSnap.observationId);
+    if (cancelSnap.sourceGeneration) consumedSourceGenerations.add(cancelSnap.sourceGeneration);
+    lastSnap = cancelSnap;
+    if (!proof.ok) {
+      recordHaltReason(proof.reasonCode);
+      recordHaltReason("CANCEL_RECONCILIATION_UNPROVEN");
+      flatten = withheldFlatten("CANCEL_RECONCILIATION_UNPROVEN");
+      return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
+    }
+    latestPositionQty = cancelSnap.positionQty;
+  }
 
   const leaseBeforeFlatten = tryAssertLease(p.assertLeaseCurrent);
   if (leaseBeforeFlatten) {
-    const withheldId = reductionClientOrderId(incidentId, 1);
-    flatten = {
-      outcome: "NOT_SENT",
-      clientOrderId: withheldId,
-      requestedClientOrderId: withheldId,
-      reasonCode: leaseBeforeFlatten,
-    };
+    flatten = withheldFlatten(leaseBeforeFlatten);
     return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
   }
 
   lifecycle = "REDUCING_EXPOSURE";
-  let physicalAttempt = 0;
-  let mutationAttemptAtMs = 0;
-  let currentAttempt: ReductionAttemptContext | null = null;
-  const consumedObservationIds = new Set<string>();
-  const consumedSourceGenerations = new Set<string>();
 
   const buildFlattenRequest = (
     positionQty: number,
@@ -594,21 +826,24 @@ export async function runActualNotionalHardHalt(
   });
 
   const submitPhysical = async (positionQty: number): Promise<ReductionResult> => {
-    const leaseErr = tryAssertLease(p.assertLeaseCurrent);
-    if (leaseErr) {
-      throw Object.assign(new Error(leaseErr), { transportCalled: false as const });
-    }
     const nextAttempt = physicalAttempt + 1;
     const request = buildFlattenRequest(positionQty, nextAttempt);
+    const leaseErr = tryAssertLease(p.assertLeaseCurrent);
+    if (leaseErr) {
+      return normalizeReductionResult(request, {
+        kind: "LOCAL_TRANSPORT_NOT_SENT",
+        transportCalled: false,
+        stage: "LEASE",
+      }, { physicalAttempt: 0 });
+    }
     const requestStartedAtMs = nowMs();
     mutationAttemptAtMs = requestStartedAtMs;
     physicalAttempt = nextAttempt;
-    let thrown: unknown;
-    let submitted: ReductionResult | undefined;
+    let raw: unknown;
     try {
-      submitted = await p.transport.submitFlatten(request);
+      raw = await p.transport.submitFlatten(request);
     } catch (error) {
-      thrown = error;
+      raw = error;
     }
     const verificationBarrierAtMs = nowMs();
     currentAttempt = {
@@ -619,33 +854,41 @@ export async function runActualNotionalHardHalt(
       requestStartedAtMs,
       verificationBarrierAtMs,
     };
-    if (thrown !== undefined) throw thrown;
-    return submitted as ReductionResult;
+    const result = normalizeReductionResult(request, raw, {
+      requestStartedAtMs,
+      verificationBarrierAtMs,
+      physicalAttempt: nextAttempt,
+    });
+    if (result.outcome === "UNKNOWN") {
+      recordHaltReason("FLATTEN_ATTEMPT_UNKNOWN");
+      if (result.reasonCode) recordHaltReason(result.reasonCode);
+    }
+    return result;
   };
 
-  const firstRequest = buildFlattenRequest(p.positionQty, 1);
-  const canFlatten = Boolean(classifyExposureReducingSide(p.positionQty) && firstRequest.qty > 0);
+  const firstRequest = buildFlattenRequest(latestPositionQty, 1);
+  const canFlatten = Boolean(classifyExposureReducingSide(latestPositionQty) && firstRequest.qty > 0);
 
   if (canFlatten) {
-    try {
-      flatten = await submitPhysical(p.positionQty);
-    } catch (error) {
-      const attemptedId = reductionClientOrderId(incidentId, Math.max(1, physicalAttempt));
-      flatten = {
-        outcome: classifyTransportError(error),
-        clientOrderId: attemptedId,
-        requestedClientOrderId: attemptedId,
-        reasonCode: errText(error),
-      };
-    }
+    flatten = await submitPhysical(latestPositionQty);
   } else {
     flatten = {
-      outcome: "ACK",
+      outcome: "NOT_SENT",
       clientOrderId: firstRequest.clientOrderId,
       requestedClientOrderId: firstRequest.clientOrderId,
       reasonCode: "ALREADY_FLAT_POSITION",
+      physicalAttempt: 0,
+      attempt: 0,
     };
     mutationAttemptAtMs = nowMs();
+    currentAttempt = {
+      attempt: 0,
+      clientOrderId: firstRequest.clientOrderId,
+      side: firstRequest.side,
+      qty: 0,
+      requestStartedAtMs: mutationAttemptAtMs,
+      verificationBarrierAtMs: mutationAttemptAtMs,
+    };
   }
 
   if (flatten.outcome === "REJECTED" || (flatten.outcome === "NOT_SENT" && canFlatten)) {
@@ -681,6 +924,7 @@ export async function runActualNotionalHardHalt(
     });
     if (snap.observationId) consumedObservationIds.add(snap.observationId);
     if (snap.sourceGeneration) consumedSourceGenerations.add(snap.sourceGeneration);
+    if (!verification.ok) recordHaltReason(verification.reasonCode);
     return { snap, verification };
   };
 
@@ -694,9 +938,8 @@ export async function runActualNotionalHardHalt(
     try {
       const { verification } = await verifyOnce();
       verifiedFlat = verification.ok;
-      if (!verification.ok) errors.push(verification.reasonCode);
     } catch (error) {
-      errors.push(errText(error));
+      recordHaltReason(errText(error));
       verifiedFlat = false;
     }
     return acceptVerified(lastSnap ? "HALTED_UNFLAT" : "HALT_FAILED");
@@ -709,8 +952,7 @@ export async function runActualNotionalHardHalt(
         verifiedFlat = true;
         break;
       }
-      errors.push(verification.reasonCode);
-      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE|REPLAY/.test(verification.reasonCode)) {
+      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE|REPLAY|FUTURE_OBSERVATION/.test(verification.reasonCode)) {
         break;
       }
       if (verifyRound >= maxFlattenAttempts) break;
@@ -725,16 +967,15 @@ export async function runActualNotionalHardHalt(
           try {
             const again = await verifyOnce();
             verifiedFlat = again.verification.ok;
-            if (!again.verification.ok) errors.push(again.verification.reasonCode);
           } catch (error) {
-            errors.push(errText(error));
+            recordHaltReason(errText(error));
             verifiedFlat = false;
           }
         }
         break;
       }
     } catch (error) {
-      errors.push(errText(error));
+      recordHaltReason(errText(error));
       verifiedFlat = false;
       break;
     }

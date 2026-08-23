@@ -69,6 +69,23 @@ export function freshSnapshot(partial: Partial<AuthoritativeReductionSnapshot> =
   };
 }
 
+export function localTransportNotSent(stage: "LEASE" | "PREFLIGHT"): {
+  kind: "LOCAL_TRANSPORT_NOT_SENT";
+  transportCalled: false;
+  stage: "LEASE" | "PREFLIGHT";
+} {
+  return { kind: "LOCAL_TRANSPORT_NOT_SENT", transportCalled: false, stage };
+}
+
+export function ackFlatten(request: FlattenSubmitRequest): ReductionResult {
+  return {
+    outcome: "ACK",
+    requestedClientOrderId: request.clientOrderId,
+    submittedExternalId: request.clientOrderId,
+    clientOrderId: request.clientOrderId,
+  };
+}
+
 export type FlattenSubmitRequest = ReductionRequest & { side: "buy" | "sell"; qty: number };
 
 export type ScriptedTransport = ReductionTransport & {
