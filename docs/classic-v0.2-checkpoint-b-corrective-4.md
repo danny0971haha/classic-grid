@@ -158,7 +158,41 @@ Those hits are the pre-existing offline vendor fixture `offline-test-not-a-live-
 
 Exact changed files and SHAs are bound in section 6 after the implementation commit.
 
-## 6. Stop authorization
+## 6. Candidate binding
+
+Implementation commit:
+
+```text
+IMPLEMENTATION_SHA=59f62c681f159d67a222660f3ae5069dff515514
+IMPLEMENTATION_TREE=a50655bbc93f4af15a5983039c3c095f674bd748
+```
+
+SHA-bind commit (this document revision). Independent review must re-bind to the final pushed SHA and the Actions run that checked out that exact SHA.
+
+```text
+BASE_SHA=0179ef35359622321877475e0c4a42b60d740b61
+BASE_TREE=1ccde48b642e341b8737563cd0c78534fc8c8af4
+EXACT_CHANGED_FILES=
+  docs/classic-v0.2-checkpoint-b-corrective-4.md
+  src/experimentReduction.ts
+  src/venues/extended.ts
+  test/experiment-v02-reduction.test.ts
+  test/helpers/reduction.ts
+DIFF_STAT=5 files changed, 872 insertions(+), 51 deletions(-)
+TEST_COMMANDS_AND_TOTALS=
+  npm ci                                              exit 0
+  npm run check                                       exit 0  225/225 pass
+  node --import tsx --test test/experiment-v02-reduction.test.ts
+                                                      exit 0  85/85 pass
+  git diff --check                                    exit 0
+CI_RUN_ID=
+CI_HEAD_SHA=
+CI_CONCLUSION=
+```
+
+A later annotation commit may move `HEAD`. The handoff block is authoritative for the final pair.
+
+## 7. Stop authorization
 
 ```text
 CHECKPOINT_B_SELF_DECLARED_PASS=NO
