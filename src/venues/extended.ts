@@ -6,6 +6,7 @@ import {
   boundFlattenQty,
   classifyExposureReducingSide,
   createLocalTransportNotSent,
+  isLocalTransportNotSent,
   normalizeReductionResult,
   reductionClientOrderId,
   type AuthoritativeReductionSnapshot,
@@ -403,6 +404,12 @@ export class ExtendedExecutor implements VenueExecutor {
         qty,
         requestedClientOrderId
       );
+      if (
+        isLocalTransportNotSent(receipt)
+        || (receipt && typeof receipt === "object" && (receipt as { outcome?: unknown }).outcome === "NOT_SENT")
+      ) {
+        return normalizeReductionResult(request, receipt, { venueMutationEntered: true, physicalAttempt: 1 });
+      }
       const submittedExternalId = receipt && typeof receipt === "object"
         ? String(receipt.submittedExternalId || receipt.externalId || "")
         : "";
@@ -415,9 +422,9 @@ export class ExtendedExecutor implements VenueExecutor {
         submittedExternalId: submittedExternalId || undefined,
         clientOrderId: requestedClientOrderId,
         exchangeOrderId: exchangeOrderId || undefined,
-      });
+      }, { venueMutationEntered: true, physicalAttempt: 1 });
     } catch (error) {
-      return normalizeReductionResult(request, error, { venueMutationEntered: true });
+      return normalizeReductionResult(request, error, { venueMutationEntered: true, physicalAttempt: 1 });
     }
   }
 

@@ -41,6 +41,9 @@ export type CancelAttemptContext = {
   targetedExchangeOrderIds: string[];
 };
 
+const LOCAL_NOT_SENT_BRAND = Symbol("classic-grid.LOCAL_TRANSPORT_NOT_SENT");
+const PROJECT_NORMALIZED = Symbol("classic-grid.reduction.normalized");
+
 export type LocalTransportNotSentError = {
   kind: "LOCAL_TRANSPORT_NOT_SENT";
   transportCalled: false;
@@ -70,6 +73,8 @@ export type ReductionResult = {
   requestStartedAtMs?: number;
   verificationBarrierAtMs?: number;
   physicalAttempt?: number;
+  /** Project-owned proof of whether the actual venue mutation callable was entered. */
+  venueMutationEntered?: boolean;
 };
 
 export type AuthoritativeReductionSnapshot = {
@@ -210,15 +215,44 @@ export function isExplicitVenueRejection(error: unknown): boolean {
 }
 
 export function createLocalTransportNotSent(stage: "LEASE" | "PREFLIGHT"): LocalTransportNotSentError {
-  return { kind: "LOCAL_TRANSPORT_NOT_SENT", transportCalled: false, stage };
+  return {
+    kind: "LOCAL_TRANSPORT_NOT_SENT",
+    transportCalled: false,
+    stage,
+    [LOCAL_NOT_SENT_BRAND]: true,
+  } as LocalTransportNotSentError;
 }
 
 export function isLocalTransportNotSent(error: unknown): error is LocalTransportNotSentError {
   if (!error || typeof error !== "object") return false;
-  const rec = error as Partial<LocalTransportNotSentError>;
+  const rec = error as Partial<LocalTransportNotSentError> & Record<symbol, unknown>;
   return rec.kind === "LOCAL_TRANSPORT_NOT_SENT"
     && rec.transportCalled === false
-    && (rec.stage === "LEASE" || rec.stage === "PREFLIGHT");
+    && (rec.stage === "LEASE" || rec.stage === "PREFLIGHT")
+    && rec[LOCAL_NOT_SENT_BRAND] === true;
+}
+
+function isProjectNormalizedReduction(value: unknown): value is ReductionResult {
+  return Boolean(value) && typeof value === "object" && PROJECT_NORMALIZED in (value as object);
+}
+
+function innerProvenanceEnteredVenueMutation(raw: unknown): boolean {
+  if (isLocalTransportNotSent(raw)) return false;
+  if (isProjectNormalizedReduction(raw)) {
+    if (raw.venueMutationEntered === false && raw.outcome === "NOT_SENT") return false;
+    if (raw.venueMutationEntered === true) return true;
+    return raw.outcome !== "NOT_SENT";
+  }
+  return true;
+}
+
+function finishNormalized(result: ReductionResult, mutationEntered: boolean): ReductionResult {
+  const next: ReductionResult = {
+    ...result,
+    venueMutationEntered: result.outcome === "NOT_SENT" ? false : mutationEntered,
+  };
+  Object.defineProperty(next, PROJECT_NORMALIZED, { value: true });
+  return next;
 }
 
 export function classifyTransportError(error: unknown): ReductionWriteOutcome {
@@ -252,53 +286,69 @@ export function normalizeReductionResult(
   };
   const mutationEntered = extras.venueMutationEntered === true;
   if (rawResultOrError == null || typeof rawResultOrError !== "object" || Array.isArray(rawResultOrError)) {
-    return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
+    return finishNormalized({ ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" }, mutationEntered);
   }
   if (isLocalTransportNotSent(rawResultOrError)) {
     if (mutationEntered) {
-      return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_PROVENANCE_UNTRUSTED" };
+      return finishNormalized(
+        { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_PROVENANCE_UNTRUSTED" },
+        true
+      );
     }
-    return {
+    const originalReason = (rawResultOrError as { reasonCode?: unknown }).reasonCode;
+    const token = createLocalTransportNotSent(rawResultOrError.stage);
+    return finishNormalized({
       ...bound,
+      ...token,
       outcome: "NOT_SENT",
-      reasonCode: rawResultOrError.stage,
+      reasonCode: typeof originalReason === "string" && originalReason ? originalReason : rawResultOrError.stage,
       physicalAttempt: 0,
-    };
+    }, false);
   }
   const raw = rawResultOrError as Record<string, unknown>;
   if (isExplicitVenueRejection(raw) && raw.outcome !== "ACK") {
-    return {
+    return finishNormalized({
       ...bound,
       outcome: "REJECTED",
       reasonCode: String(raw.reasonCode || raw.message || "VENUE_REJECTION"),
-    };
+    }, mutationEntered);
   }
   if (typeof raw.outcome !== "string" || !KNOWN_REDUCTION_OUTCOMES.has(raw.outcome as ReductionWriteOutcome)) {
-    return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
+    return finishNormalized({ ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" }, mutationEntered);
   }
   if (raw.outcome === "ACK") {
     if (raw.requestedClientOrderId !== request.clientOrderId || raw.submittedExternalId !== request.clientOrderId) {
-      return {
+      return finishNormalized({
         ...bound,
         outcome: "UNKNOWN",
         reasonCode: "REDUCTION_IDENTITY_MISMATCH",
         submittedExternalId: typeof raw.submittedExternalId === "string" ? raw.submittedExternalId : undefined,
-      };
+      }, mutationEntered);
     }
-    return {
+    return finishNormalized({
       ...bound,
       outcome: "ACK",
       submittedExternalId: raw.submittedExternalId as string,
       exchangeOrderId: typeof raw.exchangeOrderId === "string" ? raw.exchangeOrderId : undefined,
-    };
+    }, mutationEntered);
   }
   if (raw.outcome === "NOT_SENT") {
-    return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_PROVENANCE_UNTRUSTED" };
+    return finishNormalized(
+      { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_PROVENANCE_UNTRUSTED" },
+      mutationEntered
+    );
   }
   if (raw.outcome === "REJECTED") {
-    return { ...bound, outcome: "REJECTED", reasonCode: String(raw.reasonCode || "REJECTED") };
+    return finishNormalized({
+      ...bound,
+      outcome: "REJECTED",
+      reasonCode: String(raw.reasonCode || "REJECTED"),
+    }, mutationEntered);
   }
-  return { ...bound, outcome: "UNKNOWN", reasonCode: String(raw.reasonCode || "UNKNOWN") };
+  return finishNormalized(
+    { ...bound, outcome: "UNKNOWN", reasonCode: String(raw.reasonCode || "UNKNOWN") },
+    mutationEntered
+  );
 }
 
 function validateAuthoritativeReductionSnapshot(
@@ -580,12 +630,29 @@ export function createVenueReductionTransport(p: {
       }
     },
     async submitFlatten(request) {
-      p.assertLeaseCurrent();
+      try {
+        p.assertLeaseCurrent();
+      } catch (error) {
+        return normalizeReductionResult(
+          request,
+          isLocalTransportNotSent(error) ? error : createLocalTransportNotSent("LEASE"),
+          { physicalAttempt: 0, venueMutationEntered: false }
+        );
+      }
       if (p.reduceExposure) {
         try {
-          return normalizeReductionResult(request, await p.reduceExposure(request));
+          const inner = await p.reduceExposure(request);
+          const entered = innerProvenanceEnteredVenueMutation(inner);
+          return normalizeReductionResult(request, inner, {
+            physicalAttempt: entered ? (typeof inner.physicalAttempt === "number" ? inner.physicalAttempt : request.attempt) : 0,
+            venueMutationEntered: entered,
+          });
         } catch (error) {
-          return normalizeReductionResult(request, error);
+          const entered = innerProvenanceEnteredVenueMutation(error);
+          return normalizeReductionResult(request, error, {
+            physicalAttempt: entered ? request.attempt : 0,
+            venueMutationEntered: entered,
+          });
         }
       }
       try {
@@ -595,9 +662,9 @@ export function createVenueReductionTransport(p: {
           clientOrderId: request.clientOrderId,
           requestedClientOrderId: request.clientOrderId,
           reasonCode: "REDUCTION_IDENTITY_UNPROVEN",
-        });
+        }, { venueMutationEntered: true, physicalAttempt: 1 });
       } catch (error) {
-        return normalizeReductionResult(request, error);
+        return normalizeReductionResult(request, error, { venueMutationEntered: true, physicalAttempt: 1 });
       }
     },
     async fetchFreshSnapshot(input) {
@@ -943,8 +1010,6 @@ export async function runActualNotionalHardHalt(
       );
     }
     const requestStartedAtMs = nowMs();
-    mutationAttemptAtMs = requestStartedAtMs;
-    physicalAttempt = nextAttempt;
     let raw: unknown;
     try {
       raw = await p.transport.submitFlatten(request);
@@ -952,19 +1017,24 @@ export async function runActualNotionalHardHalt(
       raw = error;
     }
     const verificationBarrierAtMs = nowMs();
-    currentAttempt = {
-      attempt: nextAttempt,
-      clientOrderId: request.clientOrderId,
-      side: request.side,
-      qty: request.qty,
-      requestStartedAtMs,
-      verificationBarrierAtMs,
-    };
+    const entered = innerProvenanceEnteredVenueMutation(raw);
+    if (entered) {
+      mutationAttemptAtMs = requestStartedAtMs;
+      physicalAttempt = nextAttempt;
+      currentAttempt = {
+        attempt: nextAttempt,
+        clientOrderId: request.clientOrderId,
+        side: request.side,
+        qty: request.qty,
+        requestStartedAtMs,
+        verificationBarrierAtMs,
+      };
+    }
     const result = normalizeReductionResult(request, raw, {
       requestStartedAtMs,
       verificationBarrierAtMs,
-      physicalAttempt: nextAttempt,
-      venueMutationEntered: true,
+      physicalAttempt: entered ? nextAttempt : 0,
+      venueMutationEntered: entered,
     });
     if (result.outcome === "UNKNOWN") {
       recordHaltReason("FLATTEN_ATTEMPT_UNKNOWN");
