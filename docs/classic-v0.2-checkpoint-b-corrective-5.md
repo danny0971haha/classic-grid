@@ -228,29 +228,32 @@ TEST_SHA=14ed72d3391e5a3ae7a9537e64ff160030cdebf2
 TEST_TREE=b5fe5ed9ddb24898b979ea61af8fd362ea6a320c
 ```
 
-SHA-bind commit and its exact branch-push CI are recorded after push:
+SHA-bind commit and its exact branch-push CI:
 
 ```text
 BASE_SHA=517d15d7c1d9a27c02b583c7d6b7eaea2f4e6967
 BASE_TREE=fef0480b661a4743ac90329cb644d3dc3b364e89
-HEAD_SHA=<filled after docs SHA-bind commit>
-TREE_SHA=<filled after docs SHA-bind commit>
+HEAD_SHA=76529c2d885a2272d27cfe1136eed97dac7cd60b
+TREE_SHA=904fc0752a6bf393116b4c0d898bf69ceae99bb2
 EXACT_CHANGED_FILES=
   docs/classic-v0.2-checkpoint-b-corrective-5.md
   src/experimentReduction.ts
   src/venues/extended.ts
   test/experiment-v02-reduction.test.ts
-DIFF_STAT=<filled after docs SHA-bind commit>
+DIFF_STAT=4 files changed, 803 insertions(+), 37 deletions(-)
 TEST_COMMANDS_AND_TOTALS=
   npm ci                                              exit 0
   npm run check                                       exit 0  233/233 pass
   node --import tsx --test test/experiment-v02-reduction.test.ts
                                                       exit 0  93/93 pass
   git diff --check                                    exit 0
-CI_RUN_ID=<filled after exact event=push success>
+CI_RUN_ID=32652937872
 CI_EVENT=push
-CI_HEAD_SHA=<must equal final HEAD>
+CI_URL=https://github.com/danny0971haha/classic-grid/actions/runs/32652937872
+CI_HEAD_SHA=76529c2d885a2272d27cfe1136eed97dac7cd60b
 CI_CONCLUSION=success
+CI_JOB=compiler-and-tests
+CI_JOB_CONCLUSION=success
 ```
 
 A later annotation commit may move `HEAD`. Independent review must re-bind to the final pushed SHA and the Actions run that checked out that exact SHA. The handoff block is authoritative for the final pair.
