@@ -38,6 +38,8 @@ import {
   inspectDurablePair,
   inspectDurablePairInFreshProcess,
   ownedOrder,
+  attachExtendedExchangeForTests,
+  createOfflineExtendedVendor,
   scriptedTransport,
   unownedOrder,
 } from "./helpers/reduction.js";
@@ -89,6 +91,8 @@ async function runHalt(p: {
   assertLeaseCurrent?: () => void;
   persistOptions?: Parameters<typeof runActualNotionalHardHalt>[0]["persistOptions"];
   onDurableAuthorityInspected?: Parameters<typeof runActualNotionalHardHalt>[0]["onDurableAuthorityInspected"];
+  nowMs?: () => number;
+  maxFlattenAttempts?: number;
 }) {
   return runActualNotionalHardHalt({
     experimentId: p.id,
@@ -105,6 +109,8 @@ async function runHalt(p: {
     persistOptions: p.persistOptions,
     state: p.state,
     onDurableAuthorityInspected: p.onDurableAuthorityInspected,
+    nowMs: p.nowMs,
+    maxFlattenAttempts: p.maxFlattenAttempts,
   });
 }
 
@@ -467,9 +473,12 @@ describe("Checkpoint B actual-notional hard halt", () => {
     assert.equal(result.state.halted, true);
     assert.ok(transport.flattenCalls >= 1);
     assert.ok(transport.flattenCalls <= 3, "retry must be bounded");
-    const identities = new Set(transport.flattenClientOrderIds);
-    assert.equal(identities.size, 1);
-    assert.equal([...identities][0], reductionClientOrderId(evaluated.next.haltId as string));
+    const incident = evaluated.next.haltId as string;
+    assert.equal(transport.flattenClientOrderIds[0], reductionClientOrderId(incident, 1));
+    if (transport.flattenCalls >= 2) {
+      assert.equal(transport.flattenClientOrderIds[1], reductionClientOrderId(incident, 2));
+      assert.notEqual(transport.flattenClientOrderIds[0], transport.flattenClientOrderIds[1]);
+    }
   });
 
   it("B14: stale/pre-write snapshot cannot produce HALTED_FLAT", async () => {
@@ -1321,6 +1330,7 @@ describe("Checkpoint B actual-notional hard halt", () => {
       incidentId: "halt-bc13",
       positionQty: 0.001,
       attempt: 1,
+      clientOrderId: reductionClientOrderId("halt-bc13", 1),
     };
     const stale = await ex.reduceExposure({
       ...base,
@@ -1348,5 +1358,372 @@ describe("Checkpoint B actual-notional hard halt", () => {
     });
     assert.equal(oversized.outcome, "NOT_SENT");
     assert.match(String(oversized.reasonCode), /QTY|EXPOSURE|POSITION/);
+  });
+
+  it("CB2-1 deterministic ID reaches actual vendor payload.id", async () => {
+    const { exchange, submittedPayloads } = await createOfflineExtendedVendor();
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, exchange);
+    const requested = reductionClientOrderId("halt-cb2-1", 1);
+    const result = await executor.reduceExposure({
+      market: MARKET,
+      targetAbsPositionQty: 0,
+      incidentId: "halt-cb2-1",
+      leaseGeneration: "5",
+      positionQty: 0.001,
+      attempt: 1,
+      clientOrderId: requested,
+      side: "sell",
+      qty: 0.001,
+    });
+    assert.equal(submittedPayloads.length, 1, "vendor _submitOrder must physically POST once");
+    assert.equal(submittedPayloads[0]?.payload.id, requested);
+    assert.equal(result.requestedClientOrderId, requested);
+    assert.equal(result.submittedExternalId, requested);
+    assert.equal(result.requestedClientOrderId, result.submittedExternalId);
+    assert.equal(result.submittedExternalId, submittedPayloads[0]?.payload.id);
+  });
+
+  it("CB2-2 ACK returns verified identity and keeps exchange ID separate", async () => {
+    const { exchange, submittedPayloads } = await createOfflineExtendedVendor();
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, exchange);
+    const requested = reductionClientOrderId("halt-cb2-2", 1);
+    const result = await executor.reduceExposure({
+      market: MARKET,
+      targetAbsPositionQty: 0,
+      incidentId: "halt-cb2-2",
+      leaseGeneration: "5",
+      positionQty: 0.001,
+      attempt: 1,
+      clientOrderId: requested,
+      side: "sell",
+      qty: 0.001,
+    });
+    assert.equal(result.outcome, "ACK");
+    assert.equal(result.requestedClientOrderId, requested);
+    assert.equal(result.submittedExternalId, requested);
+    assert.equal(result.exchangeOrderId, "venue-internal-77");
+    assert.notEqual(result.exchangeOrderId, result.submittedExternalId);
+    assert.equal(submittedPayloads[0]?.payload.id, requested);
+  });
+
+  it("CB2-3 identity mismatch is UNKNOWN and does not ACK", async () => {
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => ({
+        submittedExternalId: "not-the-requested-id",
+        exchangeId: "venue-1",
+        exchangeOrderId: "venue-1",
+      }),
+    });
+    const requested = reductionClientOrderId("halt-cb2-3", 1);
+    const mismatched = await executor.reduceExposure({
+      market: MARKET,
+      targetAbsPositionQty: 0,
+      incidentId: "halt-cb2-3",
+      leaseGeneration: "5",
+      positionQty: 0.001,
+      attempt: 1,
+      clientOrderId: requested,
+      side: "sell",
+      qty: 0.001,
+    });
+    assert.equal(mismatched.outcome, "UNKNOWN");
+    assert.equal(mismatched.reasonCode, "REDUCTION_IDENTITY_MISMATCH");
+    assert.notEqual(mismatched.outcome, "ACK");
+
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => ({
+        exchangeId: "venue-1",
+        exchangeOrderId: "venue-1",
+      }),
+    });
+    const missing = await executor.reduceExposure({
+      market: MARKET,
+      targetAbsPositionQty: 0,
+      incidentId: "halt-cb2-3",
+      leaseGeneration: "5",
+      positionQty: 0.001,
+      attempt: 1,
+      clientOrderId: requested,
+      side: "sell",
+      qty: 0.001,
+    });
+    assert.equal(missing.outcome, "UNKNOWN");
+    assert.equal(missing.reasonCode, "REDUCTION_IDENTITY_MISMATCH");
+
+    const dir = tmpDir("cb2-3");
+    const id = "cb2-3-halt";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: (request) => ({
+        outcome: "UNKNOWN",
+        reasonCode: "REDUCTION_IDENTITY_MISMATCH",
+        requestedClientOrderId: request.clientOrderId,
+        submittedExternalId: "other-id",
+        clientOrderId: request.clientOrderId,
+      }),
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const halted = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(halted.flatten?.outcome, "UNKNOWN");
+    assert.equal(halted.flatten?.reasonCode, "REDUCTION_IDENTITY_MISMATCH");
+    assert.equal(halted.verifiedFlat, false);
+    assert.notEqual(halted.state.haltStatus, "HALTED_FLAT");
+    assert.equal(transport.flattenCalls, 1);
+  });
+
+  it("CB2-4 unchanged position still advances physical attempt identity", async () => {
+    const dir = tmpDir("cb2-4");
+    const id = "cb2-4-same-bytes";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const incident = evaluated.next.haltId as string;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: 0.0018,
+        observationId: `cb2-4-${attempt}`,
+        sourceGeneration: `g-cb2-4-${attempt}`,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.equal(transport.flattenRequests[0]?.attempt, 1);
+    assert.equal(transport.flattenRequests[1]?.attempt, 2);
+    assert.equal(transport.flattenRequests[0]?.clientOrderId, reductionClientOrderId(incident, 1));
+    assert.equal(transport.flattenRequests[1]?.clientOrderId, reductionClientOrderId(incident, 2));
+    assert.equal(transport.flattenClientOrderIds[0], `cg-reduce:${incident}:flatten`);
+    assert.equal(transport.flattenClientOrderIds[1], `cg-reduce:${incident}:flatten:2`);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("CB2-5 changed position recomputes direction and quantity with advancing attempt", async () => {
+    const dir = tmpDir("cb2-5");
+    const id = "cb2-5-recompute";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 200, positionQty: -0.002 }),
+      LIMITS,
+      running
+    );
+    const incident = evaluated.next.haltId as string;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: attempt === 1 ? 0.001 : 0.001,
+        observationId: `cb2-5-${attempt}`,
+        sourceGeneration: `g-cb2-5-${attempt}`,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: -0.002,
+      transport,
+    });
+    assert.ok(transport.flattenCalls >= 2);
+    assert.equal(transport.flattenRequests[0]?.side, "buy");
+    assert.equal(transport.flattenRequests[0]?.qty, 0.002);
+    assert.equal(transport.flattenRequests[1]?.side, "sell");
+    assert.equal(transport.flattenRequests[1]?.qty, 0.001);
+    assert.ok((transport.flattenRequests[1]?.qty ?? 1) <= 0.001 + 1e-15);
+    assert.equal(transport.flattenRequests[1]?.attempt, 2);
+    assert.equal(transport.flattenClientOrderIds[0], reductionClientOrderId(incident, 1));
+    assert.equal(transport.flattenClientOrderIds[1], reductionClientOrderId(incident, 2));
+    assert.equal(result.verifiedFlat, false);
+  });
+
+  it("CB2-6 old observation cannot verify a later physical attempt", async () => {
+    const replayed = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        observationId: "obs-shared",
+        sourceGeneration: "gen-shared",
+        observedAt: "2026-08-23T00:00:20.000Z",
+      }),
+      mutationAttemptAtMs: Date.parse("2026-08-23T00:00:15.000Z"),
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs: Date.parse("2026-08-23T00:00:20.000Z"),
+      expectedLeaseGeneration: "lease-1",
+      consumedObservationIds: ["obs-shared"],
+      consumedSourceGenerations: ["gen-shared"],
+    });
+    assert.equal(replayed.ok, false);
+    if (replayed.ok) assert.fail("replayed observation must be rejected");
+    else assert.equal(replayed.reasonCode, "REDUCTION_OBSERVATION_REPLAY");
+
+    const dir = tmpDir("cb2-6");
+    const id = "cb2-6-replay";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const reused = {
+      observationId: "obs-attempt-1",
+      sourceGeneration: "gen-attempt-1",
+    };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: attempt === 1 ? 0.0018 : 0,
+        observationId: reused.observationId,
+        sourceGeneration: reused.sourceGeneration,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(result.errors.some((row) => row.includes("REDUCTION_OBSERVATION_REPLAY")));
+  });
+
+  it("CB2-7 each physical submission rebinds mutationAttemptAtMs", async () => {
+    const dir = tmpDir("cb2-7");
+    const id = "cb2-7-ts";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const clock = { ms: 1_700_000_000_000 };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: 0.0018,
+        observationId: `cb2-7-${attempt}`,
+        sourceGeneration: `g-cb2-7-${attempt}`,
+        observedAt: new Date(clock.ms + 1).toISOString(),
+      }),
+      onFlatten() {
+        clock.ms += 5_000;
+      },
+    });
+    await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      nowMs: () => clock.ms,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.equal(transport.snapshotCalls, 2);
+    assert.equal(transport.snapshotMutationAttemptAtMs[0], 1_700_000_000_000);
+    assert.equal(transport.snapshotMutationAttemptAtMs[1], 1_700_000_005_000);
+    assert.ok(
+      (transport.snapshotMutationAttemptAtMs[1] ?? 0) > (transport.snapshotMutationAttemptAtMs[0] ?? 0),
+      "later verifier must use the later attempt timestamp"
+    );
+  });
+
+  it("CB2-8 UNKNOWN causes no blind second mutation", async () => {
+    const dir = tmpDir("cb2-8");
+    const id = "cb2-8-unknown";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "UNKNOWN",
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(result.reseedAllowed, false);
+    assert.equal(experimentAllowsReseed(result.state), false);
+  });
+
+  it("CB2-9 lease loss and durable authority remain unchanged", async () => {
+    const dir = tmpDir("cb2-9");
+    const id = "cb2-9-lease";
+    seedRunning(id, dir, "lease-2");
+    const before = inspectDurablePairInFreshProcess(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      { ...emptyRiskState(SCOPE), leaseGeneration: "lease-1" }
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      leaseGeneration: "lease-1",
+      assertLeaseCurrent() {
+        throw new Error("RUNTIME_LEASE_GENERATION_MISMATCH");
+      },
+    });
+    const after = inspectDurablePairInFreshProcess(id, dir);
+    assert.deepEqual(after, before);
+    assert.equal(after.primarySha256, before.primarySha256);
+    assert.equal(after.backupSha256, before.backupSha256);
+    assert.equal(after.storeGeneration, before.storeGeneration);
+    assert.equal(after.envelopeSha256, before.envelopeSha256);
+    assert.equal(transport.cancelCalls, 0);
+    assert.equal(transport.flattenCalls, 0);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(loadRiskState(id, dir, SCOPE).haltStatus, "RUNNING");
   });
 });

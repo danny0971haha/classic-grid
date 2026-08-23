@@ -61,7 +61,18 @@ type ExtendedExchange = ExtendedStrictExchangeFacade & {
   }): Promise<{ orderId: string }>;
   cancelOrder(marketId: number, orderId: string): Promise<unknown>;
   cancelAll(marketId: number): Promise<unknown>;
-  closePosition(marketId: number, sizeBase?: number | null): Promise<unknown>;
+  closePosition(
+    marketId: number,
+    sizeBase?: number | null,
+    externalId?: string | null
+  ): Promise<{
+    requestedClientOrderId?: string | null;
+    submittedExternalId?: string;
+    exchangeId?: string;
+    exchangeOrderId?: string;
+    orderId?: string;
+    externalId?: string;
+  } | true>;
   setLeverage(marketId: number, leverage: number): Promise<unknown>;
   getLeverage(marketId: number): Promise<number | null>;
   confirmNoOpenOrders(marketId: number, opts?: { retries?: number; waitMs?: number }): Promise<unknown>;
@@ -345,38 +356,78 @@ export class ExtendedExecutor implements VenueExecutor {
    * as an idempotent full-close: quantity, side, lease, and attempt identity are enforced.
    */
   async reduceExposure(request: ReductionRequest & { side: "buy" | "sell"; qty: number }): Promise<ReductionResult> {
-    const clientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
+    const expectedClientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
+    const requestedClientOrderId = request.clientOrderId;
+    const identity = (reasonCode: string, outcome: ReductionResult["outcome"] = "NOT_SENT"): ReductionResult => ({
+      outcome,
+      reasonCode,
+      requestedClientOrderId: requestedClientOrderId || expectedClientOrderId,
+      clientOrderId: requestedClientOrderId || expectedClientOrderId,
+    });
+    if (!requestedClientOrderId) {
+      return identity("MISSING_CLIENT_ORDER_ID");
+    }
+    if (requestedClientOrderId !== expectedClientOrderId) {
+      return identity("CLIENT_ORDER_ID_MISMATCH");
+    }
     if (request.leaseGeneration !== String(this.leaseGeneration)) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "STALE_LEASE_GENERATION" };
+      return identity("STALE_LEASE_GENERATION");
     }
     if (request.targetAbsPositionQty !== 0) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "UNSUPPORTED_PARTIAL_REDUCTION" };
+      return identity("UNSUPPORTED_PARTIAL_REDUCTION");
     }
     if (!Number.isFinite(request.positionQty)) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "MISSING_POSITION_QTY" };
+      return identity("MISSING_POSITION_QTY");
     }
     const reducing = classifyExposureReducingSide(request.positionQty);
     if (reducing !== request.side) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "EXPOSURE_INCREASING_SIDE" };
+      return identity("EXPOSURE_INCREASING_SIDE");
     }
     const maxQty = Math.abs(request.positionQty);
     if (!(request.qty > 0) || request.qty > maxQty + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "QTY_EXCEEDS_POSITION" };
+      return identity("QTY_EXCEEDS_POSITION");
     }
     const qty = boundFlattenQty(request.positionQty, request.qty);
     if (!(qty > 0) || qty > maxQty) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "EXPOSURE_INCREASING_QTY" };
+      return identity("EXPOSURE_INCREASING_QTY");
     }
     if (this.dryRun) {
-      return { outcome: "NOT_SENT", clientOrderId, reasonCode: "DRY_RUN_NO_TRANSPORT" };
+      return identity("DRY_RUN_NO_TRANSPORT");
     }
     try {
-      await this.ensure().closePosition(this.marketId(request.market), qty);
-      return { outcome: "ACK", clientOrderId };
+      const receipt = await this.ensure().closePosition(
+        this.marketId(request.market),
+        qty,
+        requestedClientOrderId
+      );
+      const submittedExternalId = receipt && typeof receipt === "object"
+        ? String(receipt.submittedExternalId || receipt.externalId || "")
+        : "";
+      const exchangeOrderId = receipt && typeof receipt === "object"
+        ? String(receipt.exchangeId || receipt.exchangeOrderId || "")
+        : "";
+      if (!submittedExternalId || submittedExternalId !== requestedClientOrderId) {
+        return {
+          outcome: "UNKNOWN",
+          reasonCode: "REDUCTION_IDENTITY_MISMATCH",
+          requestedClientOrderId,
+          submittedExternalId: submittedExternalId || undefined,
+          clientOrderId: requestedClientOrderId,
+          exchangeOrderId: exchangeOrderId || undefined,
+        };
+      }
+      return {
+        outcome: "ACK",
+        requestedClientOrderId,
+        submittedExternalId,
+        clientOrderId: requestedClientOrderId,
+        exchangeOrderId: exchangeOrderId || undefined,
+      };
     } catch (error) {
       return {
         outcome: classifyTransportError(error),
-        clientOrderId,
+        requestedClientOrderId,
+        clientOrderId: requestedClientOrderId,
         reasonCode: String((error as { message?: string })?.message || error).slice(0, 200),
       };
     }

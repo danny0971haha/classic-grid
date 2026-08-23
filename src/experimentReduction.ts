@@ -29,10 +29,13 @@ export type ReductionRequest = {
   leaseGeneration: string;
   positionQty: number;
   attempt: number;
+  clientOrderId: string;
 };
 
 export type ReductionResult = {
   outcome: ReductionWriteOutcome;
+  requestedClientOrderId?: string;
+  submittedExternalId?: string;
   exchangeOrderId?: string;
   clientOrderId?: string;
   reasonCode?: string;
@@ -179,6 +182,8 @@ export function verifyFlattenSnapshot(p: {
   ownershipPrefix: string;
   nowMs: number;
   expectedLeaseGeneration?: string;
+  consumedObservationIds?: Iterable<string>;
+  consumedSourceGenerations?: Iterable<string>;
 }): SnapshotVerification {
   const { snapshot } = p;
   if (snapshot.freshness === "cached") return { ok: false, reasonCode: "CACHED_SNAPSHOT" };
@@ -196,6 +201,11 @@ export function verifyFlattenSnapshot(p: {
     if (!snapshot.leaseGeneration || snapshot.leaseGeneration !== p.expectedLeaseGeneration) {
       return { ok: false, reasonCode: "SNAPSHOT_FENCE_MISMATCH" };
     }
+  }
+  const consumedObservationIds = new Set(p.consumedObservationIds ?? []);
+  const consumedSourceGenerations = new Set(p.consumedSourceGenerations ?? []);
+  if (consumedObservationIds.has(snapshot.observationId) || consumedSourceGenerations.has(snapshot.sourceGeneration)) {
+    return { ok: false, reasonCode: "REDUCTION_OBSERVATION_REPLAY" };
   }
   if (Math.abs(snapshot.positionQty) > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
     return { ok: false, reasonCode: "POSITION_NOT_FLAT" };
@@ -282,18 +292,22 @@ export function createVenueReductionTransport(p: {
     },
     async submitFlatten(request) {
       p.assertLeaseCurrent();
-      const clientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
       if (p.reduceExposure) {
-        const result = await p.reduceExposure(request);
-        return { ...result, clientOrderId: result.clientOrderId || clientOrderId };
+        return p.reduceExposure(request);
       }
       try {
         await p.closePosition(request.market);
-        return { outcome: "ACK", clientOrderId };
+        return {
+          outcome: "UNKNOWN",
+          clientOrderId: request.clientOrderId,
+          requestedClientOrderId: request.clientOrderId,
+          reasonCode: "REDUCTION_IDENTITY_UNPROVEN",
+        };
       } catch (error) {
         return {
           outcome: classifyTransportError(error),
-          clientOrderId,
+          clientOrderId: request.clientOrderId,
+          requestedClientOrderId: request.clientOrderId,
           reasonCode: errText(error),
         };
       }
@@ -524,45 +538,80 @@ export async function runActualNotionalHardHalt(
 
   const leaseBeforeFlatten = tryAssertLease(p.assertLeaseCurrent);
   if (leaseBeforeFlatten) {
-    flatten = { outcome: "NOT_SENT", clientOrderId: reductionClientOrderId(incidentId), reasonCode: leaseBeforeFlatten };
+    const withheldId = reductionClientOrderId(incidentId, 1);
+    flatten = {
+      outcome: "NOT_SENT",
+      clientOrderId: withheldId,
+      requestedClientOrderId: withheldId,
+      reasonCode: leaseBeforeFlatten,
+    };
     return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
   }
 
   lifecycle = "REDUCING_EXPOSURE";
-  let request: ReductionRequest & { side: Side; qty: number } = {
+  let physicalAttempt = 0;
+  let mutationAttemptAtMs = 0;
+  const consumedObservationIds = new Set<string>();
+  const consumedSourceGenerations = new Set<string>();
+
+  const buildFlattenRequest = (
+    positionQty: number,
+    attempt: number
+  ): ReductionRequest & { side: Side; qty: number } => ({
     market: p.market,
     targetAbsPositionQty: 0,
     incidentId,
     leaseGeneration: p.leaseGeneration,
-    positionQty: p.positionQty,
-    attempt: 1,
-    side: classifyExposureReducingSide(p.positionQty) ?? "sell",
-    qty: boundFlattenQty(p.positionQty, Math.abs(p.positionQty), qtyStep),
+    positionQty,
+    attempt,
+    clientOrderId: reductionClientOrderId(incidentId, attempt),
+    side: classifyExposureReducingSide(positionQty) ?? "sell",
+    qty: boundFlattenQty(positionQty, Math.abs(positionQty), qtyStep),
+  });
+
+  const submitPhysical = async (positionQty: number): Promise<ReductionResult> => {
+    const nextAttempt = physicalAttempt + 1;
+    const request = buildFlattenRequest(positionQty, nextAttempt);
+    mutationAttemptAtMs = nowMs();
+    p.assertLeaseCurrent();
+    physicalAttempt = nextAttempt;
+    return p.transport.submitFlatten(request);
   };
-  const clientOrderId = reductionClientOrderId(incidentId, request.attempt);
-  const canFlatten = classifyExposureReducingSide(p.positionQty) && request.qty > 0;
+
+  const firstRequest = buildFlattenRequest(p.positionQty, 1);
+  const canFlatten = Boolean(classifyExposureReducingSide(p.positionQty) && firstRequest.qty > 0);
 
   if (canFlatten) {
     try {
-      p.assertLeaseCurrent();
-      const submitted = await p.transport.submitFlatten(request);
-      flatten = { ...submitted, clientOrderId: submitted.clientOrderId || clientOrderId };
+      flatten = await submitPhysical(p.positionQty);
     } catch (error) {
-      flatten = { outcome: classifyTransportError(error), clientOrderId, reasonCode: errText(error) };
+      const attemptedId = reductionClientOrderId(incidentId, Math.max(1, physicalAttempt));
+      flatten = {
+        outcome: classifyTransportError(error),
+        clientOrderId: attemptedId,
+        requestedClientOrderId: attemptedId,
+        reasonCode: errText(error),
+      };
     }
   } else {
-    flatten = { outcome: "ACK", clientOrderId, reasonCode: "ALREADY_FLAT_POSITION" };
+    flatten = {
+      outcome: "ACK",
+      clientOrderId: firstRequest.clientOrderId,
+      requestedClientOrderId: firstRequest.clientOrderId,
+      reasonCode: "ALREADY_FLAT_POSITION",
+    };
+    mutationAttemptAtMs = nowMs();
   }
 
   if (flatten.outcome === "REJECTED" || (flatten.outcome === "NOT_SENT" && canFlatten)) {
     return finalize("HALTED_UNFLAT", "HALTED_UNFLAT");
   }
 
-  const mutationAttemptAtMs = nowMs();
   const verifyOnce = async (): Promise<{
     verification: SnapshotVerification;
     snap: AuthoritativeReductionSnapshot;
   }> => {
+    if (!(mutationAttemptAtMs > 0)) mutationAttemptAtMs = nowMs();
     const beforeRead = tryAssertLease(p.assertLeaseCurrent);
     if (beforeRead) throw new Error(beforeRead);
     const snap = await p.transport.fetchFreshSnapshot({
@@ -573,16 +622,18 @@ export async function runActualNotionalHardHalt(
     const afterRead = tryAssertLease(p.assertLeaseCurrent);
     if (afterRead) throw new Error(afterRead);
     lastSnap = snap;
-    return {
-      snap,
-      verification: verifyFlattenSnapshot({
-        snapshot: snap,
-        mutationAttemptAtMs,
-        ownershipPrefix: p.ownershipPrefix,
-        nowMs: nowMs(),
-        expectedLeaseGeneration: p.leaseGeneration,
-      }),
-    };
+    const verification = verifyFlattenSnapshot({
+      snapshot: snap,
+      mutationAttemptAtMs,
+      ownershipPrefix: p.ownershipPrefix,
+      nowMs: nowMs(),
+      expectedLeaseGeneration: p.leaseGeneration,
+      consumedObservationIds,
+      consumedSourceGenerations,
+    });
+    if (snap.observationId) consumedObservationIds.add(snap.observationId);
+    if (snap.sourceGeneration) consumedSourceGenerations.add(snap.sourceGeneration);
+    return { snap, verification };
   };
 
   const acceptVerified = (haltStatus: Exclude<HaltStatus, "RUNNING">): ActualNotionalHaltResult => {
@@ -603,7 +654,7 @@ export async function runActualNotionalHardHalt(
     return acceptVerified(lastSnap ? "HALTED_UNFLAT" : "HALT_FAILED");
   }
 
-  for (let attempt = 1; attempt <= maxFlattenAttempts; attempt++) {
+  for (let verifyRound = 1; verifyRound <= maxFlattenAttempts; verifyRound++) {
     try {
       const { verification, snap } = await verifyOnce();
       if (verification.ok) {
@@ -611,27 +662,18 @@ export async function runActualNotionalHardHalt(
         break;
       }
       errors.push(verification.reasonCode);
-      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE/.test(verification.reasonCode)) {
+      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE|REPLAY/.test(verification.reasonCode)) {
         break;
       }
-      if (attempt >= maxFlattenAttempts) break;
+      if (verifyRound >= maxFlattenAttempts) break;
       if (tryAssertLease(p.assertLeaseCurrent)) break;
       const latestQty = snap.positionQty;
       const retrySide = classifyExposureReducingSide(latestQty);
       const retryQty = boundFlattenQty(latestQty, Math.abs(latestQty), qtyStep);
       if (!retrySide || !(retryQty > 0)) break;
-      const bytesChanged = retrySide !== request.side || retryQty !== request.qty;
-      request = {
-        ...request,
-        side: retrySide,
-        qty: retryQty,
-        positionQty: latestQty,
-        attempt: bytesChanged ? request.attempt + 1 : request.attempt,
-      };
-      const retry = await p.transport.submitFlatten(request);
-      flatten = { ...retry, clientOrderId: retry.clientOrderId || reductionClientOrderId(incidentId, request.attempt) };
-      if (retry.outcome !== "ACK") {
-        if (retry.outcome === "UNKNOWN") {
+      flatten = await submitPhysical(latestQty);
+      if (flatten.outcome !== "ACK") {
+        if (flatten.outcome === "UNKNOWN") {
           try {
             const again = await verifyOnce();
             verifiedFlat = again.verification.ok;

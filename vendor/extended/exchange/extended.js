@@ -655,7 +655,7 @@ export class ExtendedExchange extends EventEmitter {
   }
 
   /** Close all or a specified part of the position with a reduce-only IOC order. */
-  async closePosition(marketId, sizeBase = null) {
+  async closePosition(marketId, sizeBase = null, externalId = null) {
     const m = this._market(marketId);
     const p = this._pos.get(m.marketId);
     if (!p || !p.sizeBase) return true;
@@ -666,10 +666,18 @@ export class ExtendedExchange extends EventEmitter {
     const qtyStr = alignToStep(requested, m.qtyStep, 'down');
     if (parseDec(qtyStr).i <= 0n) throw new Error('减仓数量低于最小单位');
     const priceStr = alignToStep(worst, m.priceStep, 'nearest');
-    return this._submitOrder(m, {
+    const requestedClientOrderId = externalId == null ? null : String(externalId);
+    const submitted = await this._submitOrder(m, {
       side: isBuy ? 'buy' : 'sell', qtyStr, priceStr,
       type: 'MARKET', timeInForce: 'IOC', postOnly: false, reduceOnly: true,
+      externalId: requestedClientOrderId,
     });
+    return {
+      requestedClientOrderId,
+      submittedExternalId: submitted.externalId,
+      exchangeId: submitted.exchangeId,
+      exchangeOrderId: submitted.exchangeId,
+    };
   }
 
   // ---------- polling ----------

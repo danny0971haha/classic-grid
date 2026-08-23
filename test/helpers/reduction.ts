@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { LiveOrder } from "../../src/types.js";
 import type {
   AuthoritativeReductionSnapshot,
@@ -69,22 +69,26 @@ export function freshSnapshot(partial: Partial<AuthoritativeReductionSnapshot> =
   };
 }
 
+export type FlattenSubmitRequest = ReductionRequest & { side: "buy" | "sell"; qty: number };
+
 export type ScriptedTransport = ReductionTransport & {
   cancelCalls: number;
   flattenCalls: number;
   snapshotCalls: number;
-  flattenRequests: Array<ReductionRequest & { side: "buy" | "sell"; qty: number }>;
+  flattenRequests: FlattenSubmitRequest[];
   cancelledOrders: LiveOrder[][];
   flattenClientOrderIds: string[];
+  snapshotMutationAttemptAtMs: number[];
+  snapshotEvidence: Array<{ observationId: string; sourceGeneration: string }>;
 };
 
 export function scriptedTransport(script: {
   cancel?: ReductionWriteOutcome | ReductionWriteOutcome[] | ((orders: LiveOrder[]) => ReductionWriteOutcome);
-  flatten?: ReductionWriteOutcome | ReductionWriteOutcome[] | ((req: ReductionRequest & { side: "buy" | "sell"; qty: number }) => ReductionResult);
+  flatten?: ReductionWriteOutcome | ReductionWriteOutcome[] | ((req: FlattenSubmitRequest) => ReductionResult);
   snapshots?: AuthoritativeReductionSnapshot[] | ((attempt: number) => AuthoritativeReductionSnapshot);
   snapshotError?: Error;
   onCancel?: (orders: LiveOrder[]) => void;
-  onFlatten?: (req: ReductionRequest & { side: "buy" | "sell"; qty: number }) => void;
+  onFlatten?: (req: FlattenSubmitRequest) => void;
 }): ScriptedTransport {
   const cancelQueue = Array.isArray(script.cancel) ? [...script.cancel] : [];
   const flattenQueue = Array.isArray(script.flatten) ? [...script.flatten] : [];
@@ -96,6 +100,8 @@ export function scriptedTransport(script: {
     flattenRequests: [],
     cancelledOrders: [],
     flattenClientOrderIds: [],
+    snapshotMutationAttemptAtMs: [],
+    snapshotEvidence: [],
     async cancelOwnedOrders(p) {
       transport.cancelCalls += 1;
       transport.cancelledOrders.push(p.orders);
@@ -112,24 +118,102 @@ export function scriptedTransport(script: {
       script.onFlatten?.(request);
       if (typeof script.flatten === "function") {
         const result = script.flatten(request);
-        if (result.clientOrderId) transport.flattenClientOrderIds.push(result.clientOrderId);
+        const recorded = request.clientOrderId || result.clientOrderId || result.requestedClientOrderId;
+        if (recorded) transport.flattenClientOrderIds.push(recorded);
         return result;
       }
       const outcome = flattenQueue.shift() ?? (typeof script.flatten === "string" ? script.flatten : "ACK");
-      const clientOrderId = reductionClientOrderId(request.incidentId, request.attempt ?? 1);
+      const clientOrderId = request.clientOrderId || reductionClientOrderId(request.incidentId, request.attempt ?? 1);
       transport.flattenClientOrderIds.push(clientOrderId);
-      return { outcome, clientOrderId };
+      return {
+        outcome,
+        clientOrderId,
+        requestedClientOrderId: clientOrderId,
+        submittedExternalId: clientOrderId,
+      };
     },
-    async fetchFreshSnapshot() {
+    async fetchFreshSnapshot(input) {
       transport.snapshotCalls += 1;
+      transport.snapshotMutationAttemptAtMs.push(input.mutationAttemptAtMs);
       if (script.snapshotError) throw script.snapshotError;
-      if (typeof script.snapshots === "function") return script.snapshots(transport.snapshotCalls);
-      const next = snapQueue.shift();
+      const next = typeof script.snapshots === "function"
+        ? script.snapshots(transport.snapshotCalls)
+        : snapQueue.shift();
       if (!next) throw new Error("SNAPSHOT_WITHHELD");
+      transport.snapshotEvidence.push({
+        observationId: next.observationId,
+        sourceGeneration: next.sourceGeneration,
+      });
       return next;
     },
   };
   return transport;
+}
+
+export type OfflineVendorSubmit = {
+  method: string;
+  path: string;
+  payload: Record<string, unknown>;
+};
+
+export type OfflineExtendedVendor = {
+  marketIdForName(name: string): number | null;
+  closePosition(
+    marketId: number,
+    sizeBase?: number | null,
+    externalId?: string | null
+  ): Promise<unknown>;
+};
+
+export function attachExtendedExchangeForTests(executor: object, exchange: unknown): void {
+  (executor as { ex: unknown }).ex = exchange;
+}
+
+export async function createOfflineExtendedVendor(): Promise<{
+  exchange: OfflineExtendedVendor;
+  submittedPayloads: OfflineVendorSubmit[];
+}> {
+  const vendorHref = pathToFileURL(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../vendor/extended/exchange/extended.js")
+  ).href;
+  const { ExtendedExchange } = await import(vendorHref) as {
+    ExtendedExchange: new (opts: Record<string, unknown>) => OfflineExtendedVendor & {
+      markets: Map<number, Record<string, unknown>>;
+      _pos: Map<number, { sizeBase: number; entryPrice: number }>;
+      _prices: Map<number, number>;
+      _req: (method: string, path: string, body?: Record<string, unknown>) => Promise<unknown>;
+    };
+  };
+  const submittedPayloads: OfflineVendorSubmit[] = [];
+  const exchange = new ExtendedExchange({
+    apiKey: "offline-test-not-a-live-key",
+    vault: 10002,
+    privateKey: "0x7a7ff6fd3cab02ccdcd4a572563f5976f8976899b03a39773795a3c486d4986",
+    publicKey: "0x61c5e7e8339b7d56f197f54ea91b776776690e3232313de0f2ecbd0ef76f466",
+    apiUrl: "http://127.0.0.1:1",
+  });
+  exchange.markets.set(1, {
+    marketId: 1,
+    name: "BTC-USD",
+    qtyStep: "0.00001",
+    priceStep: "0.1",
+    l2: {
+      syntheticId: "0x4254432d3600000000000000000000",
+      collateralId: "0x31857064564ed0ff978e687456963cba09c2c6985d8f9300a1de4962fafa054",
+      synRes: 1_000_000,
+      colRes: 1_000_000,
+    },
+  });
+  exchange._pos.set(1, { sizeBase: 0.001, entryPrice: 100_000 });
+  exchange._prices.set(1, 100_000);
+  exchange._req = async (method, reqPath, body) => {
+    if (method === "POST" && reqPath === "/api/v1/user/order") {
+      submittedPayloads.push({ method, path: reqPath, payload: { ...(body || {}) } });
+      return { id: "venue-internal-77" };
+    }
+    throw new Error(`OFFLINE_VENDOR_UNEXPECTED_REQUEST:${method}:${reqPath}`);
+  };
+  return { exchange, submittedPayloads };
 }
 
 export type DurablePairBytes = {
