@@ -11,7 +11,7 @@ import type {
   ReductionTransport,
   ReductionWriteOutcome,
 } from "../../src/experimentReduction.js";
-import { reductionClientOrderId } from "../../src/experimentReduction.js";
+import { createLocalTransportNotSent, reductionClientOrderId } from "../../src/experimentReduction.js";
 
 const BYTE_WORKER = fileURLToPath(new URL("../fixtures/experiment-risk-byte-worker.ts", import.meta.url));
 
@@ -74,7 +74,7 @@ export function localTransportNotSent(stage: "LEASE" | "PREFLIGHT"): {
   transportCalled: false;
   stage: "LEASE" | "PREFLIGHT";
 } {
-  return { kind: "LOCAL_TRANSPORT_NOT_SENT", transportCalled: false, stage };
+  return createLocalTransportNotSent(stage);
 }
 
 export function ackFlatten(request: FlattenSubmitRequest): ReductionResult {

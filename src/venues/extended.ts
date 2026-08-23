@@ -5,6 +5,7 @@ import {
   ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE,
   boundFlattenQty,
   classifyExposureReducingSide,
+  createLocalTransportNotSent,
   normalizeReductionResult,
   reductionClientOrderId,
   type AuthoritativeReductionSnapshot,
@@ -358,11 +359,13 @@ export class ExtendedExecutor implements VenueExecutor {
   async reduceExposure(request: ReductionRequest & { side: "buy" | "sell"; qty: number }): Promise<ReductionResult> {
     const expectedClientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
     const requestedClientOrderId = request.clientOrderId;
-    const identity = (reasonCode: string, outcome: ReductionResult["outcome"] = "NOT_SENT"): ReductionResult => ({
-      outcome,
+    const identity = (reasonCode: string): ReductionResult => ({
+      ...createLocalTransportNotSent("PREFLIGHT"),
+      outcome: "NOT_SENT",
       reasonCode,
       requestedClientOrderId: requestedClientOrderId || expectedClientOrderId,
       clientOrderId: requestedClientOrderId || expectedClientOrderId,
+      physicalAttempt: 0,
     });
     if (!requestedClientOrderId) {
       return identity("MISSING_CLIENT_ORDER_ID");
@@ -414,7 +417,7 @@ export class ExtendedExecutor implements VenueExecutor {
         exchangeOrderId: exchangeOrderId || undefined,
       });
     } catch (error) {
-      return normalizeReductionResult(request, error);
+      return normalizeReductionResult(request, error, { venueMutationEntered: true });
     }
   }
 

@@ -2835,4 +2835,541 @@ describe("Checkpoint B actual-notional hard halt", () => {
     assert.match(checkpointA, /Checkpoint A versioned v0\.2 configuration/);
     assert.ok(Number.isFinite(MAX_CLOCK_SKEW_MS));
   });
+
+  function c4Request(incidentId: string) {
+    return {
+      market: MARKET,
+      targetAbsPositionQty: 0 as const,
+      incidentId,
+      leaseGeneration: "lease-1",
+      positionQty: 0.001,
+      attempt: 1,
+      clientOrderId: reductionClientOrderId(incidentId, 1),
+      side: "sell" as const,
+      qty: 0.001,
+    };
+  }
+
+  function durableHas(result: { state: { haltReasons: string[] } }, id: string, dir: string, code: string): boolean {
+    const persisted = loadRiskState(id, dir, SCOPE);
+    return result.state.haltReasons.includes(code) && persisted.haltReasons.includes(code);
+  }
+
+  it("C4-1 raw { outcome: NOT_SENT } with no transportCalled evidence -> UNKNOWN", () => {
+    const normalized = normalizeReductionResult(c4Request("halt-c4-1"), { outcome: "NOT_SENT" });
+    assert.equal(normalized.outcome, "UNKNOWN");
+    assert.notEqual(normalized.outcome, "NOT_SENT");
+    assert.ok(
+      normalized.reasonCode === "REDUCTION_RESULT_MALFORMED"
+      || normalized.reasonCode === "REDUCTION_PROVENANCE_UNTRUSTED"
+    );
+  });
+
+  it("C4-2 raw { outcome: NOT_SENT, transportCalled: false } after submitFlatten mutation boundary -> UNKNOWN", async () => {
+    const afterBoundary = normalizeReductionResult(
+      c4Request("halt-c4-2-unit"),
+      { outcome: "NOT_SENT", transportCalled: false },
+      { venueMutationEntered: true, physicalAttempt: 1 }
+    );
+    assert.equal(afterBoundary.outcome, "UNKNOWN");
+    assert.notEqual(afterBoundary.outcome, "NOT_SENT");
+
+    const dir = tmpDir("c4-2");
+    const id = "c4-2-after-submit";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: () => ({ outcome: "NOT_SENT", transportCalled: false }),
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.flatten?.outcome, "NOT_SENT");
+    assert.ok(durableHas(result, id, dir, "FLATTEN_ATTEMPT_UNKNOWN"));
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("C4-3 structurally spoofed LOCAL_TRANSPORT_NOT_SENT after transport entry -> UNKNOWN", async () => {
+    const spoof = {
+      kind: "LOCAL_TRANSPORT_NOT_SENT" as const,
+      transportCalled: false as const,
+      stage: "LEASE" as const,
+      outcome: "NOT_SENT" as const,
+      reasonCode: "LEASE",
+    };
+    const dir = tmpDir("c4-3");
+    const id = "c4-3-spoof";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: () => spoof,
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.flatten?.outcome, "NOT_SENT");
+    assert.ok(durableHas(result, id, dir, "FLATTEN_ATTEMPT_UNKNOWN"));
+
+    const thrownDir = tmpDir("c4-3-throw");
+    const thrownId = "c4-3-spoof-throw";
+    const thrownRunning = seedRunning(thrownId, thrownDir);
+    const thrownEvaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      thrownRunning
+    );
+    const thrownTransport = scriptedTransport({
+      cancel: "ACK",
+      flatten: () => {
+        throw Object.assign(new Error("spoofed local not sent"), spoof);
+      },
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const thrown = await runHalt({
+      id: thrownId,
+      dir: thrownDir,
+      state: thrownEvaluated.next,
+      positionQty: 0.0018,
+      transport: thrownTransport,
+    });
+    assert.equal(thrownTransport.flattenCalls, 1);
+    assert.equal(thrown.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(thrown.flatten?.outcome, "NOT_SENT");
+    assert.ok(durableHas(thrown, thrownId, thrownDir, "FLATTEN_ATTEMPT_UNKNOWN"));
+  });
+
+  it("C4-4 genuine project-owned local lease/preflight failure before venue mutation -> NOT_SENT and mutation count 0", async () => {
+    const dir = tmpDir("c4-4");
+    const id = "c4-4-preflight";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const lease = { lost: false };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+      onCancel() {
+        lease.lost = true;
+      },
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      openOrders: [ownedOrder({ side: "buy" })],
+      transport,
+      assertLeaseCurrent() {
+        if (lease.lost) throw new Error("RUNTIME_LEASE_LOST");
+      },
+    });
+    assert.equal(transport.cancelCalls, 1);
+    assert.equal(transport.flattenCalls, 0);
+    assert.equal(result.flatten?.outcome, "NOT_SENT");
+    assert.notEqual(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+
+    const { exchange, submittedPayloads } = await createOfflineExtendedVendor();
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, exchange);
+    const preflight = await executor.reduceExposure({
+      market: MARKET,
+      targetAbsPositionQty: 0,
+      incidentId: "halt-c4-4-ext",
+      leaseGeneration: "4",
+      positionQty: 0.001,
+      attempt: 1,
+      clientOrderId: reductionClientOrderId("halt-c4-4-ext", 1),
+      side: "sell",
+      qty: 0.001,
+    });
+    assert.equal(preflight.outcome, "NOT_SENT");
+    assert.equal(submittedPayloads.length, 0);
+  });
+
+  it("C4-5 positionQty=Number.NaN can never verify flat or produce HALTED_FLAT", async () => {
+    const nowMs = Date.parse("2026-08-23T00:00:20.000Z");
+    const verified = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: Number.NaN,
+        observedAt: "2026-08-23T00:00:20.000Z",
+        capturedAtMs: nowMs,
+      }),
+      mutationAttemptAtMs: nowMs - 5_000,
+      verificationBarrierAtMs: nowMs - 5_000,
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs,
+      expectedLeaseGeneration: "lease-1",
+    });
+    assert.equal(verified.ok, false);
+    if (verified.ok) assert.fail("NaN positionQty must never verify flat");
+    else assert.equal(verified.reasonCode, "REDUCTION_POSITION_NON_FINITE");
+
+    const dir = tmpDir("c4-5");
+    const id = "c4-5-nan";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({
+        positionQty: Number.NaN,
+        observedAt: new Date().toISOString(),
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.notEqual(result.lifecycle, "HALTED_FLAT");
+    assert.ok(durableHas(result, id, dir, "REDUCTION_POSITION_NON_FINITE"));
+  });
+
+  it("C4-6 positionQty=Infinity/-Infinity can never verify flat", async () => {
+    const nowMs = Date.parse("2026-08-23T00:00:20.000Z");
+    for (const positionQty of [Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const verified = verifyFlattenSnapshot({
+        snapshot: freshSnapshot({
+          positionQty,
+          observedAt: "2026-08-23T00:00:20.000Z",
+          capturedAtMs: nowMs,
+        }),
+        mutationAttemptAtMs: nowMs - 5_000,
+        verificationBarrierAtMs: nowMs - 5_000,
+        ownershipPrefix: OWNER_PREFIX,
+        nowMs,
+        expectedLeaseGeneration: "lease-1",
+      });
+      assert.equal(verified.ok, false, String(positionQty));
+      if (verified.ok) assert.fail("non-finite positionQty must never verify flat");
+      else assert.equal(verified.reasonCode, "REDUCTION_POSITION_NON_FINITE", String(positionQty));
+    }
+
+    const dir = tmpDir("c4-6");
+    const id = "c4-6-inf";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: Number.POSITIVE_INFINITY }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(durableHas(result, id, dir, "REDUCTION_POSITION_NON_FINITE"));
+  });
+
+  it("C4-7 freshness=unknown, missing freshness, or arbitrary string cannot verify", () => {
+    const nowMs = Date.parse("2026-08-23T00:00:20.000Z");
+    const base = {
+      mutationAttemptAtMs: nowMs - 5_000,
+      verificationBarrierAtMs: nowMs - 5_000,
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs,
+      expectedLeaseGeneration: "lease-1",
+    };
+    const cases: Array<[string, { freshness: "fresh" }]> = [
+      ["unknown", { freshness: "unknown" as "fresh" }],
+      ["arbitrary", { freshness: "yesterday" as "fresh" }],
+    ];
+    for (const [label, partial] of cases) {
+      const verified = verifyFlattenSnapshot({
+        snapshot: freshSnapshot({
+          positionQty: 0,
+          observedAt: "2026-08-23T00:00:20.000Z",
+          capturedAtMs: nowMs,
+          ...partial,
+        }),
+        ...base,
+      });
+      assert.equal(verified.ok, false, label);
+      if (verified.ok) assert.fail(`${label} freshness must not verify`);
+      else assert.equal(verified.reasonCode, "REDUCTION_SNAPSHOT_FRESHNESS_UNPROVEN", label);
+    }
+    const missingFreshness = {
+      observedAt: "2026-08-23T00:00:20.000Z",
+      observationId: "obs-c4-7-missing",
+      sourceGeneration: "gen-c4-7-missing",
+      capturedAtMs: nowMs,
+      positionQty: 0,
+      openOrders: [],
+      mid: 100_000,
+      leaseGeneration: "lease-1",
+    };
+    const missing = verifyFlattenSnapshot({
+      snapshot: missingFreshness as unknown as ReturnType<typeof freshSnapshot>,
+      ...base,
+    });
+    assert.equal(missing.ok, false);
+    if (missing.ok) assert.fail("missing freshness must not verify");
+    else assert.equal(missing.reasonCode, "REDUCTION_SNAPSHOT_FRESHNESS_UNPROVEN");
+  });
+
+  it("C4-8 openOrders missing, non-array, or malformed rows fail closed with durable reason and no unhandled rejection", async () => {
+    const nowMs = Date.parse("2026-08-23T00:00:20.000Z");
+    const base = {
+      mutationAttemptAtMs: nowMs - 5_000,
+      verificationBarrierAtMs: nowMs - 5_000,
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs,
+      expectedLeaseGeneration: "lease-1",
+    };
+    const missingOrders = {
+      ...freshSnapshot({
+        positionQty: 0,
+        observedAt: "2026-08-23T00:00:20.000Z",
+        capturedAtMs: nowMs,
+      }),
+    };
+    delete (missingOrders as { openOrders?: unknown }).openOrders;
+    const missing = verifyFlattenSnapshot({ snapshot: missingOrders as ReturnType<typeof freshSnapshot>, ...base });
+    assert.equal(missing.ok, false);
+    if (missing.ok) assert.fail("missing openOrders must fail closed");
+    else assert.equal(missing.reasonCode, "REDUCTION_SNAPSHOT_MALFORMED");
+
+    const nonArray = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        observedAt: "2026-08-23T00:00:20.000Z",
+        capturedAtMs: nowMs,
+        openOrders: { not: "an-array" } as unknown as [],
+      }),
+      ...base,
+    });
+    assert.equal(nonArray.ok, false);
+    if (nonArray.ok) assert.fail("non-array openOrders must fail closed");
+    else assert.equal(nonArray.reasonCode, "REDUCTION_SNAPSHOT_MALFORMED");
+
+    const malformedRow = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        observedAt: "2026-08-23T00:00:20.000Z",
+        capturedAtMs: nowMs,
+        openOrders: [{ side: "buy" } as ReturnType<typeof ownedOrder>],
+      }),
+      ...base,
+    });
+    assert.equal(malformedRow.ok, false);
+    if (malformedRow.ok) assert.fail("malformed open-order row must fail closed");
+    else assert.equal(malformedRow.reasonCode, "REDUCTION_SNAPSHOT_MALFORMED");
+
+    const throwingSnap = new Proxy(freshSnapshot({
+      positionQty: 0,
+      observedAt: "2026-08-23T00:00:20.000Z",
+      capturedAtMs: nowMs,
+    }), {
+      get(target, prop, receiver) {
+        if (prop === "openOrders") throw new TypeError("proxy openOrders boom");
+        return Reflect.get(target, prop, receiver);
+      },
+    });
+    const thrown = verifyFlattenSnapshot({
+      snapshot: throwingSnap,
+      ...base,
+    });
+    assert.equal(thrown.ok, false);
+    if (thrown.ok) assert.fail("getter exception must fail closed");
+    else assert.equal(thrown.reasonCode, "REDUCTION_SNAPSHOT_MALFORMED");
+
+    const dir = tmpDir("c4-8");
+    const id = "c4-8-malformed";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const leftover = ownedOrder({ side: "buy", id: "ex-c4-8" });
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => {
+        const snap = freshSnapshot({
+          positionQty: 0.0018,
+          openOrders: [leftover],
+        });
+        delete (snap as { openOrders?: unknown }).openOrders;
+        return snap;
+      },
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      openOrders: [leftover],
+      transport,
+    });
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(transport.flattenCalls, 0);
+    assert.ok(durableHas(result, id, dir, "REDUCTION_SNAPSHOT_MALFORMED"));
+    assert.ok(durableHas(result, id, dir, "CANCEL_RECONCILIATION_UNPROVEN"));
+  });
+
+  it("C4-9 first flatten ACK + non-flat position + newly appearing unsafe owned order -> flattenCalls stays 1", async () => {
+    const dir = tmpDir("c4-9");
+    const id = "c4-9-reappear";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const initial = ownedOrder({ side: "buy", id: "ex-c4-9-initial" });
+    const reappeared = ownedOrder({ side: "buy", id: "ex-c4-9-reappeared" });
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: (n) => n === 1
+        ? freshSnapshot({
+          positionQty: 0.0018,
+          openOrders: [],
+          observationId: "c4-9-post-cancel",
+          sourceGeneration: "g-c4-9-post-cancel",
+        })
+        : freshSnapshot({
+          positionQty: 0.0018,
+          openOrders: [reappeared],
+          observationId: "c4-9-post-flatten",
+          sourceGeneration: "g-c4-9-post-flatten",
+        }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      openOrders: [initial],
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.verifiedFlat, false);
+    assert.ok(["HALTED_UNFLAT", "HALT_FAILED"].includes(result.state.haltStatus));
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(durableHas(result, id, dir, "UNSAFE_OWNED_ORDER_REMAINS"));
+  });
+
+  it("C4-10 option A: no re-cancel after unsafe reappearance; prior cancel proof cannot authorize retry", async () => {
+    const dir = tmpDir("c4-10");
+    const id = "c4-10-no-recancel";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const initial = ownedOrder({ side: "buy", id: "ex-c4-10-initial" });
+    const reappeared = ownedOrder({ side: "buy", id: "ex-c4-10-reappeared" });
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (n) => n === 1
+        ? freshSnapshot({
+          positionQty: 0.0018,
+          openOrders: [],
+          observationId: "c4-10-post-cancel",
+          sourceGeneration: "g-c4-10-post-cancel",
+        })
+        : freshSnapshot({
+          positionQty: 0.0018,
+          openOrders: [reappeared],
+          observationId: `c4-10-post-flatten-${n}`,
+          sourceGeneration: `g-c4-10-post-flatten-${n}`,
+        }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      openOrders: [initial],
+      transport,
+    });
+    assert.equal(transport.cancelCalls, 1, "option A: no second cancel attempt");
+    assert.equal(transport.flattenCalls, 1, "no second flatten without a new cancel absence proof");
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(durableHas(result, id, dir, "UNSAFE_OWNED_ORDER_REMAINS"));
+  });
+
+  it("C4-11 all prior Gate 0, Checkpoint A, B*, BC*, CB2*, C2*, and C3* tests remain present and green without weakening assertions", () => {
+    const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+    for (let i = 1; i <= 22; i += 1) {
+      assert.match(src, new RegExp(`it\\("B${i}:`), `missing B${i}`);
+    }
+    for (let i = 1; i <= 13; i += 1) {
+      assert.match(src, new RegExp(`it\\("BC${i}[ :]`), `missing BC${i}`);
+    }
+    for (let i = 1; i <= 9; i += 1) {
+      assert.match(src, new RegExp(`it\\("CB2-${i} `), `missing CB2-${i}`);
+    }
+    for (let i = 1; i <= 11; i += 1) {
+      assert.match(src, new RegExp(`it\\("C2-${i} `), `missing C2-${i}`);
+    }
+    for (let i = 1; i <= 19; i += 1) {
+      assert.match(src, new RegExp(`it\\("C3-${i} `), `missing C3-${i}`);
+    }
+    for (let i = 1; i <= 11; i += 1) {
+      assert.match(src, new RegExp(`it\\("C4-${i} `), `missing C4-${i}`);
+    }
+    const gate0 = fs.readFileSync(fileURLToPath(new URL("./experiment-ack-authority.test.ts", import.meta.url)), "utf8");
+    const gate0Corrective = fs.readFileSync(fileURLToPath(new URL("./experiment-gate0-corrective.test.ts", import.meta.url)), "utf8");
+    const checkpointA = fs.readFileSync(fileURLToPath(new URL("./experiment-v02-config.test.ts", import.meta.url)), "utf8");
+    assert.match(gate0, /Gate 0 durable ACK authority/);
+    assert.match(gate0Corrective, /Gate 0 Corrective 1/);
+    assert.match(checkpointA, /Checkpoint A versioned v0\.2 configuration/);
+    assert.match(src, /assert\.equal\(result\.flatten\?\.outcome, "UNKNOWN"\)/);
+    assert.match(src, /assert\.equal\(transport\.flattenCalls, 1\)/);
+    assert.match(src, /UNSAFE_OWNED_ORDER_REMAINS/);
+  });
 });

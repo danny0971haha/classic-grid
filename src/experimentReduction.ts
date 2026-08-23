@@ -209,6 +209,10 @@ export function isExplicitVenueRejection(error: unknown): boolean {
     || rec.venueRejection === true;
 }
 
+export function createLocalTransportNotSent(stage: "LEASE" | "PREFLIGHT"): LocalTransportNotSentError {
+  return { kind: "LOCAL_TRANSPORT_NOT_SENT", transportCalled: false, stage };
+}
+
 export function isLocalTransportNotSent(error: unknown): error is LocalTransportNotSentError {
   if (!error || typeof error !== "object") return false;
   const rec = error as Partial<LocalTransportNotSentError>;
@@ -232,6 +236,8 @@ export function normalizeReductionResult(
     requestStartedAtMs?: number;
     verificationBarrierAtMs?: number;
     physicalAttempt?: number;
+    /** Caller-owned proof that the venue mutation callable was invoked. */
+    venueMutationEntered?: boolean;
   } = {}
 ): ReductionResult {
   const bound: Omit<ReductionResult, "outcome"> = {
@@ -244,10 +250,14 @@ export function normalizeReductionResult(
     verificationBarrierAtMs: extras.verificationBarrierAtMs,
     physicalAttempt: extras.physicalAttempt ?? request.attempt,
   };
+  const mutationEntered = extras.venueMutationEntered === true;
   if (rawResultOrError == null || typeof rawResultOrError !== "object" || Array.isArray(rawResultOrError)) {
     return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
   }
   if (isLocalTransportNotSent(rawResultOrError)) {
+    if (mutationEntered) {
+      return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_PROVENANCE_UNTRUSTED" };
+    }
     return {
       ...bound,
       outcome: "NOT_SENT",
@@ -283,20 +293,101 @@ export function normalizeReductionResult(
     };
   }
   if (raw.outcome === "NOT_SENT") {
-    if (raw.transportCalled === true) {
-      return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_RESULT_MALFORMED" };
-    }
-    return {
-      ...bound,
-      outcome: "NOT_SENT",
-      reasonCode: String(raw.reasonCode || "NOT_SENT"),
-      physicalAttempt: extras.physicalAttempt ?? 0,
-    };
+    return { ...bound, outcome: "UNKNOWN", reasonCode: "REDUCTION_PROVENANCE_UNTRUSTED" };
   }
   if (raw.outcome === "REJECTED") {
     return { ...bound, outcome: "REJECTED", reasonCode: String(raw.reasonCode || "REJECTED") };
   }
   return { ...bound, outcome: "UNKNOWN", reasonCode: String(raw.reasonCode || "UNKNOWN") };
+}
+
+function validateAuthoritativeReductionSnapshot(
+  snapshot: unknown
+): { ok: true } | { ok: false; reasonCode: string } {
+  try {
+    if (snapshot == null || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    const rec = snapshot as Record<string, unknown>;
+    if (rec.freshness !== "fresh" && rec.freshness !== "cached" && rec.freshness !== "pre_write") {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_FRESHNESS_UNPROVEN" };
+    }
+    if (typeof rec.capturedAtMs !== "number" || !Number.isFinite(rec.capturedAtMs)) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    if (typeof rec.positionQty !== "number" || !Number.isFinite(rec.positionQty)) {
+      return { ok: false, reasonCode: "REDUCTION_POSITION_NON_FINITE" };
+    }
+    if (typeof rec.mid !== "number" || !Number.isFinite(rec.mid) || !(rec.mid > 0)) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    if (typeof rec.observedAt !== "string" || !Number.isFinite(Date.parse(rec.observedAt))) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    if (typeof rec.observationId !== "string" || rec.observationId.length === 0) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    if (typeof rec.sourceGeneration !== "string" || rec.sourceGeneration.length === 0) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    if (!Array.isArray(rec.openOrders)) {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    for (const row of rec.openOrders) {
+      if (!row || typeof row !== "object" || Array.isArray(row)) {
+        return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+      }
+      const order = row as Record<string, unknown>;
+      if (typeof order.id !== "string" || order.id.length === 0) {
+        return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+      }
+      if (order.clientOrderId != null && typeof order.clientOrderId !== "string") {
+        return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+      }
+      if (order.reduceOnly != null && typeof order.reduceOnly !== "boolean") {
+        return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+      }
+      if (order.side != null && order.side !== "buy" && order.side !== "sell") {
+        return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+      }
+    }
+    if (rec.leaseGeneration != null && typeof rec.leaseGeneration !== "string") {
+      return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
+  }
+}
+
+function snapshotHasUnsafeOwnedOrders(
+  snapshot: AuthoritativeReductionSnapshot,
+  ownershipPrefix: string
+): boolean {
+  try {
+    return Array.isArray(snapshot.openOrders)
+      && snapshot.openOrders.some((order) => isUnsafeOwnedOpenOrder(order, ownershipPrefix));
+  } catch {
+    return true;
+  }
+}
+
+function shouldNotRetryFlatten(
+  reasonCode: string,
+  snap: AuthoritativeReductionSnapshot,
+  ownershipPrefix: string
+): boolean {
+  if (
+    reasonCode === "UNSAFE_OWNED_ORDER_REMAINS"
+    || reasonCode === "REDUCTION_SNAPSHOT_MALFORMED"
+    || reasonCode === "REDUCTION_POSITION_NON_FINITE"
+    || reasonCode === "REDUCTION_SNAPSHOT_FRESHNESS_UNPROVEN"
+    || reasonCode === "REDUCTION_PROVENANCE_UNTRUSTED"
+    || /CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE|REPLAY|FUTURE_OBSERVATION/.test(reasonCode)
+  ) {
+    return true;
+  }
+  return snapshotHasUnsafeOwnedOrders(snap, ownershipPrefix);
 }
 
 function verifySnapshotAuthorityFence(p: {
@@ -352,22 +443,31 @@ export function verifyFlattenSnapshot(p: {
   consumedObservationIds?: Iterable<string>;
   consumedSourceGenerations?: Iterable<string>;
 }): SnapshotVerification {
-  const fence = verifySnapshotAuthorityFence({
-    snapshot: p.snapshot,
-    verificationBarrierAtMs: p.verificationBarrierAtMs ?? p.mutationAttemptAtMs,
-    nowMs: p.nowMs,
-    expectedLeaseGeneration: p.expectedLeaseGeneration,
-    consumedObservationIds: p.consumedObservationIds,
-    consumedSourceGenerations: p.consumedSourceGenerations,
-  });
-  if (!fence.ok) return fence;
-  if (Math.abs(p.snapshot.positionQty) > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
-    return { ok: false, reasonCode: "POSITION_NOT_FLAT" };
+  try {
+    const shape = validateAuthoritativeReductionSnapshot(p.snapshot);
+    if (!shape.ok) return shape;
+    const fence = verifySnapshotAuthorityFence({
+      snapshot: p.snapshot,
+      verificationBarrierAtMs: p.verificationBarrierAtMs ?? p.mutationAttemptAtMs,
+      nowMs: p.nowMs,
+      expectedLeaseGeneration: p.expectedLeaseGeneration,
+      consumedObservationIds: p.consumedObservationIds,
+      consumedSourceGenerations: p.consumedSourceGenerations,
+    });
+    if (!fence.ok) return fence;
+    if (snapshotHasUnsafeOwnedOrders(p.snapshot, p.ownershipPrefix)) {
+      return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
+    }
+    if (!Number.isFinite(p.snapshot.positionQty)) {
+      return { ok: false, reasonCode: "REDUCTION_POSITION_NON_FINITE" };
+    }
+    if (Math.abs(p.snapshot.positionQty) > ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
+      return { ok: false, reasonCode: "POSITION_NOT_FLAT" };
+    }
+    return { ok: true, flat: true };
+  } catch {
+    return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
   }
-  if (p.snapshot.openOrders.some((order) => isUnsafeOwnedOpenOrder(order, p.ownershipPrefix))) {
-    return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
-  }
-  return { ok: true, flat: true };
 }
 
 export function verifyCancelReconciliationSnapshot(p: {
@@ -380,23 +480,29 @@ export function verifyCancelReconciliationSnapshot(p: {
   consumedObservationIds?: Iterable<string>;
   consumedSourceGenerations?: Iterable<string>;
 }): { ok: true } | { ok: false; reasonCode: string } {
-  const fence = verifySnapshotAuthorityFence({
-    snapshot: p.snapshot,
-    verificationBarrierAtMs: p.verificationBarrierAtMs,
-    nowMs: p.nowMs,
-    expectedLeaseGeneration: p.expectedLeaseGeneration,
-    consumedObservationIds: p.consumedObservationIds,
-    consumedSourceGenerations: p.consumedSourceGenerations,
-  });
-  if (!fence.ok) return fence;
-  const remainingIds = new Set(p.snapshot.openOrders.map((order) => order.id));
-  if (p.targetedOrderIds.some((id) => remainingIds.has(id))) {
-    return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
+  try {
+    const shape = validateAuthoritativeReductionSnapshot(p.snapshot);
+    if (!shape.ok) return shape;
+    const fence = verifySnapshotAuthorityFence({
+      snapshot: p.snapshot,
+      verificationBarrierAtMs: p.verificationBarrierAtMs,
+      nowMs: p.nowMs,
+      expectedLeaseGeneration: p.expectedLeaseGeneration,
+      consumedObservationIds: p.consumedObservationIds,
+      consumedSourceGenerations: p.consumedSourceGenerations,
+    });
+    if (!fence.ok) return fence;
+    const remainingIds = new Set(p.snapshot.openOrders.map((order) => order.id));
+    if (p.targetedOrderIds.some((id) => remainingIds.has(id))) {
+      return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
+    }
+    if (snapshotHasUnsafeOwnedOrders(p.snapshot, p.ownershipPrefix)) {
+      return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, reasonCode: "REDUCTION_SNAPSHOT_MALFORMED" };
   }
-  if (p.snapshot.openOrders.some((order) => isUnsafeOwnedOpenOrder(order, p.ownershipPrefix))) {
-    return { ok: false, reasonCode: "UNSAFE_OWNED_ORDER_REMAINS" };
-  }
-  return { ok: true };
 }
 
 function tryAssertLease(assertLeaseCurrent: () => void): string | null {
@@ -830,11 +936,11 @@ export async function runActualNotionalHardHalt(
     const request = buildFlattenRequest(positionQty, nextAttempt);
     const leaseErr = tryAssertLease(p.assertLeaseCurrent);
     if (leaseErr) {
-      return normalizeReductionResult(request, {
-        kind: "LOCAL_TRANSPORT_NOT_SENT",
-        transportCalled: false,
-        stage: "LEASE",
-      }, { physicalAttempt: 0 });
+      return normalizeReductionResult(
+        request,
+        createLocalTransportNotSent("LEASE"),
+        { physicalAttempt: 0, venueMutationEntered: false }
+      );
     }
     const requestStartedAtMs = nowMs();
     mutationAttemptAtMs = requestStartedAtMs;
@@ -858,6 +964,7 @@ export async function runActualNotionalHardHalt(
       requestStartedAtMs,
       verificationBarrierAtMs,
       physicalAttempt: nextAttempt,
+      venueMutationEntered: true,
     });
     if (result.outcome === "UNKNOWN") {
       recordHaltReason("FLATTEN_ATTEMPT_UNKNOWN");
@@ -952,7 +1059,7 @@ export async function runActualNotionalHardHalt(
         verifiedFlat = true;
         break;
       }
-      if (/CACHED|PRE_WRITE|STALE|MISSING_OBSERVATION|AMBIGUOUS|FENCE|REPLAY|FUTURE_OBSERVATION/.test(verification.reasonCode)) {
+      if (shouldNotRetryFlatten(verification.reasonCode, snap, p.ownershipPrefix)) {
         break;
       }
       if (verifyRound >= maxFlattenAttempts) break;
