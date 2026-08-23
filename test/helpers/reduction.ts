@@ -115,21 +115,18 @@ export function scriptedTransport(script: {
     async submitFlatten(request) {
       transport.flattenCalls += 1;
       transport.flattenRequests.push(request);
+      const requestedId = request.clientOrderId || reductionClientOrderId(request.incidentId, request.attempt ?? 1);
+      if (requestedId) transport.flattenClientOrderIds.push(requestedId);
       script.onFlatten?.(request);
       if (typeof script.flatten === "function") {
-        const result = script.flatten(request);
-        const recorded = request.clientOrderId || result.clientOrderId || result.requestedClientOrderId;
-        if (recorded) transport.flattenClientOrderIds.push(recorded);
-        return result;
+        return script.flatten(request);
       }
       const outcome = flattenQueue.shift() ?? (typeof script.flatten === "string" ? script.flatten : "ACK");
-      const clientOrderId = request.clientOrderId || reductionClientOrderId(request.incidentId, request.attempt ?? 1);
-      transport.flattenClientOrderIds.push(clientOrderId);
       return {
         outcome,
-        clientOrderId,
-        requestedClientOrderId: clientOrderId,
-        submittedExternalId: clientOrderId,
+        clientOrderId: requestedId,
+        requestedClientOrderId: requestedId,
+        submittedExternalId: requestedId,
       };
     },
     async fetchFreshSnapshot(input) {

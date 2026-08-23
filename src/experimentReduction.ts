@@ -22,6 +22,15 @@ export const MAX_FLATTEN_ATTEMPTS = 2;
 export type ReductionLifecycle = ReductionPhase;
 export type ReductionWriteOutcome = "ACK" | "REJECTED" | "UNKNOWN" | "NOT_SENT";
 
+export type ReductionAttemptContext = {
+  attempt: number;
+  clientOrderId: string;
+  side: Side;
+  qty: number;
+  requestStartedAtMs: number;
+  verificationBarrierAtMs: number;
+};
+
 export type ReductionRequest = {
   market: string;
   targetAbsPositionQty: 0;
@@ -169,16 +178,29 @@ export function isOwnedRiskIncreasingOrder(
   return true;
 }
 
-export function classifyTransportError(error: unknown): ReductionWriteOutcome {
+export function isExplicitVenueRejection(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const rec = error as { rejectionProven?: unknown; venueAccepted?: unknown; venueRejection?: unknown };
+  return (rec.rejectionProven === true && rec.venueAccepted === false) || rec.venueRejection === true;
+}
+
+export function isLocalTransportNotSent(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  if ((error as { transportCalled?: unknown }).transportCalled === false) return true;
   const msg = errText(error);
-  if (/RUNTIME_LEASE_|NOT_SENT|未 connect|LEASE_MISSING|GENERATION_MISMATCH/i.test(msg)) return "NOT_SENT";
-  if (/timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|socket hang|network|429|ambiguous|UNKNOWN/i.test(msg)) return "UNKNOWN";
-  return "REJECTED";
+  return /RUNTIME_LEASE_|NOT_SENT|未 connect|LEASE_MISSING|GENERATION_MISMATCH/i.test(msg);
+}
+
+export function classifyTransportError(error: unknown): ReductionWriteOutcome {
+  if (isExplicitVenueRejection(error)) return "REJECTED";
+  if (isLocalTransportNotSent(error)) return "NOT_SENT";
+  return "UNKNOWN";
 }
 
 export function verifyFlattenSnapshot(p: {
   snapshot: AuthoritativeReductionSnapshot;
   mutationAttemptAtMs: number;
+  verificationBarrierAtMs?: number;
   ownershipPrefix: string;
   nowMs: number;
   expectedLeaseGeneration?: string;
@@ -195,7 +217,8 @@ export function verifyFlattenSnapshot(p: {
     return { ok: false, reasonCode: "MISSING_OBSERVATION_TIME" };
   }
   const observedMs = Date.parse(snapshot.observedAt);
-  if (observedMs < p.mutationAttemptAtMs) return { ok: false, reasonCode: "STALE_OR_PRE_WRITE" };
+  const barrierAtMs = p.verificationBarrierAtMs ?? p.mutationAttemptAtMs;
+  if (observedMs < barrierAtMs) return { ok: false, reasonCode: "STALE_OR_PRE_WRITE" };
   if (p.nowMs - observedMs > REDUCTION_SNAPSHOT_MAX_AGE_MS) return { ok: false, reasonCode: "STALE_OBSERVATION" };
   if (p.expectedLeaseGeneration) {
     if (!snapshot.leaseGeneration || snapshot.leaseGeneration !== p.expectedLeaseGeneration) {
@@ -551,6 +574,7 @@ export async function runActualNotionalHardHalt(
   lifecycle = "REDUCING_EXPOSURE";
   let physicalAttempt = 0;
   let mutationAttemptAtMs = 0;
+  let currentAttempt: ReductionAttemptContext | null = null;
   const consumedObservationIds = new Set<string>();
   const consumedSourceGenerations = new Set<string>();
 
@@ -570,12 +594,33 @@ export async function runActualNotionalHardHalt(
   });
 
   const submitPhysical = async (positionQty: number): Promise<ReductionResult> => {
+    const leaseErr = tryAssertLease(p.assertLeaseCurrent);
+    if (leaseErr) {
+      throw Object.assign(new Error(leaseErr), { transportCalled: false as const });
+    }
     const nextAttempt = physicalAttempt + 1;
     const request = buildFlattenRequest(positionQty, nextAttempt);
-    mutationAttemptAtMs = nowMs();
-    p.assertLeaseCurrent();
+    const requestStartedAtMs = nowMs();
+    mutationAttemptAtMs = requestStartedAtMs;
     physicalAttempt = nextAttempt;
-    return p.transport.submitFlatten(request);
+    let thrown: unknown;
+    let submitted: ReductionResult | undefined;
+    try {
+      submitted = await p.transport.submitFlatten(request);
+    } catch (error) {
+      thrown = error;
+    }
+    const verificationBarrierAtMs = nowMs();
+    currentAttempt = {
+      attempt: nextAttempt,
+      clientOrderId: request.clientOrderId,
+      side: request.side,
+      qty: request.qty,
+      requestStartedAtMs,
+      verificationBarrierAtMs,
+    };
+    if (thrown !== undefined) throw thrown;
+    return submitted as ReductionResult;
   };
 
   const firstRequest = buildFlattenRequest(p.positionQty, 1);
@@ -612,11 +657,13 @@ export async function runActualNotionalHardHalt(
     snap: AuthoritativeReductionSnapshot;
   }> => {
     if (!(mutationAttemptAtMs > 0)) mutationAttemptAtMs = nowMs();
+    const requestStartedAtMs = currentAttempt?.requestStartedAtMs ?? mutationAttemptAtMs;
+    const verificationBarrierAtMs = currentAttempt?.verificationBarrierAtMs ?? mutationAttemptAtMs;
     const beforeRead = tryAssertLease(p.assertLeaseCurrent);
     if (beforeRead) throw new Error(beforeRead);
     const snap = await p.transport.fetchFreshSnapshot({
       market: p.market,
-      mutationAttemptAtMs,
+      mutationAttemptAtMs: requestStartedAtMs,
       leaseGeneration: p.leaseGeneration,
     });
     const afterRead = tryAssertLease(p.assertLeaseCurrent);
@@ -624,7 +671,8 @@ export async function runActualNotionalHardHalt(
     lastSnap = snap;
     const verification = verifyFlattenSnapshot({
       snapshot: snap,
-      mutationAttemptAtMs,
+      mutationAttemptAtMs: requestStartedAtMs,
+      verificationBarrierAtMs,
       ownershipPrefix: p.ownershipPrefix,
       nowMs: nowMs(),
       expectedLeaseGeneration: p.leaseGeneration,

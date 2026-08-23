@@ -20,6 +20,7 @@ import {
   ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE,
   boundFlattenQty,
   classifyExposureReducingSide,
+  classifyTransportError,
   createVenueReductionTransport,
   experimentAllowsReseed,
   isOwnedRiskIncreasingOrder,
@@ -1725,5 +1726,407 @@ describe("Checkpoint B actual-notional hard halt", () => {
     assert.equal(result.verifiedFlat, false);
     assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
     assert.equal(loadRiskState(id, dir, SCOPE).haltStatus, "RUNNING");
+  });
+
+  it("C2-1 Attempt 1 ACK with unchanged side/qty still allocates attempt 2 and a new clientOrderId", async () => {
+    const dir = tmpDir("c2-1");
+    const id = "c2-1-same-bytes";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const incident = evaluated.next.haltId as string;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: 0.0018,
+        observationId: `c2-1-${attempt}`,
+        sourceGeneration: `g-c2-1-${attempt}`,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.equal(transport.flattenRequests[0]?.attempt, 1);
+    assert.equal(transport.flattenRequests[1]?.attempt, 2);
+    assert.equal(transport.flattenRequests[0]?.side, transport.flattenRequests[1]?.side);
+    assert.equal(transport.flattenRequests[0]?.qty, transport.flattenRequests[1]?.qty);
+    assert.equal(transport.flattenClientOrderIds[0], `cg-reduce:${incident}:flatten`);
+    assert.equal(transport.flattenClientOrderIds[1], `cg-reduce:${incident}:flatten:2`);
+    assert.notEqual(transport.flattenClientOrderIds[0], transport.flattenClientOrderIds[1]);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("C2-2 snapshot after attempt 1 but before attempt 2 barrier cannot verify attempt 2", async () => {
+    const dir = tmpDir("c2-2");
+    const id = "c2-2-pre-barrier";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const clock = { ms: 1_700_000_000_000 };
+    let attempt2StartedAtMs = 0;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      onFlatten() {
+        if (transport.flattenCalls === 2) attempt2StartedAtMs = clock.ms;
+        clock.ms += 5_000;
+      },
+      snapshots: (attempt) => {
+        if (attempt === 1) {
+          return freshSnapshot({
+            positionQty: 0.0018,
+            observationId: "c2-2-after-1",
+            sourceGeneration: "g-c2-2-after-1",
+            observedAt: new Date(clock.ms + 1).toISOString(),
+          });
+        }
+        return freshSnapshot({
+          positionQty: 0,
+          observationId: "c2-2-before-2-complete",
+          sourceGeneration: "g-c2-2-before-2-complete",
+          observedAt: new Date(attempt2StartedAtMs).toISOString(),
+        });
+      },
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      nowMs: () => clock.ms,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.ok(attempt2StartedAtMs > 0);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(result.errors.some((row) => /STALE_OR_PRE_WRITE|REDUCTION_OBSERVATION_REPLAY/.test(row)));
+  });
+
+  it("C2-3 only a new authoritative post-attempt-2 snapshot may verify attempt 2", async () => {
+    const dir = tmpDir("c2-3");
+    const id = "c2-3-post-barrier";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const clock = { ms: 1_700_000_000_000 };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      onFlatten() {
+        clock.ms += 5_000;
+      },
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: attempt === 1 ? 0.0018 : 0,
+        observationId: `c2-3-${attempt}`,
+        sourceGeneration: `g-c2-3-${attempt}`,
+        observedAt: new Date(clock.ms + 1).toISOString(),
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      nowMs: () => clock.ms,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.equal(transport.snapshotEvidence[0]?.observationId, "c2-3-1");
+    assert.equal(transport.snapshotEvidence[1]?.observationId, "c2-3-2");
+    assert.notEqual(transport.snapshotEvidence[0]?.sourceGeneration, transport.snapshotEvidence[1]?.sourceGeneration);
+    assert.equal(result.verifiedFlat, true);
+    assert.equal(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("C2-4 latest quantity change recomputes side/qty and still uses attempt 2", async () => {
+    const dir = tmpDir("c2-4");
+    const id = "c2-4-recompute";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 200, positionQty: -0.002 }),
+      LIMITS,
+      running
+    );
+    const incident = evaluated.next.haltId as string;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: attempt === 1 ? 0.001 : 0.001,
+        observationId: `c2-4-${attempt}`,
+        sourceGeneration: `g-c2-4-${attempt}`,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: -0.002,
+      transport,
+    });
+    assert.ok(transport.flattenCalls >= 2);
+    assert.equal(transport.flattenRequests[0]?.side, "buy");
+    assert.equal(transport.flattenRequests[0]?.qty, 0.002);
+    assert.equal(transport.flattenRequests[1]?.side, "sell");
+    assert.equal(transport.flattenRequests[1]?.qty, 0.001);
+    assert.equal(transport.flattenRequests[1]?.attempt, 2);
+    assert.equal(transport.flattenClientOrderIds[0], reductionClientOrderId(incident, 1));
+    assert.equal(transport.flattenClientOrderIds[1], reductionClientOrderId(incident, 2));
+    assert.equal(result.verifiedFlat, false);
+  });
+
+  it("C2-5 UNKNOWN creates exactly one transport mutation and does not blind-submit again", async () => {
+    const dir = tmpDir("c2-5");
+    const id = "c2-5-unknown";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const incident = evaluated.next.haltId as string;
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "UNKNOWN",
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.deepEqual(transport.flattenClientOrderIds, [reductionClientOrderId(incident, 1)]);
+    assert.ok(["HALTED_UNFLAT", "HALT_FAILED"].includes(result.state.haltStatus));
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(result.reseedAllowed, false);
+  });
+
+  it("C2-6 unclassified thrown exception returns UNKNOWN, not REJECTED", async () => {
+    assert.equal(classifyTransportError(new Error("order rejected by exchange")), "UNKNOWN");
+    assert.equal(classifyTransportError(new Error("sdk parser exploded")), "UNKNOWN");
+    assert.equal(classifyTransportError(new Error("timeout ETIMEDOUT")), "UNKNOWN");
+
+    const dir = tmpDir("c2-6");
+    const id = "c2-6-unclassified";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: () => {
+        throw new Error("order rejected by exchange");
+      },
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.flatten?.outcome, "REJECTED");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(result.reseedAllowed, false);
+  });
+
+  it("C2-7 typed explicit venue rejection returns REJECTED", async () => {
+    const typed = Object.assign(new Error("ORDER_REJECTED"), {
+      rejectionProven: true,
+      venueAccepted: false,
+    });
+    assert.equal(classifyTransportError(typed), "REJECTED");
+    assert.equal(classifyTransportError(new Error("ORDER_REJECTED")), "UNKNOWN");
+
+    const dir = tmpDir("c2-7");
+    const id = "c2-7-typed-reject";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: () => {
+        throw Object.assign(new Error("ORDER_REJECTED"), {
+          rejectionProven: true,
+          venueAccepted: false,
+        });
+      },
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(result.flatten?.outcome, "REJECTED");
+    assert.ok(["HALTED_UNFLAT", "HALT_FAILED"].includes(result.state.haltStatus));
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("C2-8 proven local lease/preflight failure returns NOT_SENT and performs no transport call", async () => {
+    const dir = tmpDir("c2-8");
+    const id = "c2-8-not-sent";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const lease = { lost: false };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+      onCancel() {
+        lease.lost = true;
+      },
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      openOrders: [ownedOrder({ side: "buy" })],
+      transport,
+      assertLeaseCurrent() {
+        if (lease.lost) throw new Error("RUNTIME_LEASE_LOST");
+      },
+    });
+    assert.equal(transport.cancelCalls, 1);
+    assert.equal(transport.flattenCalls, 0);
+    assert.equal(result.flatten?.outcome, "NOT_SENT");
+    assert.notEqual(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.flatten?.outcome, "REJECTED");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("C2-9 earlier attempt observationId/sourceGeneration cannot prove a later attempt", async () => {
+    const replayed = verifyFlattenSnapshot({
+      snapshot: freshSnapshot({
+        positionQty: 0,
+        observationId: "obs-c2-9",
+        sourceGeneration: "gen-c2-9",
+        observedAt: "2026-08-23T00:00:20.000Z",
+      }),
+      mutationAttemptAtMs: Date.parse("2026-08-23T00:00:15.000Z"),
+      ownershipPrefix: OWNER_PREFIX,
+      nowMs: Date.parse("2026-08-23T00:00:20.000Z"),
+      expectedLeaseGeneration: "lease-1",
+      consumedObservationIds: ["obs-c2-9"],
+      consumedSourceGenerations: ["gen-c2-9"],
+    });
+    assert.equal(replayed.ok, false);
+    if (replayed.ok) assert.fail("earlier observation must not verify a later attempt");
+    else assert.equal(replayed.reasonCode, "REDUCTION_OBSERVATION_REPLAY");
+
+    const dir = tmpDir("c2-9");
+    const id = "c2-9-replay";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const reused = {
+      observationId: "obs-c2-9-shared",
+      sourceGeneration: "gen-c2-9-shared",
+    };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: ["ACK", "ACK"],
+      snapshots: (attempt) => freshSnapshot({
+        positionQty: attempt === 1 ? 0.0018 : 0,
+        observationId: reused.observationId,
+        sourceGeneration: reused.sourceGeneration,
+      }),
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+    });
+    assert.equal(transport.flattenCalls, 2);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(result.errors.some((row) => row.includes("REDUCTION_OBSERVATION_REPLAY")));
+  });
+
+  it("C2-10 lease loss between submit response and verification cannot produce HALTED_FLAT", async () => {
+    const dir = tmpDir("c2-10");
+    const id = "c2-10-lease-gap";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const lease = { lost: false };
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+      onFlatten() {
+        lease.lost = true;
+      },
+    });
+    const result = await runHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      transport,
+      assertLeaseCurrent() {
+        if (lease.lost) throw new Error("RUNTIME_LEASE_LOST");
+      },
+    });
+    assert.equal(transport.flattenCalls, 1);
+    assert.equal(transport.snapshotCalls, 0);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.notEqual(loadRiskState(id, dir, SCOPE).haltStatus, "HALTED_FLAT");
+  });
+
+  it("C2-11 prior B1-B22, BC1-BC13 case IDs remain present without being rewritten away", () => {
+    const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+    for (let i = 1; i <= 22; i += 1) {
+      assert.match(src, new RegExp(`it\\("B${i}:`), `missing B${i}`);
+    }
+    for (let i = 1; i <= 13; i += 1) {
+      assert.match(src, new RegExp(`it\\("BC${i}[ :]`), `missing BC${i}`);
+    }
   });
 });
