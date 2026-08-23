@@ -3372,4 +3372,421 @@ describe("Checkpoint B actual-notional hard halt", () => {
     assert.match(src, /assert\.equal\(transport\.flattenCalls, 1\)/);
     assert.match(src, /UNSAFE_OWNED_ORDER_REMAINS/);
   });
+
+  async function runComposedExtendedHalt(p: {
+    id: string;
+    dir: string;
+    state: ExperimentRiskState;
+    positionQty: number;
+    executor: ExtendedExecutor;
+    innerAssertLeaseCurrent?: () => void;
+    outerAssertLeaseCurrent?: () => void;
+    leaseGeneration?: string;
+    observeAuthoritative?: Parameters<typeof createVenueReductionTransport>[0]["observeAuthoritative"];
+    openOrders?: ReturnType<typeof ownedOrder>[];
+  }) {
+    return runActualNotionalHardHalt({
+      experimentId: p.id,
+      market: MARKET,
+      ownershipPrefix: OWNER_PREFIX,
+      positionQty: p.positionQty,
+      openOrders: p.openOrders ?? [],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport: createVenueReductionTransport({
+        apply: async () => ({ placed: 0, cancelled: 0, failed: 0, errors: [] }),
+        closePosition: async (market) => {
+          await p.executor.closePosition(market);
+        },
+        reduceExposure: (request) => p.executor.reduceExposure(request),
+        snapshot: async () => ({
+          venue: "extended",
+          market: MARKET,
+          mid: 100_000,
+          position: p.positionQty,
+          openOrders: [],
+          observedAt: new Date().toISOString(),
+        }),
+        observeAuthoritative: p.observeAuthoritative,
+        assertLeaseCurrent: p.innerAssertLeaseCurrent ?? (() => undefined),
+      }),
+      assertLeaseCurrent: p.outerAssertLeaseCurrent ?? (() => undefined),
+      leaseGeneration: p.leaseGeneration ?? "5",
+      baseDir: p.dir,
+      scopeKey: SCOPE,
+      state: p.state,
+    });
+  }
+
+  function wrapExchangeClosePosition<T extends { closePosition: (...args: never[]) => Promise<unknown> }>(
+    exchange: T
+  ): { exchange: T; closePositionCalls: () => number } {
+    let calls = 0;
+    const original = exchange.closePosition.bind(exchange);
+    exchange.closePosition = (async (...args: never[]) => {
+      calls += 1;
+      return original(...args);
+    }) as T["closePosition"];
+    return { exchange, closePositionCalls: () => calls };
+  }
+
+  it("C5-1 composed path: outer lease passes, inner lease adjacent to venue mutation fails -> NOT_SENT, physicalAttempt=0, closePosition/vendor payload count=0", async () => {
+    const dir = tmpDir("c5-1");
+    const id = "c5-1-inner-lease";
+    const running = seedRunning(id, dir, "5");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const { exchange, submittedPayloads } = await createOfflineExtendedVendor();
+    const wrapped = wrapExchangeClosePosition(exchange);
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, wrapped.exchange);
+    let innerLeaseChecks = 0;
+    const result = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      outerAssertLeaseCurrent: () => undefined,
+      innerAssertLeaseCurrent: () => {
+        innerLeaseChecks += 1;
+        if (innerLeaseChecks >= 2) throw new Error("INNER_LEASE_LOST");
+      },
+    });
+    assert.ok(innerLeaseChecks >= 2, "inner lease adjacent to flatten must run after cancel");
+    assert.equal(result.flatten?.outcome, "NOT_SENT");
+    assert.notEqual(result.flatten?.outcome, "UNKNOWN");
+    assert.equal(result.flatten?.physicalAttempt ?? 0, 0);
+    assert.equal(result.flatten?.venueMutationEntered, false);
+    assert.equal(wrapped.closePositionCalls(), 0);
+    assert.equal(submittedPayloads.length, 0);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.notEqual(result.state.haltStatus, "RUNNING");
+    assert.equal(result.reseedAllowed, false);
+  });
+
+  it("C5-2 composed path: Extended preflight stale lease/request mismatch -> NOT_SENT and venue mutation count 0", async () => {
+    const dir = tmpDir("c5-2");
+    const id = "c5-2-stale-preflight";
+    const running = seedRunning(id, dir, "lease-1");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const { exchange, submittedPayloads } = await createOfflineExtendedVendor();
+    const wrapped = wrapExchangeClosePosition(exchange);
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, wrapped.exchange);
+    const result = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "lease-1",
+    });
+    assert.equal(result.flatten?.outcome, "NOT_SENT");
+    assert.notEqual(result.flatten?.outcome, "UNKNOWN");
+    assert.equal(result.flatten?.physicalAttempt ?? 0, 0);
+    assert.equal(result.flatten?.venueMutationEntered, false);
+    assert.match(String(result.flatten?.reasonCode), /STALE|LEASE|PREFLIGHT/);
+    assert.equal(wrapped.closePositionCalls(), 0);
+    assert.equal(submittedPayloads.length, 0);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(result.reseedAllowed, false);
+  });
+
+  it("C5-3 composed path: after actual closePosition, raw { outcome: NOT_SENT, transportCalled: false } -> UNKNOWN, physicalAttempt=1, durable FLATTEN_ATTEMPT_UNKNOWN or REDUCTION_PROVENANCE_UNTRUSTED", async () => {
+    const dir = tmpDir("c5-3");
+    const id = "c5-3-spoofed-not-sent";
+    const running = seedRunning(id, dir, "5");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    let closePositionCalls = 0;
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => {
+        closePositionCalls += 1;
+        return { outcome: "NOT_SENT", transportCalled: false };
+      },
+    });
+    const result = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      observeAuthoritative: async () => freshSnapshot({
+        positionQty: 0.0018,
+        leaseGeneration: "5",
+      }),
+    });
+    assert.equal(closePositionCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.flatten?.outcome, "NOT_SENT");
+    assert.equal(result.flatten?.physicalAttempt, 1);
+    assert.equal(result.flatten?.venueMutationEntered, true);
+    assert.ok(
+      durableHas(result, id, dir, "FLATTEN_ATTEMPT_UNKNOWN")
+      || durableHas(result, id, dir, "REDUCTION_PROVENANCE_UNTRUSTED")
+    );
+    const restarted = inspectDurablePairInFreshProcess(id, dir);
+    assert.notEqual(restarted.haltStatus, "RUNNING");
+    assert.ok(
+      result.state.haltReasons.includes("FLATTEN_ATTEMPT_UNKNOWN")
+      || result.state.haltReasons.includes("REDUCTION_PROVENANCE_UNTRUSTED")
+    );
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(result.reseedAllowed, false);
+  });
+
+  it("C5-4 composed path: after actual venue callable, thrown error with LOCAL_TRANSPORT_NOT_SENT field stays UNKNOWN, never NOT_SENT", async () => {
+    const dir = tmpDir("c5-4");
+    const id = "c5-4-thrown-brand-field";
+    const running = seedRunning(id, dir, "5");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    let closePositionCalls = 0;
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => {
+        closePositionCalls += 1;
+        throw Object.assign(new Error("vendor exploded after send"), {
+          LOCAL_TRANSPORT_NOT_SENT: true,
+          kind: "LOCAL_TRANSPORT_NOT_SENT",
+          transportCalled: false,
+          stage: "PREFLIGHT",
+          outcome: "NOT_SENT",
+        });
+      },
+    });
+    const result = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      observeAuthoritative: async () => freshSnapshot({
+        positionQty: 0.0018,
+        leaseGeneration: "5",
+      }),
+    });
+    assert.equal(closePositionCalls, 1);
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.flatten?.outcome, "NOT_SENT");
+    assert.equal(result.flatten?.physicalAttempt, 1);
+    assert.ok(
+      durableHas(result, id, dir, "FLATTEN_ATTEMPT_UNKNOWN")
+      || durableHas(result, id, dir, "REDUCTION_PROVENANCE_UNTRUSTED")
+    );
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("C5-5 composed path ACK: requestedClientOrderId and submittedExternalId match; exchangeOrderId is not mixed with client identity", async () => {
+    const dir = tmpDir("c5-5");
+    const id = "c5-5-ack-identity";
+    const running = seedRunning(id, dir, "5");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const { exchange, submittedPayloads } = await createOfflineExtendedVendor();
+    const wrapped = wrapExchangeClosePosition(exchange);
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, wrapped.exchange);
+    const result = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      observeAuthoritative: async () => freshSnapshot({
+        positionQty: 0,
+        leaseGeneration: "5",
+      }),
+    });
+    assert.equal(wrapped.closePositionCalls(), 1);
+    assert.equal(submittedPayloads.length, 1);
+    assert.equal(result.flatten?.outcome, "ACK");
+    const requested = result.flatten?.requestedClientOrderId;
+    assert.equal(typeof requested, "string");
+    assert.equal(result.flatten?.submittedExternalId, requested);
+    assert.equal(submittedPayloads[0]?.payload.id, requested);
+    assert.notEqual(result.flatten?.exchangeOrderId, result.flatten?.submittedExternalId);
+    assert.equal(result.flatten?.exchangeOrderId, "venue-internal-77");
+  });
+
+  it("C5-6 composed path ACK identity missing/mismatch -> UNKNOWN", async () => {
+    const dir = tmpDir("c5-6");
+    const id = "c5-6-identity-mismatch";
+    const running = seedRunning(id, dir, "5");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => ({
+        submittedExternalId: "not-the-requested-id",
+        exchangeId: "venue-1",
+        exchangeOrderId: "venue-1",
+      }),
+    });
+    const mismatched = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      observeAuthoritative: async () => freshSnapshot({
+        positionQty: 0.0018,
+        leaseGeneration: "5",
+      }),
+    });
+    assert.equal(mismatched.flatten?.outcome, "UNKNOWN");
+    assert.equal(mismatched.flatten?.reasonCode, "REDUCTION_IDENTITY_MISMATCH");
+    assert.notEqual(mismatched.flatten?.outcome, "ACK");
+    assert.ok(
+      durableHas(mismatched, id, dir, "FLATTEN_ATTEMPT_UNKNOWN")
+      || durableHas(mismatched, id, dir, "REDUCTION_IDENTITY_MISMATCH")
+    );
+
+    const missingDir = tmpDir("c5-6-missing");
+    const missingId = "c5-6-identity-missing";
+    const missingRunning = seedRunning(missingId, missingDir, "5");
+    const missingEvaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      missingRunning
+    );
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => ({
+        exchangeId: "venue-1",
+        exchangeOrderId: "venue-1",
+      }),
+    });
+    const missing = await runComposedExtendedHalt({
+      id: missingId,
+      dir: missingDir,
+      state: missingEvaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      observeAuthoritative: async () => freshSnapshot({
+        positionQty: 0.0018,
+        leaseGeneration: "5",
+      }),
+    });
+    assert.equal(missing.flatten?.outcome, "UNKNOWN");
+    assert.equal(missing.flatten?.reasonCode, "REDUCTION_IDENTITY_MISMATCH");
+    assert.notEqual(missing.flatten?.outcome, "ACK");
+  });
+
+  it("C5-7 UNKNOWN must not blind-retry; only one fresh authoritative reconciliation; no HALTED_FLAT without fresh post-barrier flat proof", async () => {
+    const dir = tmpDir("c5-7");
+    const id = "c5-7-unknown-noretry";
+    const running = seedRunning(id, dir, "5");
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      LIMITS,
+      running
+    );
+    let closePositionCalls = 0;
+    let snapshotCalls = 0;
+    const executor = new ExtendedExecutor(false);
+    executor.setLeaseGeneration(5);
+    attachExtendedExchangeForTests(executor, {
+      marketIdForName: (name: string) => (name.includes("BTC") ? 1 : null),
+      closePosition: async () => {
+        closePositionCalls += 1;
+        return { outcome: "NOT_SENT", transportCalled: false };
+      },
+    });
+    const result = await runComposedExtendedHalt({
+      id,
+      dir,
+      state: evaluated.next,
+      positionQty: 0.0018,
+      executor,
+      leaseGeneration: "5",
+      observeAuthoritative: async () => {
+        snapshotCalls += 1;
+        return freshSnapshot({
+          positionQty: 0.0018,
+          leaseGeneration: "5",
+          observationId: `c5-7-${snapshotCalls}`,
+          sourceGeneration: `g-c5-7-${snapshotCalls}`,
+        });
+      },
+    });
+    assert.equal(closePositionCalls, 1, "UNKNOWN must not create a second physical mutation");
+    assert.equal(snapshotCalls, 1, "exactly one fresh authoritative reconciliation after UNKNOWN");
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.equal(result.flatten?.physicalAttempt, 1);
+    assert.equal(result.verifiedFlat, false);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.notEqual(result.lifecycle, "HALTED_FLAT");
+    assert.notEqual(result.state.haltStatus, "RUNNING");
+    assert.equal(result.reseedAllowed, false);
+  });
+
+  it("C5-8 all prior Gate 0, Checkpoint A, B*, BC*, CB2*, C2*, C3*, and C4* tests remain present and green without weakening assertions", () => {
+    const src = fs.readFileSync(fileURLToPath(import.meta.url), "utf8");
+    for (let i = 1; i <= 22; i += 1) {
+      assert.match(src, new RegExp(`it\\("B${i}:`), `missing B${i}`);
+    }
+    for (let i = 1; i <= 13; i += 1) {
+      assert.match(src, new RegExp(`it\\("BC${i}[ :]`), `missing BC${i}`);
+    }
+    for (let i = 1; i <= 9; i += 1) {
+      assert.match(src, new RegExp(`it\\("CB2-${i} `), `missing CB2-${i}`);
+    }
+    for (let i = 1; i <= 11; i += 1) {
+      assert.match(src, new RegExp(`it\\("C2-${i} `), `missing C2-${i}`);
+    }
+    for (let i = 1; i <= 19; i += 1) {
+      assert.match(src, new RegExp(`it\\("C3-${i} `), `missing C3-${i}`);
+    }
+    for (let i = 1; i <= 11; i += 1) {
+      assert.match(src, new RegExp(`it\\("C4-${i} `), `missing C4-${i}`);
+    }
+    for (let i = 1; i <= 8; i += 1) {
+      assert.match(src, new RegExp(`it\\("C5-${i} `), `missing C5-${i}`);
+    }
+    const gate0 = fs.readFileSync(fileURLToPath(new URL("./experiment-ack-authority.test.ts", import.meta.url)), "utf8");
+    const gate0Corrective = fs.readFileSync(fileURLToPath(new URL("./experiment-gate0-corrective.test.ts", import.meta.url)), "utf8");
+    const checkpointA = fs.readFileSync(fileURLToPath(new URL("./experiment-v02-config.test.ts", import.meta.url)), "utf8");
+    assert.match(gate0, /Gate 0 durable ACK authority/);
+    assert.match(gate0Corrective, /Gate 0 Corrective 1/);
+    assert.match(checkpointA, /Checkpoint A versioned v0\.2 configuration/);
+    assert.match(src, /assert\.equal\(result\.flatten\?\.outcome, "NOT_SENT"\)/);
+    assert.match(src, /assert\.equal\(result\.flatten\?\.physicalAttempt, 1\)/);
+    assert.match(src, /FLATTEN_ATTEMPT_UNKNOWN/);
+  });
 });
