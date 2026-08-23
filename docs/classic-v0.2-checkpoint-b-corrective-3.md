@@ -214,10 +214,12 @@ That hit is the pre-existing offline vendor fixture `offline-test-not-a-live-key
 
 ```text
 BASE_SHA=fca48c53799cf069247131d6f25e47a67707154e
-HEAD_SHA=<bound after commit>
-TREE_SHA=<bound after commit>
-CI_RUN_ID=<bound after branch push>
+HEAD_SHA=e9eda6d622f183d2a60ac16c9f0f2c58e5d479c8
+TREE_SHA=cc9002d5f8dd3caab1be808123217f380ca0f9e2
+CI_RUN_ID=<bound after branch push of the final HEAD>
 ```
+
+Note: the SHA/tree above identify the implementation commit. A follow-up docs bind commit may move HEAD; the final handoff reports the pushed HEAD and the Actions run that checked out that exact SHA.
 
 ## 7. Stop authorization
 
