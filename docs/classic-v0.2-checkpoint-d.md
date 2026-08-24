@@ -38,8 +38,8 @@ IMPLEMENTATION_HEAD=1bc54a3e4706af6edd20426ea6e0eaacde61e181
 IMPLEMENTATION_TREE=afed733e5a3827a092fe2e921762229e22b97045
 EVIDENCE_HEAD=bf6640a915b0619e0ae63e76120cf742fee0d8f1
 EVIDENCE_TREE=0f34382812563776abbd4be9362e22deb54da072
-RESULT_HEAD=bf6640a915b0619e0ae63e76120cf742fee0d8f1
-RESULT_TREE=0f34382812563776abbd4be9362e22deb54da072
+RESULT_HEAD=3fceb6c48d9351634c664143d5afc108101adc9d
+RESULT_TREE=2ab574f7be740bf92a64124c7f6f3623c96ebb8b
 ```
 
 Current-byte check at start: HEAD and TREE matched `EXPECTED_START_*`. Working tree was clean. Branch was ff-only with `origin/experiment/classic-v0.2-100u-safety`. No reset and no force-push. Branch had not advanced beyond the accepted Checkpoint C head.
@@ -257,18 +257,25 @@ docs/classic-v0.2-checkpoint-d.md — no secrets
 ## CI_RUN_IDS
 
 ```text
-PUSH_CI_RUN_ID=PENDING_PUSH
-PR_CI_RUN_ID=PENDING_PUSH
-PROVEN_HEAD=PENDING_PUSH
-TOOLCHAIN=Node v22.23.2 / npm 10.9.8 (required on GitHub Actions)
+PUSH_CI_RUN_ID=32723137263
+PR_CI_RUN_ID=32723141444
+PROVEN_HEAD=3fceb6c48d9351634c664143d5afc108101adc9d
+TOOLCHAIN=Node v22.23.2 / npm 10.9.8
 TEST_TOTAL=301
 TEST_PASS=301
 TEST_FAIL=0
 TEST_SKIP=0
+UBUNTU_CRASH_CASES_SKIPPED=0
 LIVE_EXCHANGE_WRITE=NO
 REAL_FUND_TESTING=NO
 CHECKPOINT_E_STARTED=NO
 ```
+
+Push: https://github.com/danny0971haha/classic-grid/actions/runs/32723137263 — `event=push`, `head_sha=3fceb6c48d9351634c664143d5afc108101adc9d`, `compiler-and-tests` success, Node v22.23.2 / npm 10.9.8, `# tests 301` `# pass 301` `# skipped 0`. C-C18/C-C19/C-C20 and D-01..D-21 ran and passed on Ubuntu.
+
+PR: https://github.com/danny0971haha/classic-grid/actions/runs/32723141444 — `event=pull_request`, same HEAD, success, same toolchain and 301/301/0.
+
+The `Dependency audit inventory` step is `continue-on-error: true` because `npm audit --json` exits 1 when findings exist. The JSON is printed in the log and is not hidden. Inventory remains 22 / 8 moderate / 14 high / 0 critical.
 
 ## Independent review
 
