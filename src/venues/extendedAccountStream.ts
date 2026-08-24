@@ -55,6 +55,57 @@ export type ExecutionCursorBind = {
   market: string;
 };
 
+/** Test-only persist fault boundaries. Production never installs a hook. */
+export type CursorPersistFaultBoundary =
+  | "BEFORE_TEMP_OPEN"
+  | "AFTER_TEMP_OPEN"
+  | "AFTER_WRITE"
+  | "AFTER_FILE_FSYNC"
+  | "AFTER_CLOSE"
+  | "BEFORE_RENAME"
+  | "AFTER_RENAME"
+  | "BEFORE_DIRECTORY_FSYNC"
+  | "AFTER_DIRECTORY_FSYNC"
+  | "BEFORE_READBACK"
+  | "AFTER_READBACK"
+  | "BEFORE_MEMORY_COMMIT"
+  | "BEFORE_PUBLICATION";
+
+export type CursorPersistDisposition =
+  | "COMMITTED"
+  | "PRE_RENAME_FAILURE"
+  | "RENAME_OR_DURABILITY_UNCERTAIN"
+  | "READBACK_UNPROVEN"
+  | "VALIDATION_FAILURE";
+
+export type CursorPersistFaultHook = (
+  boundary: CursorPersistFaultBoundary,
+  ctx: { cursorPath: string; phase: "accept" | "ack" | "invalidate" },
+) => void;
+
+export const CURSOR_PERSIST_PRE_COMMIT_BOUNDARIES: readonly CursorPersistFaultBoundary[] = [
+  "BEFORE_TEMP_OPEN",
+  "AFTER_TEMP_OPEN",
+  "AFTER_WRITE",
+  "AFTER_FILE_FSYNC",
+  "AFTER_CLOSE",
+  "BEFORE_RENAME",
+];
+
+export const CURSOR_PERSIST_POST_WRITE_FAILURE_BOUNDARIES: readonly CursorPersistFaultBoundary[] = [
+  "AFTER_WRITE",
+  "AFTER_FILE_FSYNC",
+  "BEFORE_RENAME",
+  "AFTER_RENAME",
+  "BEFORE_DIRECTORY_FSYNC",
+  "AFTER_DIRECTORY_FSYNC",
+  "AFTER_READBACK",
+];
+
+export function cursorPersistShouldFsyncDirectory(): boolean {
+  return process.platform === "linux" || process.env.GITHUB_ACTIONS === "true";
+}
+
 type RecordedEvent = {
   receivedAt: number;
   seq: number;
@@ -230,16 +281,32 @@ export class ExtendedAccountStreamState extends EventEmitter {
   private readonly lineageCumulative = new Map<string, number>();
   private trustedCount = 0;
   private cursorFailedClosed = false;
+  private persistDisposition: CursorPersistDisposition | null = null;
+  private persistPhase: "accept" | "ack" | "invalidate" = "accept";
   private faultCapacityExceeded = false;
   private readonly cursorPath?: string;
   private readonly cursorIdentity?: ExecutionCursorIdentity;
+  private readonly onCursorPersistStep?: CursorPersistFaultHook;
 
-  constructor(now: () => number = Date.now, opts?: { cursorPath?: string; cursorIdentity?: ExecutionCursorBind }) {
+  constructor(now: () => number = Date.now, opts?: {
+    cursorPath?: string;
+    cursorIdentity?: ExecutionCursorBind;
+    onCursorPersistStep?: CursorPersistFaultHook;
+  }) {
     super();
     this.now = now;
     this.cursorPath = opts?.cursorPath;
     this.cursorIdentity = opts?.cursorIdentity ? boundCursorIdentity(opts.cursorIdentity) : undefined;
+    this.onCursorPersistStep = opts?.onCursorPersistStep;
     this.loadCursor();
+  }
+
+  cursorPersistenceBlocked(): boolean {
+    return this.cursorFailedClosed;
+  }
+
+  cursorPersistDisposition(): CursorPersistDisposition | null {
+    return this.persistDisposition;
   }
 
   private readonly now: () => number;
@@ -363,7 +430,8 @@ export class ExtendedAccountStreamState extends EventEmitter {
   }
 
   drainJournal(): ExecutionJournalDrain {
-    const authoritativeExecutions = this.pendingAuthoritative.slice();
+    const hideAuthoritative = this.cursorFailedClosed;
+    const authoritativeExecutions = hideAuthoritative ? [] : this.pendingAuthoritative.slice();
     const diagnostics = this.diagnosticExecutions.slice();
     const faults = this.faults.slice();
     if (this.faultCapacityExceeded && !faults.some((fault) => fault.code === "JOURNAL_CAPACITY")) {
@@ -378,7 +446,7 @@ export class ExtendedAccountStreamState extends EventEmitter {
     this.faults.length = 0;
     this.faultCapacityExceeded = false;
     return {
-      executions: [...authoritativeExecutions, ...diagnostics],
+      executions: hideAuthoritative ? diagnostics : [...authoritativeExecutions, ...diagnostics],
       authoritativeExecutions,
       faults,
       authority: this.executionAuthority,
@@ -388,21 +456,34 @@ export class ExtendedAccountStreamState extends EventEmitter {
 
   acknowledgeJournal(publishedDedupeKeys: string[]): void {
     if (publishedDedupeKeys.length === 0) return;
+    if (this.cursorFailedClosed) return;
     const want = new Set(publishedDedupeKeys);
-    let changed = false;
     const remaining: ExecutionRecord[] = [];
+    const newlyPublished: string[] = [];
     for (const record of this.pendingAuthoritative) {
       if (want.has(record.dedupeKey) && record.authoritative) {
-        this.publishedDedupeKeys.add(record.dedupeKey);
-        changed = true;
+        newlyPublished.push(record.dedupeKey);
       } else {
         remaining.push(record);
       }
     }
-    if (!changed) return;
-    this.pendingAuthoritative.length = 0;
-    this.pendingAuthoritative.push(...remaining);
-    this.persistCursor();
+    if (newlyPublished.length === 0) return;
+    const candidate = this.cursorSnapshot({
+      publishedDedupeKeys: [...this.publishedDedupeKeys, ...newlyPublished],
+      pendingAuthoritative: remaining,
+    });
+    const disposition = this.persistCursor(candidate, "ack");
+    if (disposition !== "COMMITTED") {
+      this.latchCursorPersistence(disposition);
+      return;
+    }
+    try {
+      this.notifyCursorFault("BEFORE_MEMORY_COMMIT");
+    } catch {
+      this.latchCursorPersistence("READBACK_UNPROVEN");
+      return;
+    }
+    this.applyCursorSnapshot(candidate);
   }
 
   private observedExecutions(): ExecutionRecord[] {
@@ -481,6 +562,7 @@ export class ExtendedAccountStreamState extends EventEmitter {
     }
 
     const lineageId = exchangeOrderId || clientOrderId;
+    const nextLineage = Object.fromEntries(this.lineageCumulative);
     if (lineageId && cumulative !== undefined) {
       const lineageKey = `extended|${market}|${lineageId}`;
       const prior = this.lineageCumulative.get(lineageKey);
@@ -494,7 +576,7 @@ export class ExtendedAccountStreamState extends EventEmitter {
         this.invalidateExecutionAuthority("CUMULATIVE_EXCEEDS_ORIGINAL", message.seq);
         return;
       }
-      this.lineageCumulative.set(lineageKey, cumulative);
+      nextLineage[lineageKey] = cumulative;
     }
 
     const dedupeKey = `extended|${market}|trade|${exchangeTradeId}`;
@@ -532,21 +614,41 @@ export class ExtendedAccountStreamState extends EventEmitter {
       dedupeKey,
       authoritative,
     };
-    this.seenDedupeKeys.add(dedupeKey);
-    if (authoritative) {
-      this.pendingAuthoritative.push(record);
-      this.trustedCount += 1;
-    } else {
-      this.diagnosticExecutions.push(record);
+    const candidate = this.cursorSnapshot({
+      seenDedupeKeys: [...this.seenDedupeKeys, dedupeKey],
+      pendingAuthoritative: authoritative
+        ? [...this.pendingAuthoritative, record]
+        : this.pendingAuthoritative.slice(),
+      lineageCumulative: nextLineage,
+      authoritativeCount: authoritative ? this.trustedCount + 1 : this.trustedCount,
+    });
+    const disposition = this.persistCursor(candidate, "accept");
+    if (disposition !== "COMMITTED") {
+      this.latchCursorPersistence(disposition);
+      return;
     }
-    this.persistCursor();
+    try {
+      this.notifyCursorFault("BEFORE_MEMORY_COMMIT");
+    } catch {
+      this.latchCursorPersistence("READBACK_UNPROVEN");
+      return;
+    }
+    this.applyCursorSnapshot(candidate);
+    if (!authoritative) this.diagnosticExecutions.push(record);
+    try {
+      this.notifyCursorFault("BEFORE_PUBLICATION");
+    } catch {
+      this.latchCursorPersistence("READBACK_UNPROVEN");
+    }
   }
 
   private invalidateExecutionAuthority(code: ExecutionFaultCode, seq?: number): void {
     const wasTrusted = this.executionAuthority === "trusted";
     this.executionAuthority = "invalidated";
     this.recordFault(code, seq);
-    if (wasTrusted) this.persistCursor();
+    if (!wasTrusted) return;
+    const disposition = this.persistCursor(this.cursorSnapshot(), "invalidate");
+    if (disposition !== "COMMITTED") this.latchCursorPersistence(disposition);
   }
 
   private recordFault(code: ExecutionFaultCode, seq?: number): void {
@@ -577,7 +679,77 @@ export class ExtendedAccountStreamState extends EventEmitter {
     this.diagnosticExecutions.length = 0;
     this.lineageCumulative.clear();
     this.trustedCount = 0;
+    this.persistDisposition = "VALIDATION_FAILURE";
     this.recordFault("CURSOR_CONFLICT");
+  }
+
+  private latchCursorPersistence(disposition: CursorPersistDisposition): void {
+    this.cursorFailedClosed = true;
+    this.persistDisposition = disposition;
+    this.executionAuthority = "invalidated";
+    this.recordFault("CURSOR_CONFLICT");
+  }
+
+  private notifyCursorFault(boundary: CursorPersistFaultBoundary): void {
+    if (!this.onCursorPersistStep) return;
+    this.onCursorPersistStep(boundary, {
+      cursorPath: this.cursorPath ?? "",
+      phase: this.persistPhase,
+    });
+  }
+
+  private cursorSnapshot(overrides: Partial<PersistedCursorV2> = {}): PersistedCursorV2 {
+    return {
+      version: 2,
+      identity: this.cursorIdentity ?? null,
+      connectionId: this.connectionId,
+      lastSeq: this.lastSeq,
+      authority: this.executionAuthority,
+      seenDedupeKeys: [...this.seenDedupeKeys],
+      publishedDedupeKeys: [...this.publishedDedupeKeys],
+      pendingAuthoritative: this.pendingAuthoritative.slice(),
+      lineageCumulative: Object.fromEntries(this.lineageCumulative),
+      authoritativeCount: this.trustedCount,
+      ...overrides,
+    };
+  }
+
+  private applyCursorSnapshot(snapshot: PersistedCursorV2): void {
+    this.seenDedupeKeys.clear();
+    for (const key of snapshot.seenDedupeKeys) this.seenDedupeKeys.add(key);
+    this.publishedDedupeKeys.clear();
+    for (const key of snapshot.publishedDedupeKeys) this.publishedDedupeKeys.add(key);
+    this.pendingAuthoritative.length = 0;
+    this.pendingAuthoritative.push(...snapshot.pendingAuthoritative);
+    this.lineageCumulative.clear();
+    for (const [key, value] of Object.entries(snapshot.lineageCumulative)) {
+      if (typeof value === "number" && Number.isFinite(value)) this.lineageCumulative.set(key, value);
+    }
+    this.trustedCount = snapshot.authoritativeCount;
+    this.executionAuthority = snapshot.authority;
+  }
+
+  private cursorMatchesCandidate(actual: unknown, expected: PersistedCursorV2): boolean {
+    if (!actual || typeof actual !== "object") return false;
+    const parsed = actual as PersistedCursorV2;
+    if (parsed.version !== 2) return false;
+    if (parsed.authority !== expected.authority) return false;
+    if (parsed.authoritativeCount !== expected.authoritativeCount) return false;
+    if (JSON.stringify(parsed.identity) !== JSON.stringify(expected.identity)) return false;
+    if (JSON.stringify(parsed.seenDedupeKeys) !== JSON.stringify(expected.seenDedupeKeys)) return false;
+    if (JSON.stringify(parsed.publishedDedupeKeys) !== JSON.stringify(expected.publishedDedupeKeys)) return false;
+    if (!Array.isArray(parsed.pendingAuthoritative)) return false;
+    if (parsed.pendingAuthoritative.length !== expected.pendingAuthoritative.length) return false;
+    if (!parsed.pendingAuthoritative.every(isPersistedExecutionRecord)) return false;
+    for (let i = 0; i < expected.pendingAuthoritative.length; i++) {
+      if (parsed.pendingAuthoritative[i]!.dedupeKey !== expected.pendingAuthoritative[i]!.dedupeKey) return false;
+    }
+    if (this.cursorIdentity) {
+      const stored = parsed.identity;
+      if (!stored || !identitiesEqual(stored, this.cursorIdentity)) return false;
+      if (!expected.identity || !identitiesEqual(expected.identity, this.cursorIdentity)) return false;
+    }
+    return true;
   }
 
   private loadCursor(): void {
@@ -648,38 +820,106 @@ export class ExtendedAccountStreamState extends EventEmitter {
     }
   }
 
-  private persistCursor(): void {
-    if (!this.cursorPath || this.cursorFailedClosed) return;
-    const payload: PersistedCursorV2 = {
-      version: 2,
-      identity: this.cursorIdentity ?? null,
-      connectionId: this.connectionId,
-      lastSeq: this.lastSeq,
-      authority: this.executionAuthority,
-      seenDedupeKeys: [...this.seenDedupeKeys],
-      publishedDedupeKeys: [...this.publishedDedupeKeys],
-      pendingAuthoritative: this.pendingAuthoritative.slice(),
-      lineageCumulative: Object.fromEntries(this.lineageCumulative),
-      authoritativeCount: this.trustedCount,
+  private persistCursor(
+    candidate: PersistedCursorV2,
+    phase: "accept" | "ack" | "invalidate",
+  ): CursorPersistDisposition {
+    this.persistPhase = phase;
+    if (!this.cursorPath) {
+      this.persistDisposition = "COMMITTED";
+      return "COMMITTED";
+    }
+    if (this.cursorFailedClosed) {
+      const blocked = this.persistDisposition && this.persistDisposition !== "COMMITTED"
+        ? this.persistDisposition
+        : "PRE_RENAME_FAILURE";
+      this.persistDisposition = blocked;
+      return blocked;
+    }
+
+    const serialized = `${JSON.stringify(candidate)}\n`;
+    const dir = path.dirname(this.cursorPath);
+    const tmp = path.join(dir, `.${path.basename(this.cursorPath)}.${process.pid}.${randomUUID()}.tmp`);
+    let fd: number | null = null;
+    let directoryFd: number | null = null;
+    let renameAttempted = false;
+    let renameCompleted = false;
+    let dirFsyncCompleted = false;
+    let readbackStarted = false;
+
+    const classify = (): CursorPersistDisposition => {
+      if (!renameAttempted) return "PRE_RENAME_FAILURE";
+      if (!renameCompleted || !dirFsyncCompleted) return "RENAME_OR_DURABILITY_UNCERTAIN";
+      if (readbackStarted) return "READBACK_UNPROVEN";
+      return "RENAME_OR_DURABILITY_UNCERTAIN";
     };
+
     try {
-      const dir = path.dirname(this.cursorPath);
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       try { fs.chmodSync(dir, 0o700); } catch { /* restrictive best-effort */ }
-      const tmp = `${this.cursorPath}.${randomUUID()}.tmp`;
-      const fd = fs.openSync(tmp, "w", 0o600);
-      try {
-        fs.writeFileSync(fd, `${JSON.stringify(payload)}\n`, "utf8");
-        fs.fsyncSync(fd);
-      } finally {
-        fs.closeSync(fd);
-      }
+
+      this.notifyCursorFault("BEFORE_TEMP_OPEN");
+      fd = fs.openSync(tmp, "wx", 0o600);
+      this.notifyCursorFault("AFTER_TEMP_OPEN");
+      fs.writeFileSync(fd, serialized, "utf8");
+      this.notifyCursorFault("AFTER_WRITE");
+      fs.fsyncSync(fd);
+      this.notifyCursorFault("AFTER_FILE_FSYNC");
+      fs.closeSync(fd);
+      fd = null;
+      this.notifyCursorFault("AFTER_CLOSE");
+
+      this.notifyCursorFault("BEFORE_RENAME");
+      renameAttempted = true;
       fs.renameSync(tmp, this.cursorPath);
-      try { fs.chmodSync(this.cursorPath, 0o600); } catch { /* restrictive best-effort */ }
+      renameCompleted = true;
+      this.notifyCursorFault("AFTER_RENAME");
+      try { fs.chmodSync(this.cursorPath, 0o600); } catch { /* created 0600 */ }
+
+      this.notifyCursorFault("BEFORE_DIRECTORY_FSYNC");
+      if (cursorPersistShouldFsyncDirectory()) {
+        directoryFd = fs.openSync(dir, "r");
+        fs.fsyncSync(directoryFd);
+        fs.closeSync(directoryFd);
+        directoryFd = null;
+      }
+      dirFsyncCompleted = true;
+      this.notifyCursorFault("AFTER_DIRECTORY_FSYNC");
+
+      this.notifyCursorFault("BEFORE_READBACK");
+      readbackStarted = true;
+      const raw = fs.readFileSync(this.cursorPath, "utf8");
+      this.notifyCursorFault("AFTER_READBACK");
+      if (raw !== serialized) {
+        this.persistDisposition = "VALIDATION_FAILURE";
+        return "VALIDATION_FAILURE";
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        this.persistDisposition = "VALIDATION_FAILURE";
+        return "VALIDATION_FAILURE";
+      }
+      if (!this.cursorMatchesCandidate(parsed, candidate)) {
+        this.persistDisposition = "VALIDATION_FAILURE";
+        return "VALIDATION_FAILURE";
+      }
+      this.persistDisposition = "COMMITTED";
+      return "COMMITTED";
     } catch {
-      this.cursorFailedClosed = true;
-      this.executionAuthority = "invalidated";
-      this.recordFault("CURSOR_CONFLICT");
+      if (fd != null) {
+        try { fs.closeSync(fd); } catch { /* cleanup only */ }
+      }
+      if (directoryFd != null) {
+        try { fs.closeSync(directoryFd); } catch { /* cleanup only */ }
+      }
+      if (!renameAttempted) {
+        try { fs.unlinkSync(tmp); } catch { /* cleanup only */ }
+      }
+      const disposition = classify();
+      this.persistDisposition = disposition;
+      return disposition;
     }
   }
 }

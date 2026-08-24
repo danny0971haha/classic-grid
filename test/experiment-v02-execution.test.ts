@@ -20,8 +20,12 @@ import { runActualNotionalHardHalt } from "../src/experimentReduction.js";
 import { planFromFillsAndSeed } from "../src/grid.js";
 import { ExtendedExecutor } from "../src/venues/extended.js";
 import {
+  CURSOR_PERSIST_POST_WRITE_FAILURE_BOUNDARIES,
+  CURSOR_PERSIST_PRE_COMMIT_BOUNDARIES,
   EXECUTION_JOURNAL_LIMIT,
   ExtendedAccountStreamState,
+  type CursorPersistFaultBoundary,
+  type CursorPersistFaultHook,
 } from "../src/venues/extendedAccountStream.js";
 import {
   LIMITS,
@@ -32,6 +36,11 @@ import {
   ownedOrder,
   scriptedTransport,
 } from "./helpers/reduction.js";
+import {
+  hardKillCursorAccept,
+  inspectCursorFresh,
+  replayCursorFresh,
+} from "./helpers/cursorPersistCrash.js";
 
 const EPOCH = 1_700_000_000_000;
 const HERE = fileURLToPath(import.meta.url);
@@ -50,6 +59,7 @@ function initializedState(
   opts?: {
     cursorPath?: string;
     cursorIdentity?: { experimentId: string; scopeKey: string; venue: string; market: string };
+    onCursorPersistStep?: CursorPersistFaultHook;
   },
 ): ExtendedAccountStreamState {
   const state = new ExtendedAccountStreamState(now, opts);
@@ -879,5 +889,333 @@ describe("Checkpoint C Corrective 1 authority, cursor, and journal drain", () =>
     assert.doesNotMatch(src, /this\.pendingAuthoritative\.splice/);
     assert.doesNotMatch(src, /this\.faults\.splice/);
     assert.doesNotMatch(src, /this\.diagnosticExecutions\.splice/);
+  });
+});
+
+function throwAt(boundary: CursorPersistFaultBoundary): CursorPersistFaultHook {
+  return (step) => {
+    if (step === boundary) throw new Error(`CURSOR_PERSIST_FAULT_${boundary}`);
+  };
+}
+
+function persistFaultState(
+  label: string,
+  hook: CursorPersistFaultHook,
+  experimentId = `classic-${label}`,
+) {
+  const dir = tmpDir(label);
+  const bind = cursorBind({ experimentId });
+  const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+  const state = initializedState(makeClock(), {
+    cursorPath,
+    cursorIdentity: bind,
+    onCursorPersistStep: hook,
+  });
+  return { dir, bind, cursorPath, state };
+}
+
+describe("Checkpoint C Corrective 2 cursor persist-before-publish", () => {
+  it("C-C16 every pre-commit I/O failure yields zero FILL, zero ack, latch, and no candidate in authoritativeExecutions", () => {
+    for (const boundary of CURSOR_PERSIST_PRE_COMMIT_BOUNDARIES) {
+      const id = `tr-${boundary.toLowerCase()}`;
+      const { state, cursorPath } = persistFaultState(`cc16-${boundary.toLowerCase()}`, throwAt(boundary));
+      state.ingest(tradeMessage(2, canonicalTrade({ id })));
+      assert.equal(state.cursorPersistenceBlocked(), true, boundary);
+      assert.notEqual(state.cursorPersistDisposition(), "COMMITTED", boundary);
+      assert.equal(state.journalSnapshot().authoritativeCount, 0, boundary);
+      assert.equal(state.journalSnapshot().executions.some((row) => row.exchangeTradeId === id), false, boundary);
+      const { fills, keys, recon, drain } = publishedFills(state);
+      assert.deepEqual(fills, [], boundary);
+      assert.deepEqual(keys, [], boundary);
+      assert.ok(recon.includes("CURSOR_CONFLICT"), boundary);
+      assert.equal(drain.authoritativeExecutions.length, 0, boundary);
+      assert.equal(drain.authoritativeExecutions.some((row) => row.exchangeTradeId === id), false, boundary);
+      assert.equal(drain.authoritativeCount, 0, boundary);
+      state.acknowledgeJournal([`extended|BTC-USD|trade|${id}`]);
+      assert.equal(state.cursorPersistenceBlocked(), true, boundary);
+      if (fs.existsSync(cursorPath)) {
+        const parsed = JSON.parse(fs.readFileSync(cursorPath, "utf8")) as {
+          pendingAuthoritative?: Array<{ exchangeTradeId?: string }>;
+          publishedDedupeKeys?: string[];
+        };
+        assert.equal((parsed.pendingAuthoritative || []).some((row) => row.exchangeTradeId === id), false, boundary);
+        assert.equal((parsed.publishedDedupeKeys || []).includes(`extended|BTC-USD|trade|${id}`), false, boundary);
+      }
+    }
+  });
+
+  it("C-C17 write/fsync/rename/dir-fsync/readback failures still hide the candidate on repeated drainJournal", () => {
+    for (const boundary of CURSOR_PERSIST_POST_WRITE_FAILURE_BOUNDARIES) {
+      const id = `tr-cc17-${boundary.toLowerCase()}`;
+      const hook: CursorPersistFaultHook = (step, ctx) => {
+        if (boundary === "AFTER_READBACK" && step === "BEFORE_READBACK" && ctx.cursorPath) {
+          fs.writeFileSync(ctx.cursorPath, `${JSON.stringify({ version: 1, identity: { experimentId: "wrong" } })}\n`);
+          return;
+        }
+        if (step === boundary) throw new Error(`CURSOR_PERSIST_FAULT_${boundary}`);
+      };
+      const { state } = persistFaultState(`cc17-${boundary.toLowerCase()}`, hook);
+      state.ingest(tradeMessage(2, canonicalTrade({ id })));
+      assert.equal(state.cursorPersistenceBlocked(), true, boundary);
+      for (let i = 0; i < 3; i++) {
+        const drain = state.drainJournal();
+        assert.equal(drain.authoritativeExecutions.some((row) => row.exchangeTradeId === id), false, `${boundary} drain ${i}`);
+        assert.equal(drain.authoritativeExecutions.length, 0, `${boundary} drain ${i}`);
+      }
+    }
+  });
+
+  it("C-C18 SIGKILL before rename plus fresh restart and exchange replay never publishes an unpersisted FILL", async () => {
+    const experimentId = "classic-cc18";
+    const tradeId = "tr-cc18-prerename";
+    const dir = tmpDir("cc18");
+    const bind = cursorBind({ experimentId });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    const killed = await hardKillCursorAccept({
+      cursorPath,
+      experimentId,
+      tradeId,
+      crashAt: "BEFORE_RENAME",
+    });
+    assert.equal(killed.method, "SIGKILL");
+    assert.equal(killed.signal, "SIGKILL");
+    assert.match(killed.ready, /BEFORE_RENAME/);
+    const inspect = inspectCursorFresh({ cursorPath, experimentId });
+    assert.equal(inspect.drainAuthoritativeIds.includes(tradeId), false);
+    assert.equal(inspect.diskPendingTradeIds.includes(tradeId), false);
+    const replay = replayCursorFresh({ cursorPath, experimentId, tradeId });
+    assert.ok(replay.fills.length <= 1, JSON.stringify(replay));
+    if (replay.fills.length === 1) {
+      assert.deepEqual(replay.fills, [tradeId]);
+    } else {
+      assert.ok(
+        replay.faultCodes.includes("CURSOR_CONFLICT") || replay.blocked,
+        `expected one FILL or reconciliation: ${JSON.stringify(replay)}`,
+      );
+    }
+  });
+
+  it("C-C19 SIGKILL after rename before directory fsync: current process publishes nothing; fresh process follows landed bytes", async () => {
+    const experimentId = "classic-cc19";
+    const tradeId = "tr-cc19-postrename";
+    const dir = tmpDir("cc19");
+    const bind = cursorBind({ experimentId });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    const killed = await hardKillCursorAccept({
+      cursorPath,
+      experimentId,
+      tradeId,
+      crashAt: "BEFORE_DIRECTORY_FSYNC",
+    });
+    assert.equal(killed.method, "SIGKILL");
+    assert.equal(killed.signal, "SIGKILL");
+    assert.match(killed.ready, /BEFORE_DIRECTORY_FSYNC/);
+    const inspect = inspectCursorFresh({ cursorPath, experimentId });
+    if (inspect.landedValid === true && inspect.diskPendingTradeIds.includes(tradeId)) {
+      assert.deepEqual(inspect.drainAuthoritativeIds, [tradeId]);
+    } else {
+      assert.equal(inspect.drainAuthoritativeIds.includes(tradeId), false);
+      assert.ok(
+        inspect.landedValid === false || inspect.exists === false || inspect.blocked,
+        JSON.stringify(inspect),
+      );
+    }
+  });
+
+  it("C-C20 SIGKILL after directory fsync before publication: fresh process drains exactly one FILL", async () => {
+    const experimentId = "classic-cc20";
+    const tradeId = "tr-cc20-prepub";
+    const dir = tmpDir("cc20");
+    const bind = cursorBind({ experimentId });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    const killed = await hardKillCursorAccept({
+      cursorPath,
+      experimentId,
+      tradeId,
+      crashAt: "BEFORE_PUBLICATION",
+    });
+    assert.equal(killed.method, "SIGKILL");
+    assert.equal(killed.signal, "SIGKILL");
+    assert.match(killed.ready, /BEFORE_PUBLICATION/);
+    const inspect = inspectCursorFresh({ cursorPath, experimentId });
+    assert.equal(inspect.exists, true);
+    assert.equal(inspect.landedValid, true);
+    assert.deepEqual(inspect.diskPendingTradeIds, [tradeId]);
+    assert.deepEqual(inspect.drainAuthoritativeIds, [tradeId]);
+    const fills: string[] = [];
+    const second = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    publishExecutionJournal((event, fields) => {
+      if (event === "FILL") fills.push(String(fields?.exchange_trade_id ?? ""));
+      return true;
+    }, second.drainJournal());
+    assert.deepEqual(fills, [tradeId]);
+  });
+
+  it("C-C21 FILL append success plus watermark persist failure latches and keeps at-least-once replay", () => {
+    const experimentId = "classic-cc21";
+    const dir = tmpDir("cc21");
+    const bind = cursorBind({ experimentId });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    let persistCalls = 0;
+    const state = initializedState(makeClock(), {
+      cursorPath,
+      cursorIdentity: bind,
+      onCursorPersistStep(step) {
+        if (step !== "BEFORE_TEMP_OPEN") return;
+        persistCalls += 1;
+        if (persistCalls >= 2) throw new Error("CURSOR_WATERMARK_PERSIST_FAIL");
+      },
+    });
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-cc21" })));
+    const telDir = tmpDir("cc21-tel");
+    const tel = createExperimentTelemetry({
+      experimentId,
+      mode: "dry-run",
+      venue: "extended",
+      symbol: "BTC",
+      commitSha: "abc",
+      baseDir: telDir,
+      manifestFields: MANIFEST_FIELDS,
+    });
+    const drain = state.drainJournal();
+    const keys = publishExecutionJournal(tel.emit, drain);
+    assert.deepEqual(keys, ["extended|BTC-USD|trade|tr-cc21"]);
+    assert.match(fs.readFileSync(tel.eventsPath, "utf8"), /"event":"FILL"/);
+    state.acknowledgeJournal(keys);
+    assert.equal(state.cursorPersistenceBlocked(), true);
+    const after = state.drainJournal();
+    assert.equal(after.authoritativeExecutions.length, 0);
+    const landed = JSON.parse(fs.readFileSync(cursorPath, "utf8")) as {
+      publishedDedupeKeys: string[];
+      pendingAuthoritative: Array<{ exchangeTradeId?: string }>;
+    };
+    assert.equal(landed.publishedDedupeKeys.includes("extended|BTC-USD|trade|tr-cc21"), false);
+    assert.equal(landed.pendingAuthoritative.some((row) => row.exchangeTradeId === "tr-cc21"), true);
+    const fresh = replayCursorFresh({ cursorPath, experimentId, tradeId: "tr-cc21" });
+    assert.deepEqual(fresh.fills, ["tr-cc21"]);
+    assert.equal(fresh.fills.length, 1);
+  });
+
+  it("C-C22 pre-existing durable pending plus later persist failure fail-closes without mixing the new record", () => {
+    const experimentId = "classic-cc22";
+    const dir = tmpDir("cc22");
+    const bind = cursorBind({ experimentId });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    let persistCalls = 0;
+    const state = initializedState(makeClock(), {
+      cursorPath,
+      cursorIdentity: bind,
+      onCursorPersistStep(step) {
+        if (step !== "BEFORE_RENAME") return;
+        persistCalls += 1;
+        if (persistCalls >= 2) throw new Error("CURSOR_SECOND_PERSIST_FAIL");
+      },
+    });
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-proven" })));
+    assert.equal(state.journalSnapshot().authoritativeCount, 1);
+    assert.equal(state.cursorPersistenceBlocked(), false);
+    const proven = JSON.parse(fs.readFileSync(cursorPath, "utf8")) as {
+      pendingAuthoritative: Array<{ exchangeTradeId?: string }>;
+    };
+    assert.deepEqual(proven.pendingAuthoritative.map((row) => row.exchangeTradeId), ["tr-proven"]);
+    state.ingest(tradeMessage(3, canonicalTrade({ id: "tr-unproven" })));
+    assert.equal(state.cursorPersistenceBlocked(), true);
+    assert.equal(state.journalSnapshot().executions.some((row) => row.exchangeTradeId === "tr-unproven"), false);
+    assert.equal(state.journalSnapshot().executions.some((row) => row.exchangeTradeId === "tr-proven"), true);
+    const { fills, drain } = publishedFills(state);
+    assert.equal(fills.includes("tr-unproven"), false);
+    assert.deepEqual(fills, []);
+    assert.equal(drain.authoritativeExecutions.length, 0);
+    const landed = JSON.parse(fs.readFileSync(cursorPath, "utf8")) as {
+      pendingAuthoritative: Array<{ exchangeTradeId?: string }>;
+    };
+    assert.deepEqual(landed.pendingAuthoritative.map((row) => row.exchangeTradeId), ["tr-proven"]);
+    assert.equal(landed.pendingAuthoritative.some((row) => row.exchangeTradeId === "tr-unproven"), false);
+    const fresh = inspectCursorFresh({ cursorPath, experimentId });
+    assert.deepEqual(fresh.diskPendingTradeIds, ["tr-proven"]);
+    assert.deepEqual(fresh.drainAuthoritativeIds, ["tr-proven"]);
+  });
+
+  it("C-C23 existing C-01..C-22 and C-C1..C-C15 remain and persistCursor is no longer a void helper", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./experiment-v02-execution.test.ts", import.meta.url)), "utf8");
+    const stream = fs.readFileSync(fileURLToPath(new URL("../src/venues/extendedAccountStream.ts", import.meta.url)), "utf8");
+    for (const id of [
+      "C-01", "C-02", "C-03", "C-04", "C-05", "C-06", "C-07", "C-08", "C-09", "C-10",
+      "C-11", "C-12", "C-13", "C-14", "C-15", "C-16", "C-17", "C-18", "C-19", "C-20", "C-21",
+    ]) {
+      assert.match(src, new RegExp(`it\\("${id}`));
+    }
+    assert.match(src, /C-22 Corrective 5/);
+    for (let i = 1; i <= 15; i++) {
+      assert.match(src, new RegExp(`it\\("C-C${i} `));
+    }
+    assert.match(stream, /CursorPersistDisposition/);
+    assert.match(stream, /COMMITTED/);
+    assert.match(stream, /PRE_RENAME_FAILURE/);
+    assert.match(stream, /RENAME_OR_DURABILITY_UNCERTAIN/);
+    assert.match(stream, /READBACK_UNPROVEN/);
+    assert.match(stream, /VALIDATION_FAILURE/);
+    assert.doesNotMatch(stream, /private persistCursor\(\): void/);
+    assert.match(stream, /onCursorPersistStep/);
+    if (process.platform === "linux") {
+      assert.doesNotMatch(src, /it\.skip\("C-C18/);
+      assert.doesNotMatch(src, /it\.skip\("C-C19/);
+      assert.doesNotMatch(src, /it\.skip\("C-C20/);
+    }
+  });
+
+  it("C-C24 Checkpoint B emergency reduction / hard halt is unchanged by telemetry or cursor persist failure", async () => {
+    const { state } = persistFaultState("cc24", throwAt("BEFORE_TEMP_OPEN"));
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-cc24" })));
+    assert.equal(state.cursorPersistenceBlocked(), true);
+    const drain = state.drainJournal();
+    assert.doesNotThrow(() => {
+      publishExecutionJournal(() => {
+        throw new Error("telemetry down");
+      }, drain);
+    });
+    const dir = tmpDir("cc24-halt");
+    const id = "cc24-telemetry";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      {
+        mid: 100_000,
+        equityUsd: 100,
+        dailyPnlUsd: 0,
+        positionQty: 0.00151,
+        positionNotionalUsd: 151,
+        plannedGrossNotionalUsd: 150,
+        gridLower: 97_000,
+        gridUpper: 103_000,
+      },
+      LIMITS,
+      running,
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: (n) => freshSnapshot({
+        positionQty: n === 1 ? 0.00151 : 0,
+        openOrders: [],
+        observationId: `cc24-${n}`,
+        sourceGeneration: `g-cc24-${n}`,
+      }),
+    });
+    const result = await runActualNotionalHardHalt({
+      experimentId: id,
+      market: MARKET,
+      ownershipPrefix: OWNER_PREFIX,
+      positionQty: 0.00151,
+      openOrders: [ownedOrder({ side: "buy" })],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport,
+      assertLeaseCurrent: () => undefined,
+      leaseGeneration: "lease-1",
+      baseDir: dir,
+      scopeKey: SCOPE,
+      state: evaluated.next,
+    });
+    assert.ok(transport.flattenCalls >= 1);
+    assert.notEqual(result.lifecycle, "NORMAL");
   });
 });
