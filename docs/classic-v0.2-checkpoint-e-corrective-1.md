@@ -38,6 +38,15 @@ REJECTION_CLASS=EVIDENCE_AND_TEST_INTEGRITY
 KNOWN_PRODUCTION_DEFECT_FROM_THIS_REVIEW=NO
 IMPLEMENTATION_HEAD=c8e1b0d9c4fd7b20e2cd11c89653a58e0eef6881
 IMPLEMENTATION_TREE=1daeb659727c7672da389e867c9842153d6b940a
+TESTED_HEAD=f6868aa5290e7ba2c6733f6189b964f214572f63
+TESTED_TREE=5d34f61940818baf77939ac63ebc110229b2da50
+PUSH_CI_RUN_ID=32742254242
+PUSH_CI_CONCLUSION=success
+PR_CI_RUN_ID=32742261165
+PR_CI_CONCLUSION=success
+EVIDENCE_ARTIFACT_NAME=classic-v0.2-checkpoint-e-results
+EVIDENCE_ARTIFACT_ID=9525638365
+EVIDENCE_JSON_SHA256=614015e1b6b122c1784e41fff026ced3c2b112c341410b39cebe88aa4d61bcd6
 ```
 
 Current-byte check at start: HEAD and TREE matched `AUTHORITATIVE_START_*`. Working tree was clean. Branch was ff-only with `origin/experiment/classic-v0.2-100u-safety`. No reset, rebase, amend, or force-push.
@@ -161,7 +170,7 @@ docs/** — no secrets
 
 - This note does not declare Checkpoint E PASS.
 - Local verification used Node v26.5.0 / npm 11.17.0. CI pin is Node v22.23.2 / npm 10.9.8.
-- Authoritative evidence is the CI artifact, not a checked-in JSON that claims its own commit SHA.
+- Authoritative evidence is the CI artifact generated at `TESTED_HEAD`, not a checked-in JSON that claims its own commit SHA. This CI-ID binding commit is docs-only after that tested commit.
 - `AGENTS.md` is absent from this repository.
 - Directory-fsync SIGKILL proof for C-C18/C-C19/C-C20 remains Ubuntu CI.
 - Planner still returns `filled=[]` and `completedRungs=0`.
