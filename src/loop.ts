@@ -47,6 +47,7 @@ import {
 } from "./dashboard.js";
 import { isBotPaused, loadBotPauseState } from "./botControl.js";
 import {
+  applyPlannerIntentGate,
   assertFeeOk,
   assertMarginOk,
   buildGrid,
@@ -54,6 +55,8 @@ import {
   planFromFillsAndSeed,
   type BuiltGrid,
 } from "./grid.js";
+
+export { applyPlannerIntentGate };
 import { loadVenueSessionCounters } from "./ledger.js";
 import { getOfficialCache, refreshOfficialStats } from "./officialStats.js";
 import { createExecutor, type VenueExecutor } from "./venues/index.js";
@@ -621,22 +624,24 @@ async function tickOne(
     );
     rt.ex.acknowledgeExecutionJournal?.(published);
   }
-  const plan = planFromFillsAndSeed({
-    market,
-    mid,
-    levels: built.levels,
-    spacing: built.spacing,
-    mode: g.mode,
-    sizeBase: g.sizeBase,
-    openOrders: snap.openOrders,
-    prevActive: rt.active,
-    maxWrites: g.maxWritesPerTick,
-    seeded: rt.seeded,
-    maxOpenOrders: g.maxOpenOrders,
-    skipBand: g.skipBand,
-    ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,
-    anchorEpoch: rt.anchorEpoch,
-  });
+  const plan = applyPlannerIntentGate(
+    planFromFillsAndSeed({
+      market,
+      mid,
+      levels: built.levels,
+      spacing: built.spacing,
+      mode: g.mode,
+      sizeBase: g.sizeBase,
+      openOrders: snap.openOrders,
+      prevActive: rt.active,
+      maxWrites: g.maxWritesPerTick,
+      seeded: rt.seeded,
+      maxOpenOrders: g.maxOpenOrders,
+      skipBand: g.skipBand,
+      ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,
+      anchorEpoch: rt.anchorEpoch,
+    })
+  );
   if (cfg.experiment.enabled) {
     const worstAfterBatch = worstCaseGrossNotionalUsd({
       positionQty: snap.position,

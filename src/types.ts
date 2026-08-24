@@ -96,7 +96,13 @@ export type PlannerOrderClass =
   | "MALFORMED_OWNED"
   | "STALE_EPOCH_OWNED"
   | "UNOWNED"
-  | "AMBIGUOUS";
+  | "AMBIGUOUS"
+  | "CROSS_MARKET_OWNED";
+
+export type PlannerDisposition =
+  | "CLEAR"
+  | "CANCEL_ONLY_RECONCILIATION"
+  | "RISK_INCREASE_BLOCKED";
 
 export type PlannerDiagnosticCode =
   | "DUPLICATE_OWNED_CANCELLED"
@@ -105,7 +111,8 @@ export type PlannerDiagnosticCode =
   | "UNOWNED_BLOCKS_SLOT"
   | "AMBIGUOUS_ORDER"
   | "RECONCILIATION_REQUIRED"
-  | "MISSING_CANCEL_IDENTITY";
+  | "MISSING_CANCEL_IDENTITY"
+  | "CROSS_MARKET_OWNED_ORDER";
 
 export type PlannerDiagnostic = {
   code: PlannerDiagnosticCode;

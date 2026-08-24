@@ -5,6 +5,7 @@ import type {
   Intent,
   LiveOrder,
   PlannerDiagnostic,
+  PlannerDisposition,
   PlannerLogicalSlot,
   PlannerOrderClass,
   SeedOrder,
@@ -358,6 +359,11 @@ export function planFromFillsAndSeed(p: {
   filled: Array<{ side: Side; levelIndex: number; price: number }>;
   completedRungs: number;
   diagnostics: PlannerDiagnostic[];
+  currentSnapshotVenueCount: number;
+  plannedCancelCount: number;
+  capacityAfterAuthoritativeSnapshot: number | null;
+  plannerDisposition: PlannerDisposition;
+  riskIncreaseBlocked: boolean;
 } {
   const prefix = typeof p.ownershipPrefix === "string" ? p.ownershipPrefix : "";
   const currentEpoch =
@@ -381,6 +387,8 @@ export function planFromFillsAndSeed(p: {
     blockClassified(row, p, prefix, currentEpoch, blockedLevels, blockedSlots);
     if (row.class === "UNOWNED") {
       diagnostics.push(diagnostic("UNOWNED_BLOCKS_SLOT", row));
+    } else if (row.class === "CROSS_MARKET_OWNED") {
+      diagnostics.push(diagnostic("CROSS_MARKET_OWNED_ORDER", row));
     } else if (row.class === "AMBIGUOUS") {
       diagnostics.push(
         diagnostic(row.cancelId ? "AMBIGUOUS_ORDER" : "MISSING_CANCEL_IDENTITY", row)
@@ -432,23 +440,31 @@ export function planFromFillsAndSeed(p: {
   }
 
   const intents: Intent[] = [];
-  const emittedCancelIds = new Set<string>();
   for (const row of uniqueCancels) {
     if (intents.length >= p.maxWrites) break;
     intents.push({ type: "cancel", orderId: row.cancelId, market: p.market });
-    emittedCancelIds.add(row.cancelId);
   }
 
-  const remainingOnVenue =
-    collapsed.unresolvedVenueCount +
-    observations.filter((obs) => {
-      const id = obs.localId;
-      return !id || !emittedCancelIds.has(id);
-    }).length;
+  const currentSnapshotVenueCount = collapsed.unresolvedVenueCount + observations.length;
+  const plannedCancelCount = intents.length;
+  const capacityAfterAuthoritativeSnapshot =
+    p.maxOpenOrders != null ? Math.max(0, p.maxOpenOrders - currentSnapshotVenueCount) : null;
+  const riskIncreaseBlocked = plannerRiskIncreaseBlocked(
+    classified,
+    collapsed.unresolvedVenueCount,
+    p,
+    prefix,
+    currentEpoch
+  );
+  const plannerDisposition: PlannerDisposition = riskIncreaseBlocked
+    ? "RISK_INCREASE_BLOCKED"
+    : "CLEAR";
   let placeSlots =
-    p.maxOpenOrders != null
-      ? Math.max(0, p.maxOpenOrders - remainingOnVenue)
-      : Number.POSITIVE_INFINITY;
+    riskIncreaseBlocked || plannerDisposition !== "CLEAR"
+      ? 0
+      : capacityAfterAuthoritativeSnapshot == null
+        ? Number.POSITIVE_INFINITY
+        : capacityAfterAuthoritativeSnapshot;
 
   survivors.sort((a, b) => compareSlot(a.slot!, b.slot!));
   const nextActive = new Map<
@@ -508,7 +524,57 @@ export function planFromFillsAndSeed(p: {
   }
 
   diagnostics.sort(compareDiagnostic);
-  return { intents, nextActive, filled, completedRungs, diagnostics };
+  return {
+    intents,
+    nextActive,
+    filled,
+    completedRungs,
+    diagnostics,
+    currentSnapshotVenueCount,
+    plannedCancelCount,
+    capacityAfterAuthoritativeSnapshot,
+    plannerDisposition,
+    riskIncreaseBlocked,
+  };
+}
+
+export function applyPlannerIntentGate<T extends {
+  intents: Intent[];
+  plannerDisposition: PlannerDisposition;
+}>(plan: T): T {
+  if (plan.plannerDisposition === "CLEAR") return plan;
+  return {
+    ...plan,
+    intents: plan.intents.filter((intent) => intent.type === "cancel"),
+  };
+}
+
+function observationMayBelongToMarket(obs: PlannerObservation, market: string): boolean {
+  return obs.market === "" || obs.market === market;
+}
+
+function plannerRiskIncreaseBlocked(
+  classified: ClassifiedOrder[],
+  unresolvedVenueCount: number,
+  p: { market: string; levels: number[]; spacing: number },
+  prefix: string,
+  currentEpoch: number
+): boolean {
+  if (unresolvedVenueCount > 0) return true;
+  for (const row of classified) {
+    if (row.class === "AMBIGUOUS" || row.class === "CROSS_MARKET_OWNED") return true;
+    const locatable = inferSlots(row.obs, p, prefix, currentEpoch).length > 0;
+    if (row.class === "MALFORMED_OWNED" && !locatable) return true;
+    if (row.class === "STALE_EPOCH_OWNED" && !locatable) return true;
+    if (
+      row.class === "UNOWNED" &&
+      !locatable &&
+      observationMayBelongToMarket(row.obs, p.market)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function compareSlot(a: PlannerLogicalSlot, b: PlannerLogicalSlot): number {
@@ -682,6 +748,25 @@ function classifyObservation(
     };
   }
 
+  if (prefix && owned && obs.market !== p.market) {
+    if (obs.market !== "") {
+      return {
+        obs,
+        class: "CROSS_MARKET_OWNED",
+        slot: null,
+        matchedLevel: -1,
+        cancelId: "",
+      };
+    }
+    return {
+      obs,
+      class: "AMBIGUOUS",
+      slot: null,
+      matchedLevel: -1,
+      cancelId: "",
+    };
+  }
+
   if (!obs.localId || !side || obs.price === null || obs.size === null) {
     return {
       obs,
@@ -789,6 +874,7 @@ function blockClassified(
   blockedLevels: Set<number>,
   blockedSlots: Set<string>
 ): void {
+  if (row.class === "CROSS_MARKET_OWNED") return;
   blockInferredSlots(row.obs, p, prefix, currentEpoch, blockedLevels, blockedSlots);
   if (row.matchedLevel >= 0) blockedLevels.add(row.matchedLevel);
   if (row.slot) blockedSlots.add(plannerSlotKey(row.slot));
