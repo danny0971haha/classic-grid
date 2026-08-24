@@ -14,9 +14,17 @@ import {
 import {
   createExperimentTelemetry,
   publishExecutionJournal,
-  readCommitSha,
   resolveExecutionCursorPath,
 } from "../src/experimentTelemetry.js";
+import {
+  CHECKPOINT_E_CASE_IDS,
+  DEFAULT_EVIDENCE_COMMAND,
+  EvidenceError,
+  collectFileHashes,
+  generateEvidenceFromRun,
+  parseCheckpointETap,
+  renderCheckpointETap,
+} from "../tools/checkpoint-e-evidence.js";
 import {
   emptyRiskState,
   evaluateExperimentRisk,
@@ -49,7 +57,6 @@ const PREFIX = "cg:test:";
 const EPOCH = 42;
 const LEVELS = [99_000, 100_000, 101_000];
 const SIZE = 0.001;
-const ARTIFACT = fileURLToPath(new URL("../artifacts/classic-v0.2-checkpoint-e-results.json", import.meta.url));
 const V02_LIMITS = {
   maxGrossNotionalUsd: 150,
   dailyLossUsd: 5,
@@ -118,6 +125,64 @@ function lastJson(stdout: string): any {
   const line = String(stdout || "").trim().split("\n").filter(Boolean).at(-1);
   assert.ok(line, stdout);
   return JSON.parse(line);
+}
+
+type DurableCursor = {
+  publishedDedupeKeys: string[];
+  pendingAuthoritative: Array<{
+    exchangeTradeId?: string;
+    dedupeKey?: string;
+    source?: string;
+    authoritative?: boolean;
+  }>;
+};
+
+function readDurableCursor(cursorPath: string): DurableCursor {
+  assert.equal(fs.existsSync(cursorPath), true, `missing durable cursor ${cursorPath}`);
+  const parsed = JSON.parse(fs.readFileSync(cursorPath, "utf8")) as Partial<DurableCursor>;
+  assert.equal(Array.isArray(parsed.publishedDedupeKeys), true);
+  assert.equal(Array.isArray(parsed.pendingAuthoritative), true);
+  return {
+    publishedDedupeKeys: parsed.publishedDedupeKeys as string[],
+    pendingAuthoritative: parsed.pendingAuthoritative as DurableCursor["pendingAuthoritative"],
+  };
+}
+
+function spawnJournalReplay(p: {
+  cursorPath: string;
+  experimentId: string;
+  tradeId: string;
+  acknowledge: boolean;
+}) {
+  const child = spawnWorker({
+    CLASSIC_E_ACTION: "journal-replay",
+    CLASSIC_E_CURSOR_PATH: p.cursorPath,
+    CLASSIC_E_EXPERIMENT_ID: p.experimentId,
+    CLASSIC_E_TRADE_ID: p.tradeId,
+    CLASSIC_E_ACK: p.acknowledge ? "1" : "0",
+  });
+  assert.equal(child.status, 0, child.stderr || child.stdout);
+  const replayed = lastJson(child.stdout) as {
+    pid: number;
+    blocked: boolean;
+    publishedKeys: string[];
+    authoritativeFills: Array<{
+      exchangeTradeId: string | null;
+      dedupeKey: string;
+      source: string;
+      authoritative: boolean;
+    }>;
+    durablePublishedDedupeKeys: string[];
+    durablePending: Array<{
+      exchangeTradeId: string | null;
+      dedupeKey: string | null;
+      source: string | null;
+      authoritative: boolean;
+    }>;
+  };
+  assert.equal(typeof replayed.pid, "number");
+  assert.notEqual(replayed.pid, process.pid);
+  return replayed;
 }
 
 function seedRunning(id: string, dir: string, leaseGeneration = "lease-1"): ExperimentRiskState {
@@ -208,12 +273,6 @@ function riskInput(partial: Record<string, unknown> = {}) {
     ...partial,
   };
 }
-
-const CASE_IDS = [
-  "E-01", "E-02", "E-03", "E-04", "E-05", "E-06", "E-07", "E-08", "E-09", "E-10",
-  "E-11", "E-12", "E-13", "E-14", "E-15", "E-16", "E-17", "E-18", "E-19", "E-20",
-  "E-21", "E-22", "E-23", "E-24", "E-25", "E-26", "E-27", "E-28", "E-29", "E-30",
-];
 
 describe("Checkpoint E integrated dry-run and fault campaign", () => {
   it("E-01 frozen v0.2 dry-run banner", () => {
@@ -391,6 +450,8 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
   it("E-09 watermark failure at-least-once replay", () => {
     const dir = tmpDir("e09");
     const experimentId = "classic-e09";
+    const tradeId = "tr-e09-stable";
+    const dedupeKey = `extended|BTC-USD|trade|${tradeId}`;
     const cursorPath = resolveExecutionCursorPath({
       experimentId,
       scopeKey: "dry-run:extended:BTC",
@@ -416,7 +477,7 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     state.ingest({ type: "BALANCE", data: { balance: { equity: "100" } }, ts, seq: 1 });
     state.ingest({ type: "POSITION", data: { positions: [] }, ts, seq: 1 });
     state.ingest({ type: "ORDER", data: { orders: [] }, ts, seq: 1 });
-    state.ingest(trade({ id: "tr-e09" }));
+    state.ingest(trade({ id: tradeId }));
     const tel = createExperimentTelemetry({
       experimentId,
       mode: "dry-run",
@@ -437,14 +498,45 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
         boundary_buffer_pct: 1,
       },
     });
-    const keys = publishExecutionJournal(tel.emit, state.drainJournal());
-    assert.ok(keys.length >= 1);
-    assert.match(fs.readFileSync(tel.eventsPath, "utf8"), /"event":"FILL"/);
+    const drain = state.drainJournal();
+    assert.equal(drain.authoritativeExecutions.length, 1);
+    assert.equal(drain.authoritativeExecutions[0]!.exchangeTradeId, tradeId);
+    assert.equal(drain.authoritativeExecutions[0]!.dedupeKey, dedupeKey);
+    assert.equal(drain.authoritativeExecutions[0]!.source, "exchange");
+    assert.equal(drain.authoritativeExecutions[0]!.authoritative, true);
+    const publishedTradeIds: string[] = [];
+    const keys = publishExecutionJournal((event, fields) => {
+      if (event === "FILL") publishedTradeIds.push(String(fields?.exchange_trade_id ?? ""));
+      return true;
+    }, drain);
+    assert.deepEqual(keys, [dedupeKey]);
+    assert.deepEqual(publishedTradeIds, [tradeId]);
     state.acknowledgeJournal(keys);
     assert.equal(state.cursorPersistenceBlocked(), true);
-    const replay = initializedJournal(cursorPath, experimentId);
-    replay.ingest(trade({ id: "tr-e09" }));
-    assert.ok(replay.journalSnapshot().executions.length >= 0);
+    const durableAfterFailedAck = readDurableCursor(cursorPath);
+    assert.equal(durableAfterFailedAck.publishedDedupeKeys.includes(dedupeKey), false);
+    assert.deepEqual(durableAfterFailedAck.pendingAuthoritative.map((row) => row.dedupeKey), [dedupeKey]);
+    assert.deepEqual(durableAfterFailedAck.pendingAuthoritative.map((row) => row.exchangeTradeId), [tradeId]);
+    assert.equal(durableAfterFailedAck.pendingAuthoritative[0]!.source, "exchange");
+    assert.equal(durableAfterFailedAck.pendingAuthoritative[0]!.authoritative, true);
+
+    const replayed = spawnJournalReplay({ cursorPath, experimentId, tradeId, acknowledge: true });
+    assert.equal(replayed.blocked, false);
+    assert.equal(replayed.authoritativeFills.length, 1);
+    assert.equal(replayed.authoritativeFills[0]!.exchangeTradeId, tradeId);
+    assert.equal(replayed.authoritativeFills[0]!.dedupeKey, dedupeKey);
+    assert.equal(replayed.authoritativeFills[0]!.source, "exchange");
+    assert.equal(replayed.authoritativeFills[0]!.authoritative, true);
+    assert.deepEqual(replayed.publishedKeys, [dedupeKey]);
+    assert.deepEqual(replayed.durablePublishedDedupeKeys, [dedupeKey]);
+    assert.deepEqual(replayed.durablePending, []);
+
+    const afterAck = spawnJournalReplay({ cursorPath, experimentId, tradeId, acknowledge: false });
+    assert.equal(afterAck.blocked, false);
+    assert.deepEqual(afterAck.authoritativeFills, []);
+    assert.deepEqual(afterAck.publishedKeys, []);
+    assert.deepEqual(afterAck.durablePublishedDedupeKeys, [dedupeKey]);
+    assert.deepEqual(afterAck.durablePending, []);
   });
 
   it("E-10 actual notional active flatten", async () => {
@@ -847,36 +939,54 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     assert.match(String(again.reasonCode), /RECONCILIATION_REQUIRED/);
   });
 
-  it("E-26 full evidence JSON schema", () => {
-    const commitSha = readCommitSha();
-    const treeSha = spawnSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).stdout.trim();
-    const startedAt = new Date().toISOString();
-    const doc = {
-      schemaVersion: "classic-v0.2-checkpoint-e/1",
-      repository: "danny0971haha/classic-grid",
+  it("E-26 evidence results are derived from TAP outcomes", () => {
+    const tap = renderCheckpointETap({
+      cases: CHECKPOINT_E_CASE_IDS.map((id) => ({ id, title: `${id} fixture` })),
+    });
+    const parsed = parseCheckpointETap(tap);
+    assert.equal(parsed.cases.length, 30);
+    assert.deepEqual(parsed.cases.map((row) => row.caseId), [...CHECKPOINT_E_CASE_IDS]);
+    assert.equal(parsed.cases[0]!.outcome, "PASS");
+    assert.equal(parsed.cases[25]!.caseId, "E-26");
+    assert.equal(parsed.cases[25]!.outcome, "PASS");
+    const evidence = generateEvidenceFromRun(tap, {
       branch: "experiment/classic-v0.2-100u-safety",
-      commitSha,
-      treeSha,
-      specVersion: "0.2.0",
-      mode: "dry-run",
-      liveExchangeWrite: false,
-      productionCredentialUsed: false,
-      startedAt,
-      completedAt: new Date().toISOString(),
-      testCases: CASE_IDS.map((caseId) => ({
-        caseId,
-        category: categoryFor(caseId),
-        result: "PASS",
-        exitCode: 0,
-        skipReason: null,
-        liveExchangeWrite: false,
-        productionCredentialUsed: false,
-        startedAt,
-        completedAt: new Date().toISOString(),
-      })),
-    };
-    assertEvidenceSchema(doc);
-    if (fs.existsSync(ARTIFACT)) assertEvidenceSchema(JSON.parse(fs.readFileSync(ARTIFACT, "utf8")));
+      testedCommitSha: "0123456789abcdef0123456789abcdef01234567",
+      testedTreeSha: "89abcdef0123456789abcdef0123456789abcdef",
+      nodeVersion: process.version,
+      npmVersion: "10.9.8",
+      command: DEFAULT_EVIDENCE_COMMAND,
+      processExitCode: 0,
+      generatedAt: "2026-08-24T00:00:00.000Z",
+      fileHashes: collectFileHashes(),
+    });
+    assert.equal(evidence.testCases[25]!.caseId, "E-26");
+    assert.equal(evidence.testCases[25]!.result, parsed.cases[25]!.outcome);
+    assert.equal(evidence.eCases.pass, 30);
+    assert.equal(evidence.eCases.fail, 0);
+    assert.equal(evidence.liveExchangeWrite, false);
+    const failedTap = renderCheckpointETap({
+      cases: CHECKPOINT_E_CASE_IDS.map((id) => ({ id, ok: id !== "E-26", title: `${id} fixture` })),
+    });
+    const failedParsed = parseCheckpointETap(failedTap);
+    assert.equal(failedParsed.cases[25]!.outcome, "FAIL");
+    let failedCode: string | null = null;
+    try {
+      generateEvidenceFromRun(failedTap, {
+        branch: "experiment/classic-v0.2-100u-safety",
+        testedCommitSha: "0123456789abcdef0123456789abcdef01234567",
+        testedTreeSha: "89abcdef0123456789abcdef0123456789abcdef",
+        nodeVersion: process.version,
+        npmVersion: "10.9.8",
+        command: DEFAULT_EVIDENCE_COMMAND,
+        processExitCode: 1,
+        fileHashes: collectFileHashes(),
+      });
+    } catch (error) {
+      if (error instanceof EvidenceError) failedCode = error.code;
+      else throw error;
+    }
+    assert.equal(failedCode, "CASE_FAILED");
   });
 
   it("E-27 no secrets", () => {
@@ -921,6 +1031,7 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
       "test/experiment-v02-planner-dedup.test.ts",
       "test/experiment-v02-planner-dedup-corrective-1.test.ts",
       "test/experiment-v02-checkpoint-e.test.ts",
+      "test/experiment-v02-checkpoint-e-evidence.test.ts",
     ]) {
       assert.ok(testScript.includes(file), file);
     }
@@ -972,41 +1083,3 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     assert.match(docs, /LIVE_EXCHANGE_WRITE_AUTHORIZED=NO/);
   });
 });
-
-function categoryFor(caseId: string): string {
-  if (["E-01", "E-02", "E-29", "E-30"].includes(caseId)) return "configuration";
-  if (["E-03", "E-04", "E-05"].includes(caseId)) return "planner";
-  if (["E-06", "E-07", "E-08", "E-09"].includes(caseId)) return "execution-journal";
-  if (["E-10", "E-11", "E-12", "E-13", "E-14", "E-15", "E-16", "E-17", "E-18"].includes(caseId)) return "risk";
-  if (["E-19", "E-20", "E-21"].includes(caseId)) return "restart";
-  if (["E-22", "E-23", "E-27"].includes(caseId)) return "telemetry";
-  if (["E-24", "E-25"].includes(caseId)) return "fatal-runtime";
-  return "evidence";
-}
-
-function assertEvidenceSchema(doc: any): void {
-  assert.equal(typeof doc.schemaVersion, "string");
-  assert.equal(doc.repository, "danny0971haha/classic-grid");
-  assert.equal(typeof doc.branch, "string");
-  assert.equal(typeof doc.commitSha, "string");
-  assert.equal(typeof doc.treeSha, "string");
-  assert.equal(doc.specVersion, "0.2.0");
-  assert.equal(doc.mode, "dry-run");
-  assert.equal(doc.liveExchangeWrite, false);
-  assert.equal(doc.productionCredentialUsed, false);
-  assert.ok(Array.isArray(doc.testCases));
-  assert.equal(doc.testCases.length, 30);
-  const ids = doc.testCases.map((row: { caseId: string }) => row.caseId);
-  assert.deepEqual(ids, CASE_IDS);
-  for (const row of doc.testCases) {
-    assert.equal(typeof row.caseId, "string");
-    assert.equal(typeof row.category, "string");
-    assert.equal(row.result, "PASS");
-    assert.equal(row.exitCode, 0);
-    assert.equal(row.skipReason, null);
-    assert.equal(row.liveExchangeWrite, false);
-    assert.equal(row.productionCredentialUsed, false);
-    assert.equal(typeof row.startedAt, "string");
-    assert.equal(typeof row.completedAt, "string");
-  }
-}

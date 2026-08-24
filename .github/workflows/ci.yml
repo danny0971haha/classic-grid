@@ -17,12 +17,26 @@ jobs:
         with:
           node-version: 22.23.2
           cache: npm
+      - name: Pin npm
+        run: npm install -g npm@10.9.8
       - name: Record toolchain
         run: |
           node --version
           npm --version
+          test "$(node --version)" = "v22.23.2"
+          test "$(npm --version)" = "10.9.8"
       - run: npm ci
       - run: npm run check
+      - name: Generate Checkpoint E evidence
+        run: npm run evidence:checkpoint-e
+      - name: Verify Checkpoint E evidence
+        run: npm run evidence:checkpoint-e:verify
+      - name: Upload Checkpoint E evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: classic-v0.2-checkpoint-e-results
+          path: artifacts/classic-v0.2-checkpoint-e-results.json
+          if-no-files-found: error
       - name: Dependency audit inventory
         continue-on-error: true
         run: npm audit --json
