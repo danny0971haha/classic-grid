@@ -19,11 +19,15 @@ import {
 import {
   CHECKPOINT_E_CASE_IDS,
   DEFAULT_EVIDENCE_COMMAND,
+  DEFAULT_PRECHECK_COMMAND,
   EvidenceError,
+  MIN_PROJECT_SUITE_TOTAL,
   collectFileHashes,
+  defaultProjectTapCommand,
   generateEvidenceFromRun,
   parseCheckpointETap,
   renderCheckpointETap,
+  renderProjectTap,
 } from "../tools/checkpoint-e-evidence.js";
 import {
   emptyRiskState,
@@ -949,22 +953,41 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     assert.equal(parsed.cases[0]!.outcome, "PASS");
     assert.equal(parsed.cases[25]!.caseId, "E-26");
     assert.equal(parsed.cases[25]!.outcome, "PASS");
-    const evidence = generateEvidenceFromRun(tap, {
-      branch: "experiment/classic-v0.2-100u-safety",
-      testedCommitSha: "0123456789abcdef0123456789abcdef01234567",
-      testedTreeSha: "89abcdef0123456789abcdef0123456789abcdef",
-      nodeVersion: process.version,
-      npmVersion: "10.9.8",
-      command: DEFAULT_EVIDENCE_COMMAND,
-      processExitCode: 0,
-      generatedAt: "2026-08-24T00:00:00.000Z",
-      fileHashes: collectFileHashes(),
+    const fixtureSha = "0123456789abcdef0123456789abcdef01234567";
+    const fixtureTree = "89abcdef0123456789abcdef0123456789abcdef";
+    const evidence = generateEvidenceFromRun({
+      checkpointTap: tap,
+      projectTap: renderProjectTap({ tests: MIN_PROJECT_SUITE_TOTAL, pass: MIN_PROJECT_SUITE_TOTAL }),
+      meta: {
+        branch: "experiment/classic-v0.2-100u-safety",
+        identity: {
+          sourceHeadSha: fixtureSha,
+          sourceHeadTreeSha: fixtureTree,
+          testedCheckoutSha: fixtureSha,
+          testedCheckoutTreeSha: fixtureTree,
+          baseSha: "fedcba9876543210fedcba9876543210fedcba98",
+          githubEventName: "local",
+          githubRunId: "local",
+          githubRunAttempt: "0",
+          githubJobId: "local",
+        },
+        toolchain: { nodeVersion: process.version, npmVersion: "10.9.8" },
+        checkpoint: { command: DEFAULT_EVIDENCE_COMMAND, processExitCode: 0 },
+        project: {
+          command: defaultProjectTapCommand(),
+          processExitCode: 0,
+          preCheck: { command: DEFAULT_PRECHECK_COMMAND, processExitCode: 0 },
+        },
+        generatedAt: "2026-08-24T00:00:00.000Z",
+        fileHashes: collectFileHashes(),
+      },
     });
-    assert.equal(evidence.testCases[25]!.caseId, "E-26");
-    assert.equal(evidence.testCases[25]!.result, parsed.cases[25]!.outcome);
-    assert.equal(evidence.eCases.pass, 30);
-    assert.equal(evidence.eCases.fail, 0);
-    assert.equal(evidence.liveExchangeWrite, false);
+    assert.equal(evidence.checkpointSuite.testCases[25]!.caseId, "E-26");
+    assert.equal(evidence.checkpointSuite.testCases[25]!.result, parsed.cases[25]!.outcome);
+    assert.equal(evidence.checkpointSuite.pass, 30);
+    assert.equal(evidence.checkpointSuite.fail, 0);
+    assert.notEqual(evidence.projectSuite.total, 30);
+    assert.equal(evidence.safety.liveExchangeWrite, false);
     const failedTap = renderCheckpointETap({
       cases: CHECKPOINT_E_CASE_IDS.map((id) => ({ id, ok: id !== "E-26", title: `${id} fixture` })),
     });
@@ -972,15 +995,31 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     assert.equal(failedParsed.cases[25]!.outcome, "FAIL");
     let failedCode: string | null = null;
     try {
-      generateEvidenceFromRun(failedTap, {
-        branch: "experiment/classic-v0.2-100u-safety",
-        testedCommitSha: "0123456789abcdef0123456789abcdef01234567",
-        testedTreeSha: "89abcdef0123456789abcdef0123456789abcdef",
-        nodeVersion: process.version,
-        npmVersion: "10.9.8",
-        command: DEFAULT_EVIDENCE_COMMAND,
-        processExitCode: 1,
-        fileHashes: collectFileHashes(),
+      generateEvidenceFromRun({
+        checkpointTap: failedTap,
+        projectTap: renderProjectTap({ tests: MIN_PROJECT_SUITE_TOTAL, pass: MIN_PROJECT_SUITE_TOTAL }),
+        meta: {
+          branch: "experiment/classic-v0.2-100u-safety",
+          identity: {
+            sourceHeadSha: fixtureSha,
+            sourceHeadTreeSha: fixtureTree,
+            testedCheckoutSha: fixtureSha,
+            testedCheckoutTreeSha: fixtureTree,
+            baseSha: "fedcba9876543210fedcba9876543210fedcba98",
+            githubEventName: "local",
+            githubRunId: "local",
+            githubRunAttempt: "0",
+            githubJobId: "local",
+          },
+          toolchain: { nodeVersion: process.version, npmVersion: "10.9.8" },
+          checkpoint: { command: DEFAULT_EVIDENCE_COMMAND, processExitCode: 1 },
+          project: {
+            command: defaultProjectTapCommand(),
+            processExitCode: 0,
+            preCheck: { command: DEFAULT_PRECHECK_COMMAND, processExitCode: 0 },
+          },
+          fileHashes: collectFileHashes(),
+        },
       });
     } catch (error) {
       if (error instanceof EvidenceError) failedCode = error.code;
@@ -1020,10 +1059,10 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     assert.doesNotMatch(HERE, /LIVE_CONFIRM=YES|API_SECRET|PRIVATE_KEY/);
   });
 
-  it("E-28 all prior tests remain green", () => {
+  it("E-28 prior-suite registration and source-integrity check", () => {
     const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     const testScript = String(pkg.scripts.test);
-    for (const file of [
+    const registered = [
       "test/grid.test.ts",
       "test/experiment-v02-config.test.ts",
       "test/experiment-v02-reduction.test.ts",
@@ -1032,17 +1071,32 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
       "test/experiment-v02-planner-dedup-corrective-1.test.ts",
       "test/experiment-v02-checkpoint-e.test.ts",
       "test/experiment-v02-checkpoint-e-evidence.test.ts",
-    ]) {
+    ];
+    for (const file of registered) {
       assert.ok(testScript.includes(file), file);
     }
-    const execution = fs.readFileSync(new URL("./experiment-v02-execution.test.ts", import.meta.url), "utf8");
+    const sources = [
+      fs.readFileSync(new URL("./experiment-v02-execution.test.ts", import.meta.url), "utf8"),
+      fs.readFileSync(new URL("./experiment-v02-planner-dedup.test.ts", import.meta.url), "utf8"),
+      fs.readFileSync(new URL("./experiment-v02-planner-dedup-corrective-1.test.ts", import.meta.url), "utf8"),
+      fs.readFileSync(new URL("./experiment-v02-checkpoint-e.test.ts", import.meta.url), "utf8"),
+      fs.readFileSync(new URL("./experiment-v02-checkpoint-e-evidence.test.ts", import.meta.url), "utf8"),
+    ];
+    const joined = sources.join("\n");
+    assert.doesNotMatch(joined, /\bit\.skip\s*\(/);
+    assert.doesNotMatch(joined, /\bit\.todo\s*\(/);
+    assert.doesNotMatch(joined, /\bdescribe\.skip\s*\(/);
+    const execution = sources[0]!;
     for (const name of ["C-C18", "C-C19", "C-C20", "C-C21"]) {
       assert.match(execution, new RegExp(`it\\("${name} `));
-      assert.doesNotMatch(execution, new RegExp(`it\\("${name} .*\\n[\\s\\S]*?it\\.skip`));
     }
-    const prior = fs.readFileSync(new URL("./experiment-v02-planner-dedup.test.ts", import.meta.url), "utf8");
+    const prior = sources[1]!;
     for (let i = 1; i <= 21; i++) {
       assert.match(prior, new RegExp(`it\\("D-${String(i).padStart(2, "0")} `));
+    }
+    const corrective = sources[2]!;
+    for (let i = 1; i <= 12; i++) {
+      assert.match(corrective, new RegExp(`it\\("D-C1-${String(i).padStart(2, "0")} `));
     }
   });
 

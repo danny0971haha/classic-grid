@@ -11,21 +11,38 @@ permissions:
 jobs:
   compiler-and-tests:
     runs-on: ubuntu-latest
+    env:
+      CHECKPOINT_E_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CHECKPOINT_E_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch pull-request head for identity
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin ${{ github.event.pull_request.head.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
           cache: npm
       - name: Pin npm
         run: npm install -g npm@10.9.8
-      - name: Record toolchain
+      - name: Record toolchain and identity
         run: |
           node --version
           npm --version
           test "$(node --version)" = "v22.23.2"
           test "$(npm --version)" = "10.9.8"
+          echo "event=${GITHUB_EVENT_NAME}"
+          echo "github_sha=${GITHUB_SHA}"
+          echo "head=$(git rev-parse HEAD)"
+          echo "tree=$(git rev-parse 'HEAD^{tree}')"
+          echo "source_head=${CHECKPOINT_E_SOURCE_HEAD_SHA}"
+          echo "base=${CHECKPOINT_E_BASE_SHA}"
       - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:checkpoint-e
+      - run: npm run test:checkpoint-e-corrective
       - run: npm run check
       - name: Generate Checkpoint E evidence
         run: npm run evidence:checkpoint-e
@@ -40,3 +57,5 @@ jobs:
       - name: Dependency audit inventory
         continue-on-error: true
         run: npm audit --json
+      - name: Whitespace check
+        run: git diff --check

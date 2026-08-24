@@ -1,21 +1,22 @@
 # Classic Grid v0.2 — Checkpoint E
 
-**Status:** CHECKPOINT_E_REJECTED / CORRECTIVE_1_REVIEW_CANDIDATE
-**Date:** 2026-08-24  
+**Status:** CHECKPOINT_E_REJECTED / CORRECTIVE_1_REJECTED / CORRECTIVE_2_REVIEW_CANDIDATE
+**Date:** 2026-08-25
 **Repository:** `danny0971haha/classic-grid`  
 **Branch:** `experiment/classic-v0.2-100u-safety`  
 **Draft PR:** `#3`  
-**Current task:** `CHECKPOINT_E_CORRECTIVE_1`
+**Current task:** `CHECKPOINT_E_CORRECTIVE_2`
 
 This document is engineering evidence only. It does **not** declare Checkpoint E PASS, engineering-ready, live-ready, or deploy-ready.
 
 ```text
 CHECKPOINT=E
-REQUESTED_GATE=CHECKPOINT_E_CORRECTIVE_1_REVIEW
+REQUESTED_GATE=CHECKPOINT_E_CORRECTIVE_2_REVIEW
 CHECKPOINT_C=PASS
 CHECKPOINT_D_CORRECTIVE_1=PASS
 CHECKPOINT_E=REJECT
-CHECKPOINT_E_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_E_CORRECTIVE_1=REJECT
+CHECKPOINT_E_CORRECTIVE_2=REVIEW_CANDIDATE
 CHECKPOINT_E_SELF_DECLARED_PASS=NO
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
@@ -26,7 +27,7 @@ LIVE_EXCHANGE_WRITE=NO
 REAL_FUND_TESTING=NO
 ```
 
-Independent review rejected the original Checkpoint E campaign for vacuous E-09 proof and synthesized E-26 PASS rows. See [`classic-v0.2-checkpoint-e-corrective-1.md`](./classic-v0.2-checkpoint-e-corrective-1.md). The checked-in `artifacts/historical/classic-v0.2-checkpoint-e-results.non-authoritative.json` is historical only. CI-generated TAP evidence is authoritative.
+Independent review rejected the original Checkpoint E campaign for vacuous E-09 proof and synthesized E-26 PASS rows, then rejected Corrective 1 for treating the 30-case Checkpoint E TAP as `fullSuite`. See [`classic-v0.2-checkpoint-e-corrective-1.md`](./classic-v0.2-checkpoint-e-corrective-1.md) and [`classic-v0.2-checkpoint-e-corrective-2.md`](./classic-v0.2-checkpoint-e-corrective-2.md). The checked-in `artifacts/historical/classic-v0.2-checkpoint-e-results.non-authoritative.json` is historical only. CI-generated schema v3 evidence is authoritative.
 
 ## Binding
 
@@ -100,7 +101,7 @@ Unchanged on purpose: `src/venues/extendedAccountStream.ts`, Checkpoint C cursor
 | E-25 | fatal-runtime | PASS | unhandled rejection exits non-zero; leftover OPEN session → reconciliation |
 | E-26 | evidence | PASS | JSON schema for 30 cases |
 | E-27 | telemetry | PASS | secret-like fields redacted / absent |
-| E-28 | evidence | PASS | prior D/C/C-C18..C-C21 IDs remain; no skip |
+| E-28 | evidence | PASS | prior-suite registration and source-integrity only; not a full-suite-green claim |
 | E-29 | configuration | PASS | dependency versions unchanged |
 | E-30 | configuration | PASS | v0.2 live remains forbidden |
 

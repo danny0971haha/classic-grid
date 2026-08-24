@@ -1,21 +1,22 @@
 # Classic Grid v0.2 — Checkpoint E Corrective 1
 
-**Status:** CHECKPOINT_E_CORRECTIVE_1_REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Status:** CHECKPOINT_E_CORRECTIVE_1_REJECTED / SUPERSEDED BY CORRECTIVE 2
 **Date:** 2026-08-24
 **Repository:** `danny0971haha/classic-grid`
 **Branch:** `experiment/classic-v0.2-100u-safety`
 **Draft PR:** `#3`
-**Current task:** `CHECKPOINT_E_CORRECTIVE_1`
+**Current task:** `CHECKPOINT_E_CORRECTIVE_2`
 
-This document does **not** declare Checkpoint E PASS. CI success is not a gate verdict. The implementation agent must not self-declare PASS.
+This document does **not** declare Checkpoint E PASS. Independent review rejected Corrective 1 (`55c75e6`) for evidence-schema integrity: `fullSuite` reused the 30-case Checkpoint E TAP. See [`classic-v0.2-checkpoint-e-corrective-2.md`](./classic-v0.2-checkpoint-e-corrective-2.md).
 
 ```text
 CHECKPOINT=E_CORRECTIVE_1
-REQUESTED_GATE=CHECKPOINT_E_CORRECTIVE_1_REVIEW
+REQUESTED_GATE=CHECKPOINT_E_CORRECTIVE_2_REVIEW
 CHECKPOINT_C=PASS
 CHECKPOINT_D_CORRECTIVE_1=PASS
 CHECKPOINT_E=REJECT
-CHECKPOINT_E_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_E_CORRECTIVE_1=REJECT
+CHECKPOINT_E_CORRECTIVE_2=REVIEW_CANDIDATE
 CHECKPOINT_E_SELF_DECLARED_PASS=NO
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
@@ -184,7 +185,8 @@ The independent reviewer owns `PASS`, `REJECT`, or `BLOCKED`.
 ```text
 CHECKPOINT_E_SELF_DECLARED_PASS=NO
 CHECKPOINT_E=REJECT
-CHECKPOINT_E_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_E_CORRECTIVE_1=REJECT
+CHECKPOINT_E_CORRECTIVE_2=REVIEW_CANDIDATE
 LIVE_EXCHANGE_WRITE=NO
 REAL_FUND_TESTING=NO
 MERGE=NO

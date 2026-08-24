@@ -4,13 +4,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-export const EVIDENCE_SCHEMA_VERSION = "classic-v0.2-checkpoint-e/2";
+export const EVIDENCE_SCHEMA_VERSION = "classic-v0.2-checkpoint-e/3";
 export const REPOSITORY = "danny0971haha/classic-grid";
 export const BRANCH = "experiment/classic-v0.2-100u-safety";
+export const PR_BASE_REF = "origin/experiment/classic-v0.1";
 export const CHECKPOINT_E_TEST_FILE = "test/experiment-v02-checkpoint-e.test.ts";
 export const DEFAULT_EVIDENCE_COMMAND =
   `node --import tsx --test --test-reporter=tap ${CHECKPOINT_E_TEST_FILE}`;
+export const DEFAULT_PRECHECK_COMMAND = "node --import tsx test/grid.test.ts";
 export const DEFAULT_EVIDENCE_PATH = "artifacts/classic-v0.2-checkpoint-e-results.json";
+export const MIN_PROJECT_SUITE_TOTAL = 351;
+export const REQUIRED_CI_NODE = "v22.23.2";
+export const REQUIRED_CI_NPM = "10.9.8";
+export const NULL_SHA = "0".repeat(40);
 
 export const CHECKPOINT_E_CASE_IDS = [
   "E-01", "E-02", "E-03", "E-04", "E-05", "E-06", "E-07", "E-08", "E-09", "E-10",
@@ -31,12 +37,24 @@ export const REQUIRED_HASH_PATHS = [
 
 export const OPTIONAL_HASH_PATHS = [
   "docs/classic-v0.2-checkpoint-e-corrective-1.md",
+  "docs/classic-v0.2-checkpoint-e-corrective-2.md",
+] as const;
+
+export const LEGACY_SCHEMA_KEYS = [
+  "eCases",
+  "fullSuite",
+  "command",
+  "processExitCode",
+  "testedCommitSha",
+  "testedTreeSha",
 ] as const;
 
 export type CaseOutcome = "PASS" | "FAIL" | "SKIP" | "CANCELLED" | "TODO";
+export type GithubEventName = "local" | "push" | "pull_request";
 
 export type EvidenceErrorCode =
   | "PROCESS_NONZERO_EXIT"
+  | "PRECHECK_NONZERO_EXIT"
   | "MISSING_CASE"
   | "DUPLICATE_CASE"
   | "UNEXPECTED_CASE"
@@ -44,10 +62,19 @@ export type EvidenceErrorCode =
   | "CASE_SKIPPED"
   | "CASE_CANCELLED"
   | "CASE_TODO"
+  | "SUITE_FAILED"
+  | "SUITE_SKIPPED"
+  | "SUITE_CANCELLED"
+  | "SUITE_TODO"
   | "TOTALS_MISMATCH"
   | "TAP_SUMMARY_MISSING"
-  | "STALE_TESTED_SHA"
-  | "STALE_TESTED_TREE"
+  | "STALE_SOURCE_HEAD_SHA"
+  | "STALE_SOURCE_HEAD_TREE"
+  | "STALE_TESTED_CHECKOUT_SHA"
+  | "STALE_TESTED_CHECKOUT_TREE"
+  | "IDENTITY_COLLISION"
+  | "PROJECT_SUITE_IS_CHECKPOINT"
+  | "PROJECT_SUITE_TOO_SMALL"
   | "MALFORMED_TOTALS"
   | "SCHEMA_INVALID"
   | "FILE_HASH_MISMATCH"
@@ -104,34 +131,59 @@ export type CountBlock = {
   todo: number;
 };
 
+export type SuiteExecution = {
+  command: string;
+  processExitCode: number;
+};
+
+export type CheckpointSuiteBlock = SuiteExecution & CountBlock & {
+  testCases: EvidenceCaseRow[];
+};
+
+export type ProjectSuiteBlock = SuiteExecution & CountBlock & {
+  preCheck: SuiteExecution;
+};
+
+export type EvidenceIdentity = {
+  sourceHeadSha: string;
+  sourceHeadTreeSha: string;
+  testedCheckoutSha: string;
+  testedCheckoutTreeSha: string;
+  baseSha: string;
+  githubEventName: GithubEventName;
+  githubRunId: string;
+  githubRunAttempt: string;
+  githubJobId: string;
+};
+
 export type CheckpointEEvidence = {
   schemaVersion: typeof EVIDENCE_SCHEMA_VERSION;
   repository: typeof REPOSITORY;
   branch: string;
-  testedCommitSha: string;
-  testedTreeSha: string;
-  nodeVersion: string;
-  npmVersion: string;
-  command: string;
-  processExitCode: number;
-  eCases: CountBlock;
-  fullSuite: CountBlock;
-  testCases: EvidenceCaseRow[];
-  liveExchangeWrite: false;
-  productionCredentialUsed: false;
+  identity: EvidenceIdentity;
+  toolchain: {
+    nodeVersion: string;
+    npmVersion: string;
+  };
+  safety: {
+    liveExchangeWrite: false;
+    productionCredentialUsed: false;
+  };
+  checkpointSuite: CheckpointSuiteBlock;
+  projectSuite: ProjectSuiteBlock;
   generatedAt: string;
   fileHashes: Record<string, string>;
 };
 
 export type GenerateMeta = {
-  repository?: string;
   branch: string;
-  testedCommitSha: string;
-  testedTreeSha: string;
-  nodeVersion: string;
-  npmVersion: string;
-  command: string;
-  processExitCode: number;
+  identity: EvidenceIdentity;
+  toolchain: {
+    nodeVersion: string;
+    npmVersion: string;
+  };
+  checkpoint: SuiteExecution;
+  project: SuiteExecution & { preCheck: SuiteExecution };
   generatedAt?: string;
   fileHashes: Record<string, string>;
 };
@@ -140,6 +192,7 @@ const CASE_LINE = /^(\s*)(ok|not ok)\s+\d+\s+-\s+(E-\d{2})\b(.*)$/;
 const TOTAL_LINE = /^#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/;
 const HERE = fileURLToPath(import.meta.url);
 export const REPO_ROOT = path.resolve(path.dirname(HERE), "..");
+const SPAWN_OPTS = { encoding: "utf8" as const, maxBuffer: 20 * 1024 * 1024 };
 
 export function categoryFor(caseId: string): string {
   if (["E-01", "E-02", "E-29", "E-30"].includes(caseId)) return "configuration";
@@ -242,17 +295,69 @@ export function renderCheckpointETap(p: {
   return `${lines.join("\n")}\n`;
 }
 
+export function renderProjectTap(p: Partial<TapTotals> & { tests: number; pass: number }): string {
+  const totals: TapTotals = {
+    tests: p.tests,
+    pass: p.pass,
+    fail: p.fail ?? 0,
+    skipped: p.skipped ?? 0,
+    cancelled: p.cancelled ?? 0,
+    todo: p.todo ?? 0,
+  };
+  return [
+    "TAP version 13",
+    "# Subtest: project suite fixture",
+    "ok 1 - project suite fixture",
+    "1..1",
+    `# tests ${totals.tests}`,
+    "# suites 1",
+    `# pass ${totals.pass}`,
+    `# fail ${totals.fail}`,
+    `# cancelled ${totals.cancelled}`,
+    `# skipped ${totals.skipped}`,
+    `# todo ${totals.todo}`,
+    "# duration_ms 1",
+    "",
+  ].join("\n");
+}
+
+function readTapTotals(tap: string): Partial<TapTotals> {
+  const totals: Partial<TapTotals> = {};
+  for (const line of String(tap || "").split(/\r?\n/)) {
+    const total = TOTAL_LINE.exec(line);
+    if (!total) continue;
+    const key = total[1] === "skipped" ? "skipped" : total[1] as keyof TapTotals;
+    (totals as Record<string, number>)[key] = Number(total[2]);
+  }
+  return totals;
+}
+
+export function parseTapSummary(tap: string): TapTotals {
+  const totals = readTapTotals(tap);
+  if (
+    totals.tests == null
+    || totals.pass == null
+    || totals.fail == null
+    || totals.skipped == null
+    || totals.cancelled == null
+    || totals.todo == null
+  ) {
+    throw new EvidenceError("TAP_SUMMARY_MISSING", "TAP summary counts are incomplete");
+  }
+  return {
+    tests: totals.tests,
+    pass: totals.pass,
+    fail: totals.fail,
+    skipped: totals.skipped,
+    cancelled: totals.cancelled,
+    todo: totals.todo,
+  };
+}
+
 export function parseCheckpointETap(tap: string): ParsedCheckpointETap {
   const cases: ParsedECase[] = [];
   const lines = String(tap || "").split(/\r?\n/);
-  const totals: Partial<TapTotals> = {};
   for (let i = 0; i < lines.length; i++) {
-    const total = TOTAL_LINE.exec(lines[i] ?? "");
-    if (total) {
-      const key = total[1] === "skipped" ? "skipped" : total[1] as keyof TapTotals;
-      (totals as Record<string, number>)[key] = Number(total[2]);
-      continue;
-    }
     const match = CASE_LINE.exec(lines[i] ?? "");
     if (!match) continue;
     const ok = match[2] === "ok";
@@ -284,27 +389,49 @@ export function parseCheckpointETap(tap: string): ParsedCheckpointETap {
       outcome: outcomeOf({ ok, skip, todo, cancelled }),
     });
   }
-  if (
-    totals.tests == null
-    || totals.pass == null
-    || totals.fail == null
-    || totals.skipped == null
-    || totals.cancelled == null
-    || totals.todo == null
-  ) {
-    throw new EvidenceError("TAP_SUMMARY_MISSING", "TAP summary counts are incomplete");
+  return { cases, totals: parseTapSummary(tap) };
+}
+
+export function parseNpmTestScript(script: string): { preCheckCommand: string | null; tapFiles: string[] } {
+  const parts = script.split("&&").map((part) => part.trim()).filter(Boolean);
+  let preCheckCommand: string | null = null;
+  let tapPart: string | null = null;
+  for (const part of parts) {
+    if (/(^|\s)--test(\s|$)/.test(part)) tapPart = part;
+    else preCheckCommand = preCheckCommand ? `${preCheckCommand} && ${part}` : part;
   }
-  return {
-    cases,
-    totals: {
-      tests: totals.tests,
-      pass: totals.pass,
-      fail: totals.fail,
-      skipped: totals.skipped,
-      cancelled: totals.cancelled,
-      todo: totals.todo,
-    },
+  if (!tapPart) throw new EvidenceError("SCHEMA_INVALID", "npm test script has no node:test invocation");
+  const tokens = tapPart.split(/\s+/);
+  const testIdx = tokens.indexOf("--test");
+  if (testIdx < 0) throw new EvidenceError("SCHEMA_INVALID", "npm test --test flag missing");
+  const tapFiles = tokens.slice(testIdx + 1).filter((token) => token.length > 0 && !token.startsWith("-"));
+  if (tapFiles.length === 0) throw new EvidenceError("SCHEMA_INVALID", "npm test file list is empty");
+  return { preCheckCommand, tapFiles };
+}
+
+export function readNpmTestPlan(root = REPO_ROOT): {
+  npmTestScript: string;
+  preCheckCommand: string;
+  tapFiles: string[];
+} {
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as {
+    scripts?: { test?: string };
   };
+  const npmTestScript = String(pkg.scripts?.test ?? "");
+  const parsed = parseNpmTestScript(npmTestScript);
+  return {
+    npmTestScript,
+    preCheckCommand: parsed.preCheckCommand ?? DEFAULT_PRECHECK_COMMAND,
+    tapFiles: parsed.tapFiles,
+  };
+}
+
+export function projectTapCommand(tapFiles: string[]): string {
+  return `node --import tsx --test --test-reporter=tap ${tapFiles.join(" ")}`;
+}
+
+export function defaultProjectTapCommand(root = REPO_ROOT): string {
+  return projectTapCommand(readNpmTestPlan(root).tapFiles);
 }
 
 export function assertCaseSet(cases: ParsedECase[]): void {
@@ -346,6 +473,21 @@ export function countBlockFromOutcomes(outcomes: CaseOutcome[]): CountBlock {
   return block;
 }
 
+export function countBlockFromTap(totals: TapTotals): CountBlock {
+  const block: CountBlock = {
+    total: totals.tests,
+    pass: totals.pass,
+    fail: totals.fail,
+    skip: totals.skipped,
+    cancelled: totals.cancelled,
+    todo: totals.todo,
+  };
+  if (block.pass + block.fail + block.skip + block.cancelled + block.todo !== block.total) {
+    throw new EvidenceError("MALFORMED_TOTALS", "TAP summary counts do not sum to tests");
+  }
+  return block;
+}
+
 export function assertTapTotals(parsed: ParsedCheckpointETap): void {
   const eBlock = countBlockFromOutcomes(parsed.cases.map((row) => row.outcome));
   if (eBlock.total !== parsed.cases.length) {
@@ -369,55 +511,92 @@ export function assertTapTotals(parsed: ParsedCheckpointETap): void {
   }
 }
 
-export function generateEvidenceFromRun(tap: string, meta: GenerateMeta): CheckpointEEvidence {
-  const parsed = parseCheckpointETap(tap);
-  assertCaseSet(parsed.cases);
-  assertCaseOutcomes(parsed.cases);
-  assertTapTotals(parsed);
-  if (meta.processExitCode !== 0) {
-    throw new EvidenceError("PROCESS_NONZERO_EXIT", `exit ${meta.processExitCode}`);
+function projectTapLooksLikeCheckpoint(tap: string): boolean {
+  try {
+    const parsed = parseCheckpointETap(tap);
+    return parsed.totals.tests === CHECKPOINT_E_CASE_IDS.length
+      && parsed.cases.length === CHECKPOINT_E_CASE_IDS.length;
+  } catch {
+    try {
+      return parseTapSummary(tap).tests === CHECKPOINT_E_CASE_IDS.length;
+    } catch {
+      return false;
+    }
   }
-  const testCases: EvidenceCaseRow[] = parsed.cases.map((row) => {
-    const caseId = row.caseId as CheckpointECaseId;
-    return {
-      caseId,
-      category: categoryFor(caseId),
-      result: row.outcome,
-      title: row.title,
-      liveExchangeWrite: false,
-      productionCredentialUsed: false,
-    };
-  });
-  const eCases = countBlockFromOutcomes(testCases.map((row) => row.result));
-  return {
-    schemaVersion: EVIDENCE_SCHEMA_VERSION,
-    repository: REPOSITORY,
-    branch: meta.branch,
-    testedCommitSha: meta.testedCommitSha,
-    testedTreeSha: meta.testedTreeSha,
-    nodeVersion: meta.nodeVersion,
-    npmVersion: meta.npmVersion,
-    command: meta.command,
-    processExitCode: meta.processExitCode,
-    eCases,
-    fullSuite: {
-      total: parsed.totals.tests,
-      pass: parsed.totals.pass,
-      fail: parsed.totals.fail,
-      skip: parsed.totals.skipped,
-      cancelled: parsed.totals.cancelled,
-      todo: parsed.totals.todo,
-    },
-    testCases,
-    liveExchangeWrite: false,
-    productionCredentialUsed: false,
-    generatedAt: meta.generatedAt ?? new Date().toISOString(),
-    fileHashes: meta.fileHashes,
-  };
 }
 
-function sha40(value: unknown): value is string {
+function assertProjectCommand(command: string, root = REPO_ROOT): void {
+  if (command === DEFAULT_EVIDENCE_COMMAND) {
+    throw new EvidenceError("PROJECT_SUITE_IS_CHECKPOINT", "projectSuite.command is the Checkpoint E command");
+  }
+  const { tapFiles } = readNpmTestPlan(root);
+  const missing = tapFiles.filter((file) => !command.includes(file));
+  if (missing.length > 0) {
+    throw new EvidenceError("PROJECT_SUITE_IS_CHECKPOINT", `projectSuite.command missing ${missing.join(",")}`);
+  }
+  if (!command.includes("--test-reporter=tap")) {
+    throw new EvidenceError("SCHEMA_INVALID", "projectSuite.command must use the TAP reporter");
+  }
+}
+
+function assertPreCheckCommand(command: string, root = REPO_ROOT): void {
+  const { preCheckCommand } = readNpmTestPlan(root);
+  if (command !== preCheckCommand) {
+    throw new EvidenceError("SCHEMA_INVALID", `preCheck.command ${command}`);
+  }
+}
+
+function assertGreenCounts(block: CountBlock, processExitCode: number, label: string): void {
+  if (processExitCode !== 0) {
+    throw new EvidenceError("PROCESS_NONZERO_EXIT", `${label} exit ${processExitCode}`);
+  }
+  if (block.skip !== 0) throw new EvidenceError("SUITE_SKIPPED", `${label} skip=${block.skip}`);
+  if (block.todo !== 0) throw new EvidenceError("SUITE_TODO", `${label} todo=${block.todo}`);
+  if (block.cancelled !== 0) throw new EvidenceError("SUITE_CANCELLED", `${label} cancelled=${block.cancelled}`);
+  if (block.fail !== 0) throw new EvidenceError("SUITE_FAILED", `${label} fail=${block.fail}`);
+  if (block.pass !== block.total) {
+    throw new EvidenceError("TOTALS_MISMATCH", `${label} pass ${block.pass} !== total ${block.total}`);
+  }
+}
+
+export function sha40(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{40}$/.test(value);
+}
+
+function isGithubEventName(value: unknown): value is GithubEventName {
+  return value === "local" || value === "push" || value === "pull_request";
+}
+
+export function assertIdentityShape(identity: EvidenceIdentity): void {
+  if (!isGithubEventName(identity.githubEventName)) {
+    throw new EvidenceError("SCHEMA_INVALID", `githubEventName ${String(identity.githubEventName)}`);
+  }
+  for (const [key, value] of Object.entries({
+    sourceHeadSha: identity.sourceHeadSha,
+    sourceHeadTreeSha: identity.sourceHeadTreeSha,
+    testedCheckoutSha: identity.testedCheckoutSha,
+    testedCheckoutTreeSha: identity.testedCheckoutTreeSha,
+    baseSha: identity.baseSha,
+  })) {
+    if (!sha40(value)) throw new EvidenceError("SCHEMA_INVALID", key);
+  }
+  for (const [key, value] of Object.entries({
+    githubRunId: identity.githubRunId,
+    githubRunAttempt: identity.githubRunAttempt,
+    githubJobId: identity.githubJobId,
+  })) {
+    if (typeof value !== "string" || value.length === 0) {
+      throw new EvidenceError("SCHEMA_INVALID", key);
+    }
+  }
+  if (identity.githubEventName === "pull_request") {
+    if (identity.sourceHeadSha === identity.testedCheckoutSha) {
+      throw new EvidenceError(
+        "IDENTITY_COLLISION",
+        "pull_request sourceHeadSha must not equal testedCheckoutSha (PR head vs merge)",
+      );
+    }
+  }
 }
 
 function countBlockValid(value: unknown): value is CountBlock {
@@ -430,81 +609,151 @@ function countBlockValid(value: unknown): value is CountBlock {
   return row.pass + row.fail + row.skip + row.cancelled + row.todo === row.total;
 }
 
-export function verifyEvidence(
-  doc: unknown,
-  expected: {
-    testedCommitSha: string;
-    testedTreeSha: string;
-    fileHashes: Record<string, string>;
-    branch?: string;
-  },
-): CheckpointEEvidence {
-  if (!doc || typeof doc !== "object") throw new EvidenceError("SCHEMA_INVALID", "document is not an object");
-  const evidence = doc as CheckpointEEvidence;
-  if (evidence.schemaVersion !== EVIDENCE_SCHEMA_VERSION) {
-    throw new EvidenceError("SCHEMA_INVALID", `schemaVersion ${String(evidence.schemaVersion)}`);
+function deriveCheckpointCases(parsed: ParsedCheckpointETap): EvidenceCaseRow[] {
+  return parsed.cases.map((row) => {
+    const caseId = row.caseId as CheckpointECaseId;
+    return {
+      caseId,
+      category: categoryFor(caseId),
+      result: row.outcome,
+      title: row.title,
+      liveExchangeWrite: false as const,
+      productionCredentialUsed: false as const,
+    };
+  });
+}
+
+export function generateEvidenceFromRun(input: {
+  checkpointTap: string;
+  projectTap: string;
+  meta: GenerateMeta;
+}): CheckpointEEvidence {
+  const { checkpointTap, projectTap, meta } = input;
+  assertIdentityShape(meta.identity);
+  if (checkpointTap === projectTap) {
+    throw new EvidenceError("PROJECT_SUITE_IS_CHECKPOINT", "project TAP is a copy of checkpoint TAP");
   }
-  if (evidence.repository !== REPOSITORY) throw new EvidenceError("SCHEMA_INVALID", "repository");
-  if (typeof evidence.branch !== "string" || evidence.branch.length === 0) {
-    throw new EvidenceError("SCHEMA_INVALID", "branch");
+  const parsed = parseCheckpointETap(checkpointTap);
+  assertCaseSet(parsed.cases);
+  assertCaseOutcomes(parsed.cases);
+  assertTapTotals(parsed);
+  if (meta.checkpoint.processExitCode !== 0) {
+    throw new EvidenceError("PROCESS_NONZERO_EXIT", `checkpointSuite exit ${meta.checkpoint.processExitCode}`);
   }
-  if (expected.branch && evidence.branch !== expected.branch) {
-    throw new EvidenceError("SCHEMA_INVALID", `branch ${evidence.branch}`);
+  if (meta.checkpoint.command !== DEFAULT_EVIDENCE_COMMAND) {
+    throw new EvidenceError("SCHEMA_INVALID", `checkpointSuite.command ${meta.checkpoint.command}`);
   }
-  if (!sha40(evidence.testedCommitSha)) throw new EvidenceError("SCHEMA_INVALID", "testedCommitSha");
-  if (!sha40(evidence.testedTreeSha)) throw new EvidenceError("SCHEMA_INVALID", "testedTreeSha");
-  if (evidence.testedCommitSha !== expected.testedCommitSha) {
-    throw new EvidenceError("STALE_TESTED_SHA", evidence.testedCommitSha);
+  if (projectTapLooksLikeCheckpoint(projectTap)) {
+    throw new EvidenceError("PROJECT_SUITE_IS_CHECKPOINT", "project TAP is the targeted 30-case Checkpoint E suite");
   }
-  if (evidence.testedTreeSha !== expected.testedTreeSha) {
-    throw new EvidenceError("STALE_TESTED_TREE", evidence.testedTreeSha);
+  const projectTotals = parseTapSummary(projectTap);
+  const projectCounts = countBlockFromTap(projectTotals);
+  if (projectCounts.total < MIN_PROJECT_SUITE_TOTAL) {
+    throw new EvidenceError("PROJECT_SUITE_TOO_SMALL", `projectSuite.total=${projectCounts.total}`);
   }
-  if (typeof evidence.nodeVersion !== "string" || !evidence.nodeVersion.startsWith("v")) {
-    throw new EvidenceError("SCHEMA_INVALID", "nodeVersion");
+  if (meta.project.preCheck.processExitCode !== 0) {
+    throw new EvidenceError("PRECHECK_NONZERO_EXIT", `exit ${meta.project.preCheck.processExitCode}`);
   }
-  if (typeof evidence.npmVersion !== "string" || evidence.npmVersion.length === 0) {
-    throw new EvidenceError("SCHEMA_INVALID", "npmVersion");
+  assertPreCheckCommand(meta.project.preCheck.command);
+  assertProjectCommand(meta.project.command);
+  assertGreenCounts(projectCounts, meta.project.processExitCode, "projectSuite");
+  const testCases = deriveCheckpointCases(parsed);
+  const checkpointCounts = countBlockFromOutcomes(testCases.map((row) => row.result));
+  assertGreenCounts(checkpointCounts, meta.checkpoint.processExitCode, "checkpointSuite");
+  if (meta.identity.githubEventName !== "local") {
+    if (meta.toolchain.nodeVersion !== REQUIRED_CI_NODE || meta.toolchain.npmVersion !== REQUIRED_CI_NPM) {
+      throw new EvidenceError(
+        "SCHEMA_INVALID",
+        `toolchain ${meta.toolchain.nodeVersion} / ${meta.toolchain.npmVersion}`,
+      );
+    }
   }
-  if (evidence.command !== DEFAULT_EVIDENCE_COMMAND) {
-    throw new EvidenceError("SCHEMA_INVALID", `command ${String(evidence.command)}`);
+  return {
+    schemaVersion: EVIDENCE_SCHEMA_VERSION,
+    repository: REPOSITORY,
+    branch: meta.branch,
+    identity: meta.identity,
+    toolchain: {
+      nodeVersion: meta.toolchain.nodeVersion,
+      npmVersion: meta.toolchain.npmVersion,
+    },
+    safety: {
+      liveExchangeWrite: false,
+      productionCredentialUsed: false,
+    },
+    checkpointSuite: {
+      command: meta.checkpoint.command,
+      processExitCode: meta.checkpoint.processExitCode,
+      ...checkpointCounts,
+      testCases,
+    },
+    projectSuite: {
+      command: meta.project.command,
+      processExitCode: meta.project.processExitCode,
+      ...projectCounts,
+      preCheck: {
+        command: meta.project.preCheck.command,
+        processExitCode: meta.project.preCheck.processExitCode,
+      },
+    },
+    generatedAt: meta.generatedAt ?? new Date().toISOString(),
+    fileHashes: meta.fileHashes,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== "object") throw new EvidenceError("SCHEMA_INVALID", "document is not an object");
+  return value as Record<string, unknown>;
+}
+
+function readSuiteExecution(value: unknown, label: string): SuiteExecution {
+  const row = asRecord(value);
+  if (typeof row.command !== "string" || row.command.length === 0) {
+    throw new EvidenceError("SCHEMA_INVALID", `${label}.command`);
   }
-  if (evidence.processExitCode !== 0) {
-    throw new EvidenceError("PROCESS_NONZERO_EXIT", String(evidence.processExitCode));
+  if (typeof row.processExitCode !== "number" || !Number.isInteger(row.processExitCode)) {
+    throw new EvidenceError("SCHEMA_INVALID", `${label}.processExitCode`);
   }
-  if (evidence.liveExchangeWrite !== false || evidence.productionCredentialUsed !== false) {
-    throw new EvidenceError("LIVE_WRITE_CLAIM", "live write or credential flag is not false");
+  return { command: row.command, processExitCode: row.processExitCode };
+}
+
+function readCountBlock(value: unknown, label: string): CountBlock {
+  if (!countBlockValid(value)) throw new EvidenceError("MALFORMED_TOTALS", `${label} counts are malformed`);
+  return value;
+}
+
+function verifyCheckpointSuite(suite: CheckpointSuiteBlock): void {
+  if (suite.command !== DEFAULT_EVIDENCE_COMMAND) {
+    throw new EvidenceError("SCHEMA_INVALID", `checkpointSuite.command ${suite.command}`);
   }
-  if (!Array.isArray(evidence.testCases) || evidence.testCases.length !== CHECKPOINT_E_CASE_IDS.length) {
-    throw new EvidenceError("SCHEMA_INVALID", "testCases length");
+  assertGreenCounts(suite, suite.processExitCode, "checkpointSuite");
+  if (suite.total !== CHECKPOINT_E_CASE_IDS.length || suite.pass !== CHECKPOINT_E_CASE_IDS.length) {
+    throw new EvidenceError("TOTALS_MISMATCH", "checkpointSuite totals are not 30/30");
   }
-  if (!countBlockValid(evidence.eCases) || !countBlockValid(evidence.fullSuite)) {
-    throw new EvidenceError("MALFORMED_TOTALS", "eCases or fullSuite counts are malformed");
+  if (!Array.isArray(suite.testCases) || suite.testCases.length !== CHECKPOINT_E_CASE_IDS.length) {
+    throw new EvidenceError("SCHEMA_INVALID", "checkpointSuite.testCases length");
   }
-  if (evidence.eCases.total !== CHECKPOINT_E_CASE_IDS.length || evidence.eCases.pass !== CHECKPOINT_E_CASE_IDS.length) {
-    throw new EvidenceError("TOTALS_MISMATCH", "E-case totals are not 30/30");
-  }
-  if (evidence.fullSuite.total !== evidence.testCases.length || evidence.fullSuite.pass !== evidence.testCases.length) {
-    throw new EvidenceError("TOTALS_MISMATCH", "full-suite totals do not equal the parsed case set");
-  }
+  const fromRows = countBlockFromOutcomes(suite.testCases.map((row) => row.result));
   if (
-    evidence.eCases.fail !== 0
-    || evidence.eCases.skip !== 0
-    || evidence.eCases.cancelled !== 0
-    || evidence.eCases.todo !== 0
-    || evidence.fullSuite.fail !== 0
-    || evidence.fullSuite.skip !== 0
-    || evidence.fullSuite.cancelled !== 0
-    || evidence.fullSuite.todo !== 0
+    fromRows.total !== suite.total
+    || fromRows.pass !== suite.pass
+    || fromRows.fail !== suite.fail
+    || fromRows.skip !== suite.skip
+    || fromRows.cancelled !== suite.cancelled
+    || fromRows.todo !== suite.todo
   ) {
-    throw new EvidenceError("TOTALS_MISMATCH", "fail/skip/cancelled/todo must be 0");
+    throw new EvidenceError("TOTALS_MISMATCH", "checkpointSuite totals do not equal testCase outcomes");
   }
   const seen = new Set<string>();
   for (let i = 0; i < CHECKPOINT_E_CASE_IDS.length; i++) {
-    const row = evidence.testCases[i]!;
+    const row = suite.testCases[i]!;
     const expectedId = CHECKPOINT_E_CASE_IDS[i]!;
     if (row.caseId !== expectedId) throw new EvidenceError("SCHEMA_INVALID", `expected ${expectedId}`);
     if (seen.has(row.caseId)) throw new EvidenceError("DUPLICATE_CASE", row.caseId);
     seen.add(row.caseId);
+    if (row.result === "SKIP") throw new EvidenceError("CASE_SKIPPED", row.caseId);
+    if (row.result === "TODO") throw new EvidenceError("CASE_TODO", row.caseId);
+    if (row.result === "CANCELLED") throw new EvidenceError("CASE_CANCELLED", row.caseId);
     if (row.result !== "PASS") throw new EvidenceError("CASE_FAILED", row.caseId);
     if (row.category !== categoryFor(row.caseId)) throw new EvidenceError("SCHEMA_INVALID", row.caseId);
     if (row.liveExchangeWrite !== false || row.productionCredentialUsed !== false) {
@@ -514,15 +763,130 @@ export function verifyEvidence(
       throw new EvidenceError("SCHEMA_INVALID", `title ${row.caseId}`);
     }
   }
-  if (!evidence.fileHashes || typeof evidence.fileHashes !== "object") {
+}
+
+function verifyProjectSuite(suite: ProjectSuiteBlock, checkpointCommand: string, root = REPO_ROOT): void {
+  if (suite.command === checkpointCommand || suite.command === DEFAULT_EVIDENCE_COMMAND) {
+    throw new EvidenceError("PROJECT_SUITE_IS_CHECKPOINT", "projectSuite.command copies checkpointSuite.command");
+  }
+  assertProjectCommand(suite.command, root);
+  assertPreCheckCommand(suite.preCheck.command, root);
+  if (suite.preCheck.processExitCode !== 0) {
+    throw new EvidenceError("PRECHECK_NONZERO_EXIT", `exit ${suite.preCheck.processExitCode}`);
+  }
+  if (suite.total === CHECKPOINT_E_CASE_IDS.length) {
+    throw new EvidenceError("PROJECT_SUITE_IS_CHECKPOINT", "projectSuite.total is the targeted 30-case suite");
+  }
+  if (suite.total < MIN_PROJECT_SUITE_TOTAL) {
+    throw new EvidenceError("PROJECT_SUITE_TOO_SMALL", `projectSuite.total=${suite.total}`);
+  }
+  assertGreenCounts(suite, suite.processExitCode, "projectSuite");
+}
+
+export function verifyEvidence(
+  doc: unknown,
+  expected: {
+    identity: EvidenceIdentity;
+    fileHashes: Record<string, string>;
+    branch?: string;
+  },
+): CheckpointEEvidence {
+  const raw = asRecord(doc);
+  for (const key of LEGACY_SCHEMA_KEYS) {
+    if (key in raw) throw new EvidenceError("SCHEMA_INVALID", `legacy field ${key}`);
+  }
+  if (raw.schemaVersion !== EVIDENCE_SCHEMA_VERSION) {
+    throw new EvidenceError("SCHEMA_INVALID", `schemaVersion ${String(raw.schemaVersion)}`);
+  }
+  if (raw.repository !== REPOSITORY) throw new EvidenceError("SCHEMA_INVALID", "repository");
+  if (typeof raw.branch !== "string" || raw.branch.length === 0) {
+    throw new EvidenceError("SCHEMA_INVALID", "branch");
+  }
+  if (expected.branch && raw.branch !== expected.branch) {
+    throw new EvidenceError("SCHEMA_INVALID", `branch ${raw.branch}`);
+  }
+  const identity = raw.identity as EvidenceIdentity;
+  if (!identity || typeof identity !== "object") throw new EvidenceError("SCHEMA_INVALID", "identity");
+  assertIdentityShape(identity);
+  if (identity.sourceHeadSha !== expected.identity.sourceHeadSha) {
+    throw new EvidenceError("STALE_SOURCE_HEAD_SHA", identity.sourceHeadSha);
+  }
+  if (identity.sourceHeadTreeSha !== expected.identity.sourceHeadTreeSha) {
+    throw new EvidenceError("STALE_SOURCE_HEAD_TREE", identity.sourceHeadTreeSha);
+  }
+  if (identity.testedCheckoutSha !== expected.identity.testedCheckoutSha) {
+    throw new EvidenceError("STALE_TESTED_CHECKOUT_SHA", identity.testedCheckoutSha);
+  }
+  if (identity.testedCheckoutTreeSha !== expected.identity.testedCheckoutTreeSha) {
+    throw new EvidenceError("STALE_TESTED_CHECKOUT_TREE", identity.testedCheckoutTreeSha);
+  }
+  if (identity.githubEventName !== expected.identity.githubEventName) {
+    throw new EvidenceError("SCHEMA_INVALID", `githubEventName ${identity.githubEventName}`);
+  }
+  const toolchain = asRecord(raw.toolchain);
+  if (typeof toolchain.nodeVersion !== "string" || !toolchain.nodeVersion.startsWith("v")) {
+    throw new EvidenceError("SCHEMA_INVALID", "nodeVersion");
+  }
+  if (typeof toolchain.npmVersion !== "string" || toolchain.npmVersion.length === 0) {
+    throw new EvidenceError("SCHEMA_INVALID", "npmVersion");
+  }
+  if (identity.githubEventName !== "local") {
+    if (toolchain.nodeVersion !== REQUIRED_CI_NODE || toolchain.npmVersion !== REQUIRED_CI_NPM) {
+      throw new EvidenceError("SCHEMA_INVALID", `toolchain ${toolchain.nodeVersion} / ${toolchain.npmVersion}`);
+    }
+  }
+  const safety = asRecord(raw.safety);
+  if (safety.liveExchangeWrite !== false || safety.productionCredentialUsed !== false) {
+    throw new EvidenceError("LIVE_WRITE_CLAIM", "live write or credential flag is not false");
+  }
+  const checkpointRaw = asRecord(raw.checkpointSuite);
+  const projectRaw = asRecord(raw.projectSuite);
+  const checkpointExec = readSuiteExecution(checkpointRaw, "checkpointSuite");
+  const projectExec = readSuiteExecution(projectRaw, "projectSuite");
+  const checkpointCounts = readCountBlock(checkpointRaw, "checkpointSuite");
+  const projectCounts = readCountBlock(projectRaw, "projectSuite");
+  if (!Array.isArray(checkpointRaw.testCases)) {
+    throw new EvidenceError("SCHEMA_INVALID", "checkpointSuite.testCases");
+  }
+  const checkpointSuite: CheckpointSuiteBlock = {
+    ...checkpointExec,
+    ...checkpointCounts,
+    testCases: checkpointRaw.testCases as EvidenceCaseRow[],
+  };
+  const projectSuite: ProjectSuiteBlock = {
+    ...projectExec,
+    ...projectCounts,
+    preCheck: readSuiteExecution(asRecord(projectRaw.preCheck), "projectSuite.preCheck"),
+  };
+  verifyCheckpointSuite(checkpointSuite);
+  verifyProjectSuite(projectSuite, checkpointSuite.command);
+  if (!raw.fileHashes || typeof raw.fileHashes !== "object") {
     throw new EvidenceError("SCHEMA_INVALID", "fileHashes");
   }
+  const fileHashes = raw.fileHashes as Record<string, string>;
   for (const rel of REQUIRED_HASH_PATHS) {
-    if (evidence.fileHashes[rel] !== expected.fileHashes[rel]) {
+    if (fileHashes[rel] !== expected.fileHashes[rel]) {
       throw new EvidenceError("FILE_HASH_MISMATCH", rel);
     }
   }
-  return evidence;
+  return {
+    schemaVersion: EVIDENCE_SCHEMA_VERSION,
+    repository: REPOSITORY,
+    branch: raw.branch,
+    identity,
+    toolchain: {
+      nodeVersion: toolchain.nodeVersion,
+      npmVersion: toolchain.npmVersion,
+    },
+    safety: {
+      liveExchangeWrite: false,
+      productionCredentialUsed: false,
+    },
+    checkpointSuite,
+    projectSuite,
+    generatedAt: typeof raw.generatedAt === "string" ? raw.generatedAt : "",
+    fileHashes,
+  };
 }
 
 export function gitIdentity(root = REPO_ROOT): { commitSha: string; treeSha: string; branch: string } {
@@ -532,8 +896,103 @@ export function gitIdentity(root = REPO_ROOT): { commitSha: string; treeSha: str
   return { commitSha, treeSha, branch };
 }
 
+function gitRevParse(root: string, rev: string, code: EvidenceErrorCode): string {
+  try {
+    return execFileSync("git", ["rev-parse", "--verify", rev], { cwd: root, encoding: "utf8" }).trim();
+  } catch {
+    throw new EvidenceError(code, `cannot resolve ${rev}`);
+  }
+}
+
+function localBaseSha(root: string): string {
+  try {
+    return execFileSync("git", ["merge-base", "HEAD", PR_BASE_REF], { cwd: root, encoding: "utf8" }).trim();
+  } catch {
+    return NULL_SHA;
+  }
+}
+
+function readGithubEvent(env: NodeJS.ProcessEnv): Record<string, unknown> | null {
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (!eventPath || !fs.existsSync(eventPath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(eventPath, "utf8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function nestedSha(obj: unknown, keys: string[]): string | undefined {
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (!current || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return typeof current === "string" ? current : undefined;
+}
+
+export function resolveEvidenceIdentity(
+  root = REPO_ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): EvidenceIdentity {
+  const git = gitIdentity(root);
+  const eventNameRaw = env.GITHUB_EVENT_NAME || "local";
+  if (!isGithubEventName(eventNameRaw)) {
+    throw new EvidenceError("SCHEMA_INVALID", `githubEventName ${eventNameRaw}`);
+  }
+  const eventName = eventNameRaw;
+  const githubEvent = readGithubEvent(env);
+  const testedCheckoutSha = git.commitSha;
+  const testedCheckoutTreeSha = git.treeSha;
+  if (env.GITHUB_SHA && env.GITHUB_SHA !== testedCheckoutSha) {
+    throw new EvidenceError("STALE_TESTED_CHECKOUT_SHA", `HEAD ${testedCheckoutSha} GITHUB_SHA ${env.GITHUB_SHA}`);
+  }
+  let sourceHeadSha: string;
+  let baseSha: string;
+  if (eventName === "pull_request") {
+    sourceHeadSha = env.CHECKPOINT_E_SOURCE_HEAD_SHA
+      || nestedSha(githubEvent, ["pull_request", "head", "sha"])
+      || "";
+    baseSha = env.CHECKPOINT_E_BASE_SHA
+      || nestedSha(githubEvent, ["pull_request", "base", "sha"])
+      || "";
+    if (!sha40(sourceHeadSha)) throw new EvidenceError("SCHEMA_INVALID", "pull_request sourceHeadSha missing");
+    if (!sha40(baseSha)) throw new EvidenceError("SCHEMA_INVALID", "pull_request baseSha missing");
+  } else if (eventName === "push") {
+    sourceHeadSha = env.CHECKPOINT_E_SOURCE_HEAD_SHA || env.GITHUB_SHA || testedCheckoutSha;
+    baseSha = env.CHECKPOINT_E_BASE_SHA
+      || (typeof githubEvent?.before === "string" ? githubEvent.before : undefined)
+      || NULL_SHA;
+  } else {
+    sourceHeadSha = testedCheckoutSha;
+    baseSha = localBaseSha(root);
+  }
+  const sourceHeadTreeSha = sourceHeadSha === testedCheckoutSha
+    ? testedCheckoutTreeSha
+    : gitRevParse(root, `${sourceHeadSha}^{tree}`, "STALE_SOURCE_HEAD_TREE");
+  const identity: EvidenceIdentity = {
+    sourceHeadSha,
+    sourceHeadTreeSha,
+    testedCheckoutSha,
+    testedCheckoutTreeSha,
+    baseSha,
+    githubEventName: eventName,
+    githubRunId: env.GITHUB_RUN_ID || "local",
+    githubRunAttempt: env.GITHUB_RUN_ATTEMPT || "0",
+    githubJobId: env.GITHUB_JOB || "local",
+  };
+  assertIdentityShape(identity);
+  return identity;
+}
+
 export function npmVersion(): string {
   return execFileSync("npm", ["--version"], { encoding: "utf8" }).trim();
+}
+
+function spawnNodeCommand(command: string, root: string) {
+  const tokens = command.split(/\s+/);
+  const argv0 = tokens[0] === "node" ? process.execPath : tokens[0]!;
+  return spawnSync(argv0, tokens.slice(1), { cwd: root, ...SPAWN_OPTS });
 }
 
 export function runCheckpointESuite(root = REPO_ROOT): { tap: string; exitCode: number; command: string } {
@@ -541,7 +1000,7 @@ export function runCheckpointESuite(root = REPO_ROOT): { tap: string; exitCode: 
   const result = spawnSync(
     process.execPath,
     ["--import", "tsx", "--test", "--test-reporter=tap", CHECKPOINT_E_TEST_FILE],
-    { cwd: root, encoding: "utf8" },
+    { cwd: root, ...SPAWN_OPTS },
   );
   return {
     tap: `${result.stdout ?? ""}${result.stderr ?? ""}`,
@@ -550,18 +1009,67 @@ export function runCheckpointESuite(root = REPO_ROOT): { tap: string; exitCode: 
   };
 }
 
+export function runProjectSuite(root = REPO_ROOT): {
+  tap: string;
+  exitCode: number;
+  command: string;
+  preCheck: SuiteExecution;
+} {
+  const plan = readNpmTestPlan(root);
+  const preCheckRun = spawnNodeCommand(plan.preCheckCommand, root);
+  const tapRun = spawnSync(
+    process.execPath,
+    ["--import", "tsx", "--test", "--test-reporter=tap", ...plan.tapFiles],
+    { cwd: root, ...SPAWN_OPTS },
+  );
+  return {
+    tap: `${tapRun.stdout ?? ""}${tapRun.stderr ?? ""}`,
+    exitCode: tapRun.status ?? 1,
+    command: projectTapCommand(plan.tapFiles),
+    preCheck: {
+      command: plan.preCheckCommand,
+      processExitCode: preCheckRun.status ?? 1,
+    },
+  };
+}
+
+function assertCiToolchain(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.GITHUB_ACTIONS !== "true") return;
+  if (process.version !== REQUIRED_CI_NODE) {
+    throw new EvidenceError("SCHEMA_INVALID", `CI node ${process.version}`);
+  }
+  const npm = npmVersion();
+  if (npm !== REQUIRED_CI_NPM) {
+    throw new EvidenceError("SCHEMA_INVALID", `CI npm ${npm}`);
+  }
+}
+
 export function writeGeneratedEvidence(outputPath: string, root = REPO_ROOT): CheckpointEEvidence {
-  const identity = gitIdentity(root);
-  const run = runCheckpointESuite(root);
-  const evidence = generateEvidenceFromRun(run.tap, {
-    branch: BRANCH,
-    testedCommitSha: identity.commitSha,
-    testedTreeSha: identity.treeSha,
-    nodeVersion: process.version,
-    npmVersion: npmVersion(),
-    command: run.command,
-    processExitCode: run.exitCode,
-    fileHashes: collectFileHashes(root),
+  assertCiToolchain();
+  const identity = resolveEvidenceIdentity(root);
+  const checkpoint = runCheckpointESuite(root);
+  const project = runProjectSuite(root);
+  const evidence = generateEvidenceFromRun({
+    checkpointTap: checkpoint.tap,
+    projectTap: project.tap,
+    meta: {
+      branch: BRANCH,
+      identity,
+      toolchain: {
+        nodeVersion: process.version,
+        npmVersion: npmVersion(),
+      },
+      checkpoint: {
+        command: checkpoint.command,
+        processExitCode: checkpoint.exitCode,
+      },
+      project: {
+        command: project.command,
+        processExitCode: project.exitCode,
+        preCheck: project.preCheck,
+      },
+      fileHashes: collectFileHashes(root),
+    },
   });
   fs.mkdirSync(path.dirname(outputPath), { recursive: true });
   fs.writeFileSync(outputPath, `${JSON.stringify(evidence, null, 2)}\n`);
@@ -569,11 +1077,10 @@ export function writeGeneratedEvidence(outputPath: string, root = REPO_ROOT): Ch
 }
 
 export function verifyEvidenceFile(inputPath: string, root = REPO_ROOT): CheckpointEEvidence {
-  const identity = gitIdentity(root);
+  const identity = resolveEvidenceIdentity(root);
   const doc = JSON.parse(fs.readFileSync(inputPath, "utf8"));
   return verifyEvidence(doc, {
-    testedCommitSha: identity.commitSha,
-    testedTreeSha: identity.treeSha,
+    identity,
     fileHashes: collectFileHashes(root),
     branch: BRANCH,
   });
@@ -592,11 +1099,29 @@ function cli(argv = process.argv.slice(2)): void {
     process.stdout.write(`${JSON.stringify({
       ok: true,
       path: target,
-      testedCommitSha: evidence.testedCommitSha,
-      testedTreeSha: evidence.testedTreeSha,
-      eCases: evidence.eCases,
-      fullSuite: evidence.fullSuite,
-      processExitCode: evidence.processExitCode,
+      schemaVersion: evidence.schemaVersion,
+      identity: evidence.identity,
+      checkpointSuite: {
+        command: evidence.checkpointSuite.command,
+        processExitCode: evidence.checkpointSuite.processExitCode,
+        total: evidence.checkpointSuite.total,
+        pass: evidence.checkpointSuite.pass,
+        fail: evidence.checkpointSuite.fail,
+        skip: evidence.checkpointSuite.skip,
+        cancelled: evidence.checkpointSuite.cancelled,
+        todo: evidence.checkpointSuite.todo,
+      },
+      projectSuite: {
+        command: evidence.projectSuite.command,
+        processExitCode: evidence.projectSuite.processExitCode,
+        total: evidence.projectSuite.total,
+        pass: evidence.projectSuite.pass,
+        fail: evidence.projectSuite.fail,
+        skip: evidence.projectSuite.skip,
+        cancelled: evidence.projectSuite.cancelled,
+        todo: evidence.projectSuite.todo,
+        preCheck: evidence.projectSuite.preCheck,
+      },
     }, null, 2)}\n`);
     return;
   }
@@ -605,9 +1130,27 @@ function cli(argv = process.argv.slice(2)): void {
     process.stdout.write(`${JSON.stringify({
       ok: true,
       path: target,
-      testedCommitSha: evidence.testedCommitSha,
-      testedTreeSha: evidence.testedTreeSha,
-      eCases: evidence.eCases,
+      schemaVersion: evidence.schemaVersion,
+      identity: evidence.identity,
+      checkpointSuite: {
+        total: evidence.checkpointSuite.total,
+        pass: evidence.checkpointSuite.pass,
+        fail: evidence.checkpointSuite.fail,
+        skip: evidence.checkpointSuite.skip,
+        cancelled: evidence.checkpointSuite.cancelled,
+        todo: evidence.checkpointSuite.todo,
+        processExitCode: evidence.checkpointSuite.processExitCode,
+      },
+      projectSuite: {
+        total: evidence.projectSuite.total,
+        pass: evidence.projectSuite.pass,
+        fail: evidence.projectSuite.fail,
+        skip: evidence.projectSuite.skip,
+        cancelled: evidence.projectSuite.cancelled,
+        todo: evidence.projectSuite.todo,
+        processExitCode: evidence.projectSuite.processExitCode,
+        preCheck: evidence.projectSuite.preCheck,
+      },
     }, null, 2)}\n`);
     return;
   }
