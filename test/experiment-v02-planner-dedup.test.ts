@@ -76,6 +76,11 @@ function serializePlan(result: ReturnType<typeof planFromFillsAndSeed>): string 
     filled: result.filled,
     completedRungs: result.completedRungs,
     diagnostics: result.diagnostics,
+    currentSnapshotVenueCount: result.currentSnapshotVenueCount,
+    plannedCancelCount: result.plannedCancelCount,
+    capacityAfterAuthoritativeSnapshot: result.capacityAfterAuthoritativeSnapshot,
+    plannerDisposition: result.plannerDisposition,
+    riskIncreaseBlocked: result.riskIncreaseBlocked,
   });
 }
 
@@ -246,8 +251,15 @@ describe("Checkpoint D planner dedup", () => {
     const result = plan([eth, sell2, buy2, buy0]);
     assertNoFill(result);
     assert.deepEqual([...result.nextActive.keys()], ["buy0", "buy2", "sell2"]);
-    assert.deepEqual(cancelIds(result.intents), ["eth"]);
     assert.equal(result.nextActive.has("eth"), false);
+    assert.equal(cancelIds(result.intents).includes("eth"), false);
+    assert.equal(
+      result.intents.some((i) => i.type === "cancel" && i.orderId === "eth" && i.market === MARKET),
+      false
+    );
+    assert.equal(result.intents.some((i) => i.type === "place"), false);
+    assert.equal(result.plannerDisposition, "RISK_INCREASE_BLOCKED");
+    assert.ok(codes(result.diagnostics).includes("CROSS_MARKET_OWNED_ORDER"));
   });
 
   it("D-10 stale-epoch owned orders cancel; current-epoch valid order is retained", () => {
