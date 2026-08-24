@@ -3,6 +3,11 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
 import WebSocket from "ws";
+import {
+  EXECUTION_CURSOR_SCHEMA_VERSION,
+  executionCursorIdentity,
+  type ExecutionCursorIdentity,
+} from "../experimentTelemetry.js";
 import type {
   ExecutionFault,
   ExecutionFaultCode,
@@ -43,6 +48,13 @@ export type ExecutionJournalSnapshot = {
   authoritativeCount: number;
 };
 
+export type ExecutionCursorBind = {
+  experimentId: string;
+  scopeKey: string;
+  venue: string;
+  market: string;
+};
+
 type RecordedEvent = {
   receivedAt: number;
   seq: number;
@@ -50,12 +62,15 @@ type RecordedEvent = {
   markets: Set<string>;
 };
 
-type PersistedCursor = {
-  version: 1;
+type PersistedCursorV2 = {
+  version: 2;
+  identity: ExecutionCursorIdentity | null;
   connectionId: string;
   lastSeq: number;
   authority: "trusted" | "invalidated";
   seenDedupeKeys: string[];
+  publishedDedupeKeys: string[];
+  pendingAuthoritative: ExecutionRecord[];
   lineageCumulative: Record<string, number>;
   authoritativeCount: number;
 };
@@ -63,6 +78,8 @@ type PersistedCursor = {
 const INITIAL_TYPES = new Set<ExtendedAccountEventType>(["BALANCE", "POSITION", "ORDER"]);
 const RELEVANT_TYPES = new Set<ExtendedAccountEventType>(["BALANCE", "POSITION", "ORDER", "TRADE"]);
 const JOURNAL_LIMIT = 2_000;
+/** Bounded in-memory journal / pending / fault capacity. */
+export const EXECUTION_JOURNAL_LIMIT = JOURNAL_LIMIT;
 /** Documented Extended decimal remainder tolerance for cumulative vs original qty. */
 export const EXTENDED_EXECUTION_QTY_EPS = 1e-8;
 
@@ -160,6 +177,41 @@ function tradeRows(data: Record<string, unknown>): Record<string, unknown>[] {
   return [];
 }
 
+function boundCursorIdentity(bind: ExecutionCursorBind): ExecutionCursorIdentity {
+  return executionCursorIdentity(bind);
+}
+
+function identitiesEqual(left: ExecutionCursorIdentity, right: ExecutionCursorIdentity): boolean {
+  return (
+    left.schemaVersion === right.schemaVersion
+    && left.experimentId === right.experimentId
+    && left.scopeKey === right.scopeKey
+    && left.venue === right.venue
+    && left.market === right.market
+  );
+}
+
+function isPersistedExecutionRecord(value: unknown): value is ExecutionRecord {
+  if (!value || typeof value !== "object") return false;
+  const row = value as ExecutionRecord;
+  return (
+    row.source === "exchange"
+    && row.venue === "extended"
+    && typeof row.market === "string"
+    && (row.side === "buy" || row.side === "sell")
+    && Number.isFinite(row.price)
+    && row.price > 0
+    && Number.isFinite(row.quantity)
+    && row.quantity > 0
+    && typeof row.dedupeKey === "string"
+    && row.dedupeKey.length > 0
+    && row.authoritative === true
+    && typeof row.observedAt === "string"
+    && typeof row.streamConnectionId === "string"
+    && Number.isSafeInteger(row.streamSequence)
+  );
+}
+
 export class ExtendedAccountStreamState extends EventEmitter {
   private connectionId = randomUUID();
   private initializedTypes = new Set<ExtendedAccountEventType>();
@@ -171,18 +223,22 @@ export class ExtendedAccountStreamState extends EventEmitter {
   private connectionEpoch = 0;
   private executionAuthority: "trusted" | "invalidated" = "trusted";
   private readonly seenDedupeKeys = new Set<string>();
-  private readonly executions: ExecutionRecord[] = [];
+  private readonly publishedDedupeKeys = new Set<string>();
+  private readonly pendingAuthoritative: ExecutionRecord[] = [];
+  private readonly diagnosticExecutions: ExecutionRecord[] = [];
   private readonly faults: ExecutionFault[] = [];
   private readonly lineageCumulative = new Map<string, number>();
-  private drainExecOffset = 0;
-  private drainFaultOffset = 0;
+  private trustedCount = 0;
   private cursorFailedClosed = false;
+  private faultCapacityExceeded = false;
   private readonly cursorPath?: string;
+  private readonly cursorIdentity?: ExecutionCursorIdentity;
 
-  constructor(now: () => number = Date.now, opts?: { cursorPath?: string }) {
+  constructor(now: () => number = Date.now, opts?: { cursorPath?: string; cursorIdentity?: ExecutionCursorBind }) {
     super();
     this.now = now;
     this.cursorPath = opts?.cursorPath;
+    this.cursorIdentity = opts?.cursorIdentity ? boundCursorIdentity(opts.cursorIdentity) : undefined;
     this.loadCursor();
   }
 
@@ -240,6 +296,11 @@ export class ExtendedAccountStreamState extends EventEmitter {
     if (this.lastSeq > 0 && message.seq !== this.lastSeq + 1 && !duplicateInitial && !sameSeqReplay) {
       const code = message.seq < this.lastSeq ? "OUT_OF_ORDER" : "SEQUENCE_GAP";
       this.invalidateExecutionAuthority(code, message.seq);
+      try {
+        this.observePayload(message);
+      } catch {
+        /* diagnostic observation must not hide the sequence fault */
+      }
       this.invalidate("EXTENDED_WS_SEQUENCE_GAP");
       throw new Error("EXTENDED_WS_SEQUENCE_GAP");
     }
@@ -295,29 +356,57 @@ export class ExtendedAccountStreamState extends EventEmitter {
       authority: this.executionAuthority,
       connectionId: this.connectionId,
       lastSeq: this.lastSeq,
-      executions: this.executions.slice(),
+      executions: this.observedExecutions(),
       faults: this.faults.slice(),
-      authoritativeCount: this.authoritativeCount(),
+      authoritativeCount: this.trustedCount,
     };
   }
 
   drainJournal(): ExecutionJournalDrain {
-    const executions = this.executions.slice(this.drainExecOffset);
-    const faults = this.faults.slice(this.drainFaultOffset);
-    this.drainExecOffset = this.executions.length;
-    this.drainFaultOffset = this.faults.length;
+    const authoritativeExecutions = this.pendingAuthoritative.slice();
+    const diagnostics = this.diagnosticExecutions.slice();
+    const faults = this.faults.slice();
+    if (this.faultCapacityExceeded && !faults.some((fault) => fault.code === "JOURNAL_CAPACITY")) {
+      faults.push({
+        event: "EXECUTION_RECONCILIATION_REQUIRED",
+        code: "JOURNAL_CAPACITY",
+        observedAt: new Date(this.now()).toISOString(),
+        streamConnectionId: this.connectionId,
+      });
+    }
+    this.diagnosticExecutions.length = 0;
+    this.faults.length = 0;
+    this.faultCapacityExceeded = false;
     return {
-      executions,
+      executions: [...authoritativeExecutions, ...diagnostics],
+      authoritativeExecutions,
       faults,
       authority: this.executionAuthority,
-      authoritativeCount: this.authoritativeCount(),
+      authoritativeCount: this.trustedCount,
     };
   }
 
-  private trustedCount = 0;
+  acknowledgeJournal(publishedDedupeKeys: string[]): void {
+    if (publishedDedupeKeys.length === 0) return;
+    const want = new Set(publishedDedupeKeys);
+    let changed = false;
+    const remaining: ExecutionRecord[] = [];
+    for (const record of this.pendingAuthoritative) {
+      if (want.has(record.dedupeKey) && record.authoritative) {
+        this.publishedDedupeKeys.add(record.dedupeKey);
+        changed = true;
+      } else {
+        remaining.push(record);
+      }
+    }
+    if (!changed) return;
+    this.pendingAuthoritative.length = 0;
+    this.pendingAuthoritative.push(...remaining);
+    this.persistCursor();
+  }
 
-  private authoritativeCount(): number {
-    return this.trustedCount;
+  private observedExecutions(): ExecutionRecord[] {
+    return [...this.pendingAuthoritative, ...this.diagnosticExecutions];
   }
 
   private observePayload(message: ExtendedAccountStreamMessage): void {
@@ -409,8 +498,18 @@ export class ExtendedAccountStreamState extends EventEmitter {
     }
 
     const dedupeKey = `extended|${market}|trade|${exchangeTradeId}`;
-    if (this.seenDedupeKeys.has(dedupeKey)) return;
-    this.seenDedupeKeys.add(dedupeKey);
+    if (this.seenDedupeKeys.has(dedupeKey) || this.publishedDedupeKeys.has(dedupeKey)) return;
+
+    const authoritative = this.executionAuthority === "trusted";
+    if (authoritative) {
+      if (this.pendingAuthoritative.length >= JOURNAL_LIMIT) {
+        this.invalidateExecutionAuthority("JOURNAL_CAPACITY", message.seq);
+        return;
+      }
+    } else if (this.diagnosticExecutions.length >= JOURNAL_LIMIT) {
+      this.invalidateExecutionAuthority("JOURNAL_CAPACITY", message.seq);
+      return;
+    }
 
     const record: ExecutionRecord = {
       source: "exchange",
@@ -431,10 +530,15 @@ export class ExtendedAccountStreamState extends EventEmitter {
       streamConnectionId: this.connectionId,
       streamSequence: message.seq,
       dedupeKey,
+      authoritative,
     };
-    this.executions.push(record);
-    if (this.executions.length > JOURNAL_LIMIT) this.executions.splice(0, this.executions.length - JOURNAL_LIMIT);
-    if (this.executionAuthority === "trusted") this.trustedCount += 1;
+    this.seenDedupeKeys.add(dedupeKey);
+    if (authoritative) {
+      this.pendingAuthoritative.push(record);
+      this.trustedCount += 1;
+    } else {
+      this.diagnosticExecutions.push(record);
+    }
     this.persistCursor();
   }
 
@@ -450,6 +554,11 @@ export class ExtendedAccountStreamState extends EventEmitter {
     if (last && last.code === code && last.streamConnectionId === this.connectionId && last.streamSequence === seq) {
       return;
     }
+    if (this.faults.length >= JOURNAL_LIMIT) {
+      this.executionAuthority = "invalidated";
+      this.faultCapacityExceeded = true;
+      return;
+    }
     this.faults.push({
       event: "EXECUTION_RECONCILIATION_REQUIRED",
       code,
@@ -457,31 +566,77 @@ export class ExtendedAccountStreamState extends EventEmitter {
       streamConnectionId: this.connectionId,
       ...(seq != null ? { streamSequence: seq } : {}),
     });
-    if (this.faults.length > JOURNAL_LIMIT) this.faults.splice(0, this.faults.length - JOURNAL_LIMIT);
+  }
+
+  private failClosedCursor(): void {
+    this.cursorFailedClosed = true;
+    this.executionAuthority = "invalidated";
+    this.seenDedupeKeys.clear();
+    this.publishedDedupeKeys.clear();
+    this.pendingAuthoritative.length = 0;
+    this.diagnosticExecutions.length = 0;
+    this.lineageCumulative.clear();
+    this.trustedCount = 0;
+    this.recordFault("CURSOR_CONFLICT");
   }
 
   private loadCursor(): void {
     if (!this.cursorPath) return;
     if (!fs.existsSync(this.cursorPath)) return;
     try {
-      const parsed = JSON.parse(fs.readFileSync(this.cursorPath, "utf8")) as Partial<PersistedCursor>;
+      const raw = fs.readFileSync(this.cursorPath, "utf8");
+      const parsed = JSON.parse(raw) as Partial<PersistedCursorV2>;
       if (
-        parsed.version !== 1
+        parsed.version !== 2
         || (parsed.authority !== "trusted" && parsed.authority !== "invalidated")
         || !Array.isArray(parsed.seenDedupeKeys)
         || parsed.seenDedupeKeys.some((key) => typeof key !== "string")
+        || !Array.isArray(parsed.publishedDedupeKeys)
+        || parsed.publishedDedupeKeys.some((key) => typeof key !== "string")
+        || !Array.isArray(parsed.pendingAuthoritative)
         || typeof parsed.lineageCumulative !== "object"
         || parsed.lineageCumulative == null
         || typeof parsed.authoritativeCount !== "number"
         || !Number.isFinite(parsed.authoritativeCount)
         || parsed.authoritativeCount < 0
       ) {
-        this.cursorFailedClosed = true;
-        this.executionAuthority = "invalidated";
-        this.recordFault("CURSOR_CONFLICT");
+        this.failClosedCursor();
         return;
       }
+      if (this.cursorIdentity) {
+        const stored = parsed.identity;
+        if (
+          !stored
+          || typeof stored !== "object"
+          || stored.schemaVersion !== EXECUTION_CURSOR_SCHEMA_VERSION
+          || typeof stored.experimentId !== "string"
+          || typeof stored.scopeKey !== "string"
+          || typeof stored.venue !== "string"
+          || typeof stored.market !== "string"
+          || !identitiesEqual(stored as ExecutionCursorIdentity, this.cursorIdentity)
+        ) {
+          this.failClosedCursor();
+          return;
+        }
+      }
+      if (!parsed.pendingAuthoritative.every(isPersistedExecutionRecord)) {
+        this.failClosedCursor();
+        return;
+      }
+      const pendingKeys = new Set<string>();
+      for (const record of parsed.pendingAuthoritative) {
+        if (pendingKeys.has(record.dedupeKey) || parsed.publishedDedupeKeys.includes(record.dedupeKey)) {
+          this.failClosedCursor();
+          return;
+        }
+        pendingKeys.add(record.dedupeKey);
+      }
       for (const key of parsed.seenDedupeKeys) this.seenDedupeKeys.add(key);
+      for (const key of parsed.publishedDedupeKeys) this.publishedDedupeKeys.add(key);
+      for (const record of parsed.pendingAuthoritative) {
+        this.pendingAuthoritative.push(record);
+        this.seenDedupeKeys.add(record.dedupeKey);
+      }
       for (const [key, value] of Object.entries(parsed.lineageCumulative)) {
         if (typeof value === "number" && Number.isFinite(value)) this.lineageCumulative.set(key, value);
       }
@@ -489,28 +644,38 @@ export class ExtendedAccountStreamState extends EventEmitter {
       this.executionAuthority = parsed.authority;
       if (parsed.authority === "invalidated") this.recordFault("CURSOR_CONFLICT");
     } catch {
-      this.cursorFailedClosed = true;
-      this.executionAuthority = "invalidated";
-      this.recordFault("CURSOR_CONFLICT");
+      this.failClosedCursor();
     }
   }
 
   private persistCursor(): void {
-    if (!this.cursorPath) return;
-    const payload: PersistedCursor = {
-      version: 1,
+    if (!this.cursorPath || this.cursorFailedClosed) return;
+    const payload: PersistedCursorV2 = {
+      version: 2,
+      identity: this.cursorIdentity ?? null,
       connectionId: this.connectionId,
       lastSeq: this.lastSeq,
       authority: this.executionAuthority,
       seenDedupeKeys: [...this.seenDedupeKeys],
+      publishedDedupeKeys: [...this.publishedDedupeKeys],
+      pendingAuthoritative: this.pendingAuthoritative.slice(),
       lineageCumulative: Object.fromEntries(this.lineageCumulative),
       authoritativeCount: this.trustedCount,
     };
     try {
-      fs.mkdirSync(path.dirname(this.cursorPath), { recursive: true });
+      const dir = path.dirname(this.cursorPath);
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      try { fs.chmodSync(dir, 0o700); } catch { /* restrictive best-effort */ }
       const tmp = `${this.cursorPath}.${randomUUID()}.tmp`;
-      fs.writeFileSync(tmp, `${JSON.stringify(payload)}\n`, { encoding: "utf8", mode: 0o600 });
+      const fd = fs.openSync(tmp, "w", 0o600);
+      try {
+        fs.writeFileSync(fd, `${JSON.stringify(payload)}\n`, "utf8");
+        fs.fsyncSync(fd);
+      } finally {
+        fs.closeSync(fd);
+      }
       fs.renameSync(tmp, this.cursorPath);
+      try { fs.chmodSync(this.cursorPath, 0o600); } catch { /* restrictive best-effort */ }
     } catch {
       this.cursorFailedClosed = true;
       this.executionAuthority = "invalidated";

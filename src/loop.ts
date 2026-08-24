@@ -1,4 +1,3 @@
-import path from "node:path";
 import {
   anchorGrid,
   assertLiveAllowed,
@@ -26,6 +25,7 @@ import {
 import {
   createExperimentTelemetry,
   publishExecutionJournal,
+  resolveExecutionCursorPath,
   type ExperimentEventName,
 } from "./experimentTelemetry.js";
 import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "./softResume.js";
@@ -81,9 +81,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): void {
-  try { experimentTelemetry?.emit(event, fields as never); }
-  catch { /* telemetry is deliberately outside the trading control path */ }
+function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): boolean {
+  try {
+    if (!experimentTelemetry) return true;
+    return experimentTelemetry.emit(event, fields as never);
+  } catch {
+    return false;
+  }
 }
 
 async function applyExperimentGuards(p: {
@@ -610,13 +614,12 @@ async function tickOne(
     }
   }
   if (typeof rt.ex.drainExecutionJournal === "function") {
-    publishExecutionJournal(
-      (event, fields) => {
-        emitExp(event, { venue: rt.ex.id, symbol: market, ...fields });
-        return true;
-      },
-      rt.ex.drainExecutionJournal(),
+    const drain = rt.ex.drainExecutionJournal();
+    const published = publishExecutionJournal(
+      (event, fields) => emitExp(event, { venue: rt.ex.id, symbol: market, ...fields }),
+      drain,
     );
+    rt.ex.acknowledgeExecutionJournal?.(published);
   }
   const plan = planFromFillsAndSeed({
     market,
@@ -1029,8 +1032,20 @@ export async function runLoop(opts?: {
     if (cfg.experiment.enabled && experimentLease) {
       ex.setLeaseGeneration?.(experimentLease.generation);
     }
-    if (experimentTelemetry) {
-      ex.setExecutionCursorPath?.(path.join(experimentTelemetry.dir, "extended-execution-cursor.json"));
+    if (cfg.experiment.enabled) {
+      const market = cfg.markets[0] || "BTC";
+      ex.setExecutionCursorBind?.({
+        path: resolveExecutionCursorPath({
+          experimentId: cfg.experiment.id,
+          scopeKey: experimentScopeKey,
+          venue,
+          market,
+        }),
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        venue,
+        market,
+      });
     }
     runtimes.push({
       ex,

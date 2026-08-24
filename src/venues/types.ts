@@ -42,8 +42,18 @@ export type VenueExecutor = {
   }): Promise<AuthoritativeReductionSnapshot>;
   /** Optional Extended execution journal drain. Other venues omit this. */
   drainExecutionJournal?(): ExecutionJournalDrain;
-  /** Bind a replay-safe execution cursor file before connect. */
+  /** Bind a replay-safe execution cursor file before connect. Tests may use a raw path. */
   setExecutionCursorPath?(path: string): void;
+  /** Production bind: stable state directory plus identity, independent of telemetry runId. */
+  setExecutionCursorBind?(bind: {
+    path: string;
+    experimentId: string;
+    scopeKey: string;
+    venue: string;
+    market: string;
+  }): void;
+  /** Ack successfully published authoritative FILL records; unacked pending records remain drainable. */
+  acknowledgeExecutionJournal?(publishedDedupeKeys: string[]): void;
 };
 
 export function dryApply(venue: VenueId, intents: Intent[]): ApplyResult {

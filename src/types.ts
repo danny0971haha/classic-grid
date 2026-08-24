@@ -121,6 +121,8 @@ export type ExecutionRecord = {
   streamConnectionId: string;
   streamSequence: number;
   dedupeKey: string;
+  /** Captured at observation time. `source="exchange"` does not imply authority. */
+  authoritative: boolean;
 };
 
 export type ExecutionFaultCode =
@@ -132,7 +134,8 @@ export type ExecutionFaultCode =
   | "CURSOR_CONFLICT"
   | "OUT_OF_ORDER"
   | "CUMULATIVE_REGRESSION"
-  | "CUMULATIVE_EXCEEDS_ORIGINAL";
+  | "CUMULATIVE_EXCEEDS_ORIGINAL"
+  | "JOURNAL_CAPACITY";
 
 export type ExecutionFault = {
   event: "EXECUTION_RECONCILIATION_REQUIRED";
@@ -144,6 +147,8 @@ export type ExecutionFault = {
 
 export type ExecutionJournalDrain = {
   executions: ExecutionRecord[];
+  /** Explicit FILL set. Publishers must not infer authority from `authority` or `source`. */
+  authoritativeExecutions: ExecutionRecord[];
   faults: ExecutionFault[];
   authority: "trusted" | "invalidated";
   authoritativeCount: number;

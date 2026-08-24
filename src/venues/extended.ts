@@ -131,6 +131,13 @@ export class ExtendedExecutor implements VenueExecutor {
   private observation: ExtendedObservationBarrier | null = null;
   private leaseGeneration = 0;
   private executionCursorPath?: string;
+  private executionCursorBind?: {
+    path: string;
+    experimentId: string;
+    scopeKey: string;
+    venue: string;
+    market: string;
+  };
   constructor(private dryRun: boolean) {}
 
   setLeaseGeneration(generation: number): void {
@@ -144,13 +151,29 @@ export class ExtendedExecutor implements VenueExecutor {
     this.executionCursorPath = filePath;
   }
 
+  setExecutionCursorBind(bind: {
+    path: string;
+    experimentId: string;
+    scopeKey: string;
+    venue: string;
+    market: string;
+  }): void {
+    this.executionCursorBind = bind;
+    this.executionCursorPath = bind.path;
+  }
+
   drainExecutionJournal() {
     return this.accountStream?.state.drainJournal() ?? {
       executions: [],
+      authoritativeExecutions: [],
       faults: [],
       authority: "trusted" as const,
       authoritativeCount: 0,
     };
+  }
+
+  acknowledgeExecutionJournal(publishedDedupeKeys: string[]): void {
+    this.accountStream?.state.acknowledgeJournal(publishedDedupeKeys);
   }
 
   async connect(): Promise<void> {
@@ -187,7 +210,17 @@ export class ExtendedExecutor implements VenueExecutor {
     await this.ex.init();
     this.accountStream = new ExtendedAccountStream(
       { apiUrl, apiKey },
-      new ExtendedAccountStreamState(Date.now, this.executionCursorPath ? { cursorPath: this.executionCursorPath } : undefined),
+      new ExtendedAccountStreamState(Date.now, this.executionCursorPath ? {
+        cursorPath: this.executionCursorPath,
+        cursorIdentity: this.executionCursorBind
+          ? {
+              experimentId: this.executionCursorBind.experimentId,
+              scopeKey: this.executionCursorBind.scopeKey,
+              venue: this.executionCursorBind.venue,
+              market: this.executionCursorBind.market,
+            }
+          : undefined,
+      } : undefined),
     );
     await this.accountStream.connect();
     this.observation = new ExtendedObservationBarrier(

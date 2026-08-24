@@ -2,8 +2,57 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { assertSafeExperimentId, sha256Json } from "./experimentStorage.js";
+import { experimentDir } from "./experimentRisk.js";
+import { assertSafeExperimentId, sha256Canonical, sha256Json } from "./experimentStorage.js";
 import type { ExecutionFault, ExecutionJournalDrain, ExecutionRecord } from "./types.js";
+
+/** Stored inside the cursor payload. Never interpolated into filesystem paths. */
+export const EXECUTION_CURSOR_SCHEMA_VERSION = "classic-grid.execution-cursor.v2";
+
+export type ExecutionCursorIdentity = {
+  schemaVersion: typeof EXECUTION_CURSOR_SCHEMA_VERSION;
+  experimentId: string;
+  scopeKey: string;
+  venue: string;
+  market: string;
+};
+
+export function normalizeExecutionCursorMarket(market: string): string {
+  const normalized = String(market || "").trim().toUpperCase();
+  if (!normalized) return "";
+  return normalized.includes("-") ? normalized : `${normalized}-USD`;
+}
+
+export function executionCursorIdentity(p: {
+  experimentId: string;
+  scopeKey: string;
+  venue: string;
+  market: string;
+}): ExecutionCursorIdentity {
+  return {
+    schemaVersion: EXECUTION_CURSOR_SCHEMA_VERSION,
+    experimentId: assertSafeExperimentId(p.experimentId),
+    scopeKey: String(p.scopeKey ?? ""),
+    venue: String(p.venue || "").trim().toLowerCase(),
+    market: normalizeExecutionCursorMarket(p.market),
+  };
+}
+
+/**
+ * Stable cursor path under the experiment state directory.
+ * Filename is a bounded hash of the identity; raw scope strings are not path components.
+ */
+export function resolveExecutionCursorPath(p: {
+  experimentId: string;
+  scopeKey: string;
+  venue: string;
+  market: string;
+  baseDir?: string;
+}): string {
+  const identity = executionCursorIdentity(p);
+  const digest = sha256Canonical(identity).slice(0, 32);
+  return path.join(experimentDir(p.experimentId, p.baseDir), "execution-cursors", `${digest}.json`);
+}
 
 export type ExperimentMode = "dry-run" | "live";
 
@@ -265,8 +314,9 @@ export function fillFieldsFromExecution(record: ExecutionRecord): Partial<Experi
 
 export function publishExecutionJournal(
   emit: (event: ExperimentEventName, fields?: Partial<ExperimentEvent>) => unknown,
-  drain: ExecutionJournalDrain,
-): void {
+  drain: Pick<ExecutionJournalDrain, "faults" | "authoritativeExecutions">,
+): string[] {
+  const published: string[] = [];
   try {
     for (const fault of drain.faults) {
       emit("EXECUTION_RECONCILIATION_REQUIRED", {
@@ -275,12 +325,19 @@ export function publishExecutionJournal(
         venue: "extended",
       });
     }
-    for (const record of drain.executions) {
-      emit("FILL", fillFieldsFromExecution(record));
+    const authoritative = Array.isArray(drain.authoritativeExecutions)
+      ? drain.authoritativeExecutions
+      : [];
+    for (const record of authoritative) {
+      if (!record.authoritative) continue;
+      const accepted = emit("FILL", fillFieldsFromExecution(record));
+      if (accepted === false) break;
+      published.push(record.dedupeKey);
     }
   } catch {
-    /* telemetry must never control trading */
+    /* telemetry must never control trading; unacked pending records remain drainable */
   }
+  return published;
 }
 
 export type { ExecutionFault, ExecutionJournalDrain, ExecutionRecord };
