@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 import {
   createExperimentTelemetry,
   publishExecutionJournal,
+  resolveExecutionCursorPath,
 } from "../src/experimentTelemetry.js";
 import {
   emptyRiskState,
@@ -18,7 +19,10 @@ import {
 import { runActualNotionalHardHalt } from "../src/experimentReduction.js";
 import { planFromFillsAndSeed } from "../src/grid.js";
 import { ExtendedExecutor } from "../src/venues/extended.js";
-import { ExtendedAccountStreamState } from "../src/venues/extendedAccountStream.js";
+import {
+  EXECUTION_JOURNAL_LIMIT,
+  ExtendedAccountStreamState,
+} from "../src/venues/extendedAccountStream.js";
 import {
   LIMITS,
   MARKET,
@@ -41,7 +45,13 @@ function initialMessage(type: "BALANCE" | "POSITION" | "ORDER", data: object) {
   return { type, data, ts: EPOCH, seq: 1 };
 }
 
-function initializedState(now = makeClock(), opts?: { cursorPath?: string }): ExtendedAccountStreamState {
+function initializedState(
+  now = makeClock(),
+  opts?: {
+    cursorPath?: string;
+    cursorIdentity?: { experimentId: string; scopeKey: string; venue: string; market: string };
+  },
+): ExtendedAccountStreamState {
   const state = new ExtendedAccountStreamState(now, opts);
   state.ingest(initialMessage("BALANCE", { balance: { equity: "50" } }));
   state.ingest(initialMessage("POSITION", { positions: [] }));
@@ -112,8 +122,11 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     assert.equal(row.clientOrderId, "cg:1-buy-3");
     assert.equal(row.streamSequence, 2);
     assert.equal(row.dedupeKey, "extended|BTC-USD|trade|tr-1");
+    assert.equal(row.authoritative, true);
     const drain = state.drainJournal();
     assert.equal(drain.executions.length, 1);
+    assert.equal(drain.authoritativeExecutions.length, 1);
+    assert.equal(drain.authoritativeExecutions[0]!.authoritative, true);
     const events: string[] = [];
     publishExecutionJournal((event) => {
       events.push(event);
@@ -246,7 +259,9 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     const journal = state.journalSnapshot();
     assert.equal(journal.authority, "invalidated");
     assert.equal(journal.lastSeq, 2);
-    assert.equal(journal.executions.length, 1);
+    assert.equal(journal.authoritativeCount, 1);
+    assert.equal(journal.executions.filter((row) => row.authoritative).length, 1);
+    assert.ok(journal.executions.filter((row) => row.exchangeTradeId === "tr-2").every((row) => row.authoritative === false));
     assert.ok(journal.faults.some((fault) => fault.code === "SEQUENCE_GAP"));
     assert.equal(journal.faults[0]!.event, "EXECUTION_RECONCILIATION_REQUIRED");
   });
@@ -299,8 +314,10 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     first.ingest(tradeMessage(2, canonicalTrade()));
     assert.equal(first.journalSnapshot().executions.length, 1);
     const second = initializedState(makeClock(), { cursorPath });
+    assert.equal(second.journalSnapshot().executions.length, 1);
+    assert.equal(second.journalSnapshot().executions[0]!.authoritative, true);
     second.ingest(tradeMessage(2, canonicalTrade()));
-    assert.equal(second.journalSnapshot().executions.length, 0);
+    assert.equal(second.journalSnapshot().executions.length, 1);
     assert.equal(second.journalSnapshot().authoritativeCount, 1);
   });
 
@@ -315,7 +332,11 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     assert.equal(journal.lastSeq, 2);
     assert.equal(journal.authority, "invalidated");
     assert.ok(journal.faults.some((fault) => fault.code === "OUT_OF_ORDER"));
-    assert.equal(journal.executions.some((row) => row.exchangeTradeId === "tr-old"), false);
+    assert.equal(journal.authoritativeCount, 1);
+    assert.equal(
+      journal.executions.some((row) => row.exchangeTradeId === "tr-old" && row.authoritative),
+      false,
+    );
   });
 
   it("C-15 telemetry failure does not alter risk/reduction handling", async () => {
@@ -419,6 +440,7 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     await executor.connect();
     const drain = executor.drainExecutionJournal();
     assert.equal(drain.executions.length, 0);
+    assert.equal(drain.authoritativeExecutions.length, 0);
     executor.disconnect();
   });
 
@@ -481,6 +503,10 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     const loopSrc = fs.readFileSync(fileURLToPath(new URL("../src/loop.ts", import.meta.url)), "utf8");
     assert.match(loopSrc, /ORDER_DISAPPEARED/);
     assert.match(loopSrc, /drainExecutionJournal/);
+    assert.match(loopSrc, /acknowledgeExecutionJournal/);
+    assert.match(loopSrc, /setExecutionCursorBind/);
+    assert.match(loopSrc, /resolveExecutionCursorPath/);
+    assert.doesNotMatch(loopSrc, /experimentTelemetry\.dir.*extended-execution-cursor/);
     assert.doesNotMatch(loopSrc, /for \(const f of plan\.filled\)/);
   });
 
@@ -521,5 +547,337 @@ describe("Checkpoint C exchange-observed execution journal", () => {
     const journal = state.journalSnapshot();
     assert.equal(journal.executions.length, 1);
     assert.ok(journal.faults.some((fault) => fault.code === "CUMULATIVE_REGRESSION"));
+  });
+});
+
+const MANIFEST_FIELDS = {
+  experiment_spec_version: "0.2.0",
+  starting_capital_usd: 100,
+  leverage: 5,
+  max_margin_budget_usd: 30,
+  max_planned_gross_notional_usd: 150,
+  grid_half_band_pct: 3,
+  grid_level_count: 10,
+  daily_loss_limit_usd: 5,
+  max_drawdown_usd: 10,
+  boundary_buffer_pct: 1,
+} as const;
+
+function cursorBind(overrides: Partial<{ experimentId: string; scopeKey: string; venue: string; market: string }> = {}) {
+  return {
+    experimentId: overrides.experimentId ?? "classic-cc",
+    scopeKey: overrides.scopeKey ?? "dry-run:extended:BTC",
+    venue: overrides.venue ?? "extended",
+    market: overrides.market ?? "BTC",
+  };
+}
+
+function publishedFills(state: ExtendedAccountStreamState) {
+  const drain = state.drainJournal();
+  const fills: string[] = [];
+  const recon: string[] = [];
+  const keys = publishExecutionJournal((event, fields) => {
+    if (event === "FILL") fills.push(String(fields?.exchange_trade_id ?? ""));
+    if (event === "EXECUTION_RECONCILIATION_REQUIRED") recon.push(String(fields?.error_code ?? ""));
+    return true;
+  }, drain);
+  state.acknowledgeJournal(keys);
+  return { drain, fills, recon, keys };
+}
+
+describe("Checkpoint C Corrective 1 authority, cursor, and journal drain", () => {
+  it("C-C1 sequence gap followed by a new unique trade emits reconciliation and zero FILL for the post-gap trade", () => {
+    const state = initializedState();
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-pre" })));
+    assert.throws(
+      () => state.ingest(tradeMessage(4, canonicalTrade({ id: "tr-post-gap" }))),
+      /EXTENDED_WS_SEQUENCE_GAP/,
+    );
+    const { fills, recon, drain } = publishedFills(state);
+    assert.ok(recon.includes("SEQUENCE_GAP"));
+    assert.equal(fills.includes("tr-post-gap"), false);
+    assert.equal(drain.authoritativeExecutions.some((row) => row.exchangeTradeId === "tr-post-gap"), false);
+    assert.ok(drain.executions.some((row) => row.exchangeTradeId === "tr-post-gap" && row.authoritative === false));
+  });
+
+  it("C-C2 reconnect followed by a new unique trade emits zero authoritative FILL for the post-reconnect trade", () => {
+    const state = initializedState();
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-pre" })));
+    state.reset();
+    state.ingest(initialMessage("BALANCE", { balance: { equity: "50" } }));
+    state.ingest(initialMessage("POSITION", { positions: [] }));
+    state.ingest(initialMessage("ORDER", { orders: [] }));
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-post-reconnect" })));
+    const { fills, drain } = publishedFills(state);
+    assert.equal(fills.includes("tr-post-reconnect"), false);
+    assert.equal(drain.authoritativeExecutions.some((row) => row.exchangeTradeId === "tr-post-reconnect"), false);
+    assert.deepEqual(fills, ["tr-pre"]);
+  });
+
+  it("C-C3 trusted trade before a later sequence gap emits exactly one FILL for the pre-gap trade", () => {
+    const state = initializedState();
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-pre-gap" })));
+    assert.throws(
+      () => state.ingest(tradeMessage(4, canonicalTrade({ id: "tr-after-gap" }))),
+      /EXTENDED_WS_SEQUENCE_GAP/,
+    );
+    const { fills, recon } = publishedFills(state);
+    assert.deepEqual(fills, ["tr-pre-gap"]);
+    assert.equal(fills.includes("tr-after-gap"), false);
+    assert.ok(recon.includes("SEQUENCE_GAP"));
+  });
+
+  it("C-C4 cursor conflict followed by a unique trade emits zero authoritative FILL", () => {
+    const dir = tmpDir("cc4");
+    const file = path.join(dir, "cursor.json");
+    fs.writeFileSync(file, `${JSON.stringify({ version: 99, seenDedupeKeys: ["extended|BTC-USD|trade|foreign"] })}\n`);
+    const state = initializedState(makeClock(), { cursorPath: file, cursorIdentity: cursorBind({ experimentId: "classic-cc4" }) });
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "tr-after-conflict" })));
+    const { fills, recon } = publishedFills(state);
+    assert.deepEqual(fills, []);
+    assert.ok(recon.includes("CURSOR_CONFLICT"));
+  });
+
+  it("C-C5 malformed identity followed by a valid unique trade while invalidated emits no authoritative FILL", () => {
+    const state = initializedState();
+    state.ingest(tradeMessage(2, canonicalTrade({ id: "", tradeId: undefined })));
+    state.ingest(tradeMessage(3, canonicalTrade({ id: "tr-valid-after-malformed" })));
+    const { fills, recon, drain } = publishedFills(state);
+    assert.deepEqual(fills, []);
+    assert.equal(drain.authoritativeCount, 0);
+    assert.ok(recon.includes("MALFORMED_IDENTITY"));
+    assert.equal(drain.authoritativeExecutions.length, 0);
+  });
+
+  it("C-C6 two simulated process starts with different telemetry run IDs resolve the same stable cursor", () => {
+    const baseDir = tmpDir("cc6");
+    const experimentId = "classic-cc6";
+    const scopeKey = "acct:extended:BTC/live-scope";
+    const tel1 = createExperimentTelemetry({
+      experimentId,
+      runId: "run-alpha-1",
+      mode: "dry-run",
+      venue: "extended",
+      symbol: "BTC",
+      commitSha: "abc",
+      baseDir,
+      manifestFields: MANIFEST_FIELDS,
+    });
+    const tel2 = createExperimentTelemetry({
+      experimentId,
+      runId: "run-beta-2",
+      mode: "dry-run",
+      venue: "extended",
+      symbol: "BTC",
+      commitSha: "abc",
+      baseDir,
+      manifestFields: MANIFEST_FIELDS,
+    });
+    assert.notEqual(tel1.dir, tel2.dir);
+    assert.ok(tel1.dir.includes("run-alpha-1"));
+    assert.ok(tel2.dir.includes("run-beta-2"));
+    const first = resolveExecutionCursorPath({
+      experimentId,
+      scopeKey,
+      venue: "extended",
+      market: "btc",
+      baseDir,
+    });
+    const second = resolveExecutionCursorPath({
+      experimentId,
+      scopeKey,
+      venue: "extended",
+      market: "BTC",
+      baseDir,
+    });
+    assert.equal(first, second);
+    assert.equal(first.includes("run-alpha-1"), false);
+    assert.equal(first.includes("run-beta-2"), false);
+    assert.equal(first.includes(scopeKey), false);
+    assert.equal(first.includes("acct:"), false);
+    assert.ok(first.includes("execution-cursors"));
+    assert.match(path.basename(first), /^[0-9a-f]{32}\.json$/);
+    const loopSrc = fs.readFileSync(fileURLToPath(new URL("../src/loop.ts", import.meta.url)), "utf8");
+    assert.match(loopSrc, /resolveExecutionCursorPath/);
+    assert.doesNotMatch(loopSrc, /experimentTelemetry\.dir/);
+  });
+
+  it("C-C7 replay of the same exchangeTradeId after process restart produces no duplicate", () => {
+    const dir = tmpDir("cc7");
+    const bind = cursorBind({ experimentId: "classic-cc7" });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    const first = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    first.ingest(tradeMessage(2, canonicalTrade({ id: "tr-replay" })));
+    assert.deepEqual(publishedFills(first).fills, ["tr-replay"]);
+    const second = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    second.ingest(tradeMessage(2, canonicalTrade({ id: "tr-replay" })));
+    assert.deepEqual(publishedFills(second).fills, []);
+    assert.equal(second.journalSnapshot().authoritativeCount, 1);
+  });
+
+  it("C-C8 a new legitimate trade after clean restart remains observable exactly once", () => {
+    const dir = tmpDir("cc8");
+    const bind = cursorBind({ experimentId: "classic-cc8" });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    const first = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    first.ingest(tradeMessage(2, canonicalTrade({ id: "tr-old" })));
+    assert.deepEqual(publishedFills(first).fills, ["tr-old"]);
+    const second = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    second.ingest(tradeMessage(2, canonicalTrade({ id: "tr-new" })));
+    assert.deepEqual(publishedFills(second).fills, ["tr-new"]);
+    second.ingest(tradeMessage(3, canonicalTrade({ id: "tr-new" })));
+    assert.deepEqual(publishedFills(second).fills, []);
+  });
+
+  it("C-C9 cursor scope/venue/market mismatch fails closed", () => {
+    const dir = tmpDir("cc9");
+    const eth = cursorBind({ experimentId: "classic-cc9", scopeKey: "scope-eth", market: "ETH" });
+    const cursorPath = resolveExecutionCursorPath({ ...eth, baseDir: dir });
+    const first = initializedState(makeClock(), { cursorPath, cursorIdentity: eth });
+    first.ingest(tradeMessage(2, canonicalTrade({ id: "tr-eth", market: "ETH-USD" })));
+    const btc = cursorBind({ experimentId: "classic-cc9", scopeKey: "scope-eth", market: "BTC" });
+    const second = initializedState(makeClock(), { cursorPath, cursorIdentity: btc });
+    assert.equal(second.journalSnapshot().authority, "invalidated");
+    second.ingest(tradeMessage(2, canonicalTrade({ id: "tr-btc" })));
+    const { fills, recon } = publishedFills(second);
+    assert.deepEqual(fills, []);
+    assert.ok(recon.includes("CURSOR_CONFLICT"));
+  });
+
+  it("C-C10 corrupt and truncated cursor fail closed without leaking payload values", () => {
+    const leak = "cursor-payload-must-not-leak-9f3a";
+    const bind = cursorBind({ experimentId: "classic-cc10" });
+    const truncatedPath = path.join(tmpDir("cc10t"), "cursor.json");
+    fs.writeFileSync(truncatedPath, `{"version":2,"identity":{"scopeKey":"${leak}"`);
+    const truncated = initializedState(makeClock(), { cursorPath: truncatedPath, cursorIdentity: bind });
+    const truncatedDump = JSON.stringify(truncated.journalSnapshot());
+    assert.equal(truncatedDump.includes(leak), false);
+    assert.equal(truncated.journalSnapshot().authority, "invalidated");
+
+    const corruptPath = path.join(tmpDir("cc10c"), "cursor.json");
+    fs.writeFileSync(corruptPath, `${JSON.stringify({
+      version: 2,
+      identity: {
+        schemaVersion: "classic-grid.execution-cursor.v2",
+        experimentId: "classic-cc10",
+        scopeKey: leak,
+        venue: "extended",
+        market: "BTC-USD",
+      },
+      authority: "trusted",
+      seenDedupeKeys: [leak],
+      publishedDedupeKeys: "not-an-array",
+      pendingAuthoritative: [],
+      lineageCumulative: {},
+      authoritativeCount: 0,
+    })}\n`);
+    const corrupt = initializedState(makeClock(), { cursorPath: corruptPath, cursorIdentity: bind });
+    const corruptDump = JSON.stringify(corrupt.journalSnapshot());
+    assert.equal(corruptDump.includes(leak), false);
+    const { fills, recon } = publishedFills(corrupt);
+    assert.deepEqual(fills, []);
+    assert.ok(recon.includes("CURSOR_CONFLICT"));
+    assert.equal(JSON.stringify(recon).includes(leak), false);
+  });
+
+  it("C-C11 crash/restart between trade acceptance and publication has no-duplicate/no-silent-loss disposition", () => {
+    const dir = tmpDir("cc11");
+    const bind = cursorBind({ experimentId: "classic-cc11" });
+    const cursorPath = resolveExecutionCursorPath({ ...bind, baseDir: dir });
+    const first = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    first.ingest(tradeMessage(2, canonicalTrade({ id: "tr-crash-window" })));
+    assert.equal(first.journalSnapshot().executions[0]!.authoritative, true);
+    const st = fs.statSync(cursorPath);
+    assert.equal(st.mode & 0o777, 0o600);
+    assert.equal(fs.statSync(path.dirname(cursorPath)).mode & 0o777, 0o700);
+
+    const second = initializedState(makeClock(), { cursorPath, cursorIdentity: bind });
+    const firstDrain = second.drainJournal();
+    assert.equal(firstDrain.authoritativeExecutions.length, 1);
+    assert.equal(firstDrain.authoritativeExecutions[0]!.exchangeTradeId, "tr-crash-window");
+    const fills: string[] = [];
+    publishExecutionJournal((event, fields) => {
+      if (event === "FILL") fills.push(String(fields?.exchange_trade_id ?? ""));
+      return true;
+    }, firstDrain);
+    assert.deepEqual(fills, ["tr-crash-window"]);
+    second.ingest(tradeMessage(2, canonicalTrade({ id: "tr-crash-window" })));
+    const replay = second.drainJournal();
+    assert.equal(replay.authoritativeExecutions.length, 1);
+    assert.equal(replay.executions.filter((row) => row.exchangeTradeId === "tr-crash-window").length, 1);
+  });
+
+  it("C-C12 ingest and drain more than 2,500 unique executions with periodic drains", () => {
+    const state = initializedState();
+    const fills: string[] = [];
+    const total = 2_500;
+    for (let i = 0; i < total; i++) {
+      state.ingest(tradeMessage(2 + i, canonicalTrade({ id: `tr-${i}` })));
+      if ((i + 1) % 100 === 0) {
+        fills.push(...publishedFills(state).fills);
+      }
+    }
+    assert.equal(fills.length, total);
+    assert.equal(new Set(fills).size, total);
+    assert.equal(state.journalSnapshot().faults.some((fault) => fault.code === "JOURNAL_CAPACITY"), false);
+  });
+
+  it("C-C13 ingest more than JOURNAL_LIMIT before the first drain", () => {
+    const state = initializedState();
+    for (let i = 0; i <= EXECUTION_JOURNAL_LIMIT; i++) {
+      state.ingest(tradeMessage(2 + i, canonicalTrade({ id: `tr-${i}` })));
+    }
+    const snap = state.journalSnapshot();
+    assert.ok(snap.faults.some((fault) => fault.code === "JOURNAL_CAPACITY"));
+    assert.equal(snap.executions.filter((row) => row.authoritative).length, EXECUTION_JOURNAL_LIMIT);
+    assert.equal(snap.authoritativeCount, EXECUTION_JOURNAL_LIMIT);
+    const drain = state.drainJournal();
+    assert.equal(drain.authoritativeExecutions.length, EXECUTION_JOURNAL_LIMIT);
+    assert.equal(drain.authoritativeExecutions.some((row) => row.exchangeTradeId === `tr-${EXECUTION_JOURNAL_LIMIT}`), false);
+  });
+
+  it("C-C14 fault queue continues draining after more than JOURNAL_LIMIT faults or fail-closes at capacity", () => {
+    const periodic = initializedState();
+    let drainedFaults = 0;
+    const total = EXECUTION_JOURNAL_LIMIT + 100;
+    for (let i = 0; i < total; i++) {
+      periodic.ingest(tradeMessage(2 + i, canonicalTrade({ id: `bad-${i}`, price: "NaN" })));
+      if ((i + 1) % 100 === 0) {
+        drainedFaults += periodic.drainJournal().faults.length;
+      }
+    }
+    assert.equal(drainedFaults, total);
+
+    const overflow = initializedState();
+    for (let i = 0; i < EXECUTION_JOURNAL_LIMIT + 1; i++) {
+      overflow.ingest(tradeMessage(2 + i, canonicalTrade({ id: `cap-${i}`, price: "NaN" })));
+    }
+    const overflowDrain = overflow.drainJournal();
+    assert.ok(overflowDrain.faults.some((fault) => fault.code === "JOURNAL_CAPACITY"));
+    assert.ok(overflowDrain.faults.length <= EXECUTION_JOURNAL_LIMIT + 1);
+  });
+
+  it("C-C15 no undrained authoritative execution is silently removed", () => {
+    const state = initializedState();
+    for (let i = 0; i < EXECUTION_JOURNAL_LIMIT; i++) {
+      state.ingest(tradeMessage(2 + i, canonicalTrade({ id: `keep-${i}` })));
+    }
+    const before = state.journalSnapshot().executions.filter((row) => row.authoritative).map((row) => row.exchangeTradeId);
+    assert.equal(before.length, EXECUTION_JOURNAL_LIMIT);
+    state.ingest(tradeMessage(2 + EXECUTION_JOURNAL_LIMIT, canonicalTrade({ id: "overflow-drop-candidate" })));
+    const after = state.journalSnapshot().executions.filter((row) => row.authoritative).map((row) => row.exchangeTradeId);
+    assert.deepEqual(after, before);
+    assert.equal(after.includes("overflow-drop-candidate"), false);
+    assert.ok(state.journalSnapshot().faults.some((fault) => fault.code === "JOURNAL_CAPACITY"));
+    const drain = state.drainJournal();
+    assert.equal(drain.authoritativeExecutions.length, EXECUTION_JOURNAL_LIMIT);
+    assert.deepEqual(
+      drain.authoritativeExecutions.map((row) => row.exchangeTradeId),
+      before,
+    );
+    const src = fs.readFileSync(fileURLToPath(new URL("../src/venues/extendedAccountStream.ts", import.meta.url)), "utf8");
+    assert.doesNotMatch(src, /this\.pendingAuthoritative\.splice/);
+    assert.doesNotMatch(src, /this\.faults\.splice/);
+    assert.doesNotMatch(src, /this\.diagnosticExecutions\.splice/);
   });
 });
