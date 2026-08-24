@@ -1,4 +1,11 @@
-import type { ApplyResult, Intent, Side, VenueId, VenueSnapshot } from "../types.js";
+import type {
+  ApplyResult,
+  ExecutionJournalDrain,
+  Intent,
+  Side,
+  VenueId,
+  VenueSnapshot,
+} from "../types.js";
 import type {
   AuthoritativeReductionSnapshot,
   ReductionRequest,
@@ -33,6 +40,10 @@ export type VenueExecutor = {
     mutationAttemptAtMs: number;
     leaseGeneration: string;
   }): Promise<AuthoritativeReductionSnapshot>;
+  /** Optional Extended execution journal drain. Other venues omit this. */
+  drainExecutionJournal?(): ExecutionJournalDrain;
+  /** Bind a replay-safe execution cursor file before connect. */
+  setExecutionCursorPath?(path: string): void;
 };
 
 export function dryApply(venue: VenueId, intents: Intent[]): ApplyResult {

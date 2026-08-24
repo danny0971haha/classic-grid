@@ -99,3 +99,52 @@ export type ActiveOrder = {
   price: number;
   size: number;
 };
+
+/**
+ * Canonical exchange-observed execution. `source` is always `"exchange"`.
+ * Identifiers are copied from the venue; missing IDs are omitted, never guessed.
+ */
+export type ExecutionRecord = {
+  source: "exchange";
+  venue: VenueId;
+  market: string;
+  side: Side;
+  price: number;
+  quantity: number;
+  exchangeTradeId?: string;
+  exchangeOrderId?: string;
+  clientOrderId?: string;
+  cumulativeFilledQuantity?: number;
+  remainingQuantity?: number;
+  exchangeTimestamp?: string;
+  observedAt: string;
+  streamConnectionId: string;
+  streamSequence: number;
+  dedupeKey: string;
+};
+
+export type ExecutionFaultCode =
+  | "SEQUENCE_GAP"
+  | "DISCONNECTED"
+  | "MALFORMED_IDENTITY"
+  | "NON_FINITE_FIELDS"
+  | "REPLAY_AMBIGUITY"
+  | "CURSOR_CONFLICT"
+  | "OUT_OF_ORDER"
+  | "CUMULATIVE_REGRESSION"
+  | "CUMULATIVE_EXCEEDS_ORIGINAL";
+
+export type ExecutionFault = {
+  event: "EXECUTION_RECONCILIATION_REQUIRED";
+  code: ExecutionFaultCode;
+  observedAt: string;
+  streamConnectionId: string;
+  streamSequence?: number;
+};
+
+export type ExecutionJournalDrain = {
+  executions: ExecutionRecord[];
+  faults: ExecutionFault[];
+  authority: "trusted" | "invalidated";
+  authoritativeCount: number;
+};

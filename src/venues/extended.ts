@@ -15,7 +15,7 @@ import {
 } from "../experimentReduction.js";
 import { readExperimentLeverage } from "../config.js";
 import { loadEnv } from "../loadEnv.js";
-import { ExtendedAccountStream } from "./extendedAccountStream.js";
+import { ExtendedAccountStream, ExtendedAccountStreamState } from "./extendedAccountStream.js";
 import {
   ExtendedObservationBarrier,
   type ExtendedObservationResult,
@@ -130,6 +130,7 @@ export class ExtendedExecutor implements VenueExecutor {
   private accountStream: ExtendedAccountStream | null = null;
   private observation: ExtendedObservationBarrier | null = null;
   private leaseGeneration = 0;
+  private executionCursorPath?: string;
   constructor(private dryRun: boolean) {}
 
   setLeaseGeneration(generation: number): void {
@@ -137,6 +138,19 @@ export class ExtendedExecutor implements VenueExecutor {
       throw new Error("EXTENDED_INVALID_LEASE_GENERATION");
     }
     this.leaseGeneration = generation;
+  }
+
+  setExecutionCursorPath(filePath: string): void {
+    this.executionCursorPath = filePath;
+  }
+
+  drainExecutionJournal() {
+    return this.accountStream?.state.drainJournal() ?? {
+      executions: [],
+      faults: [],
+      authority: "trusted" as const,
+      authoritativeCount: 0,
+    };
   }
 
   async connect(): Promise<void> {
@@ -171,7 +185,10 @@ export class ExtendedExecutor implements VenueExecutor {
       apiUrl,
     }) as ExtendedExchange;
     await this.ex.init();
-    this.accountStream = new ExtendedAccountStream({ apiUrl, apiKey });
+    this.accountStream = new ExtendedAccountStream(
+      { apiUrl, apiKey },
+      new ExtendedAccountStreamState(Date.now, this.executionCursorPath ? { cursorPath: this.executionCursorPath } : undefined),
+    );
     await this.accountStream.connect();
     this.observation = new ExtendedObservationBarrier(
       new ExtendedStrictApi(this.ex),

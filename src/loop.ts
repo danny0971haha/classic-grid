@@ -1,3 +1,4 @@
+import path from "node:path";
 import {
   anchorGrid,
   assertLiveAllowed,
@@ -24,6 +25,7 @@ import {
 } from "./experimentRisk.js";
 import {
   createExperimentTelemetry,
+  publishExecutionJournal,
   type ExperimentEventName,
 } from "./experimentTelemetry.js";
 import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "./softResume.js";
@@ -203,6 +205,12 @@ async function applyExperimentGuards(p: {
     console.warn(
       `[${rt.ex.id}] RISK HALT ${haltReasons.join(",")} — owned cancel → reduce-only flatten`
     );
+    emitExp("REDUCTION_STARTED", {
+      venue: rt.ex.id,
+      symbol: market,
+      source: "classic-grid",
+      error_code: "ACTUAL_NOTIONAL_CAP",
+    });
     const kill = await runActualNotionalHardHalt({
       experimentId: cfg.experiment.id,
       market,
@@ -239,6 +247,28 @@ async function applyExperimentGuards(p: {
       },
       state: experimentRiskState,
     });
+    if (kill.flatten && (kill.flatten.physicalAttempt ?? 0) > 0) {
+      emitExp("REDUCTION_SUBMITTED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "classic-grid",
+        error_code: kill.flatten.reasonCode,
+      });
+    }
+    if (kill.verifiedFlat) {
+      emitExp("REDUCTION_VERIFIED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "classic-grid",
+      });
+    } else {
+      emitExp("REDUCTION_FAILED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "classic-grid",
+        error_code: kill.flatten?.reasonCode || kill.lifecycle,
+      });
+    }
     experimentRiskState = kill.state;
     return "halt";
   }
@@ -565,6 +595,29 @@ async function tickOne(
     });
     return;
   }
+  const openIds = new Set(snap.openOrders.map((order) => order.id));
+  for (const [id, prev] of rt.active) {
+    if (!openIds.has(id)) {
+      emitExp("ORDER_DISAPPEARED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "inferred",
+        order_id: id,
+        side: prev.side,
+        order_price: prev.price,
+        grid_level: prev.levelIndex,
+      });
+    }
+  }
+  if (typeof rt.ex.drainExecutionJournal === "function") {
+    publishExecutionJournal(
+      (event, fields) => {
+        emitExp(event, { venue: rt.ex.id, symbol: market, ...fields });
+        return true;
+      },
+      rt.ex.drainExecutionJournal(),
+    );
+  }
   const plan = planFromFillsAndSeed({
     market,
     mid,
@@ -711,15 +764,6 @@ async function tickOne(
       // exchange read is required before the next planner pass.
       try { await rt.ex.snapshot(market); } catch { /* next tick remains unseeded */ }
     }
-  }
-  for (const f of plan.filled) {
-    emitExp("FILL", {
-      venue: rt.ex.id,
-      symbol: market,
-      side: f.side,
-      order_price: f.price,
-      grid_level: f.levelIndex,
-    });
   }
 
   if (applyReliable) {
@@ -984,6 +1028,9 @@ export async function runLoop(opts?: {
     const ex = createExecutor(venue, cfg.dryRun);
     if (cfg.experiment.enabled && experimentLease) {
       ex.setLeaseGeneration?.(experimentLease.generation);
+    }
+    if (experimentTelemetry) {
+      ex.setExecutionCursorPath?.(path.join(experimentTelemetry.dir, "extended-execution-cursor.json"));
     }
     runtimes.push({
       ex,

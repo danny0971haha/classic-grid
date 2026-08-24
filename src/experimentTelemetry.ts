@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { assertSafeExperimentId, sha256Json } from "./experimentStorage.js";
+import type { ExecutionFault, ExecutionJournalDrain, ExecutionRecord } from "./types.js";
 
 export type ExperimentMode = "dry-run" | "live";
 
@@ -32,7 +33,9 @@ export type ExperimentManifest = {
 
 export type ExperimentEventName =
   | "SNAPSHOT" | "ORDER_SUBMIT" | "ORDER_ACK" | "FILL" | "CANCEL"
-  | "RESTART" | "ERROR" | "RISK_HALT";
+  | "RESTART" | "ERROR" | "RISK_HALT"
+  | "ORDER_DISAPPEARED" | "EXECUTION_RECONCILIATION_REQUIRED"
+  | "REDUCTION_STARTED" | "REDUCTION_SUBMITTED" | "REDUCTION_VERIFIED" | "REDUCTION_FAILED";
 
 export type ExperimentEvent = {
   schema_version: "2.0";
@@ -51,6 +54,7 @@ export type ExperimentEvent = {
   intent_id: string | null;
   client_order_id: string | null;
   exchange_order_id: string | null;
+  exchange_trade_id: string | null;
   account_scope: string | null;
   anchor_epoch: number | null;
   lease_generation: string;
@@ -200,6 +204,7 @@ export function createExperimentTelemetry(opts: {
         intent_id: fields.intent_id ? String(fields.intent_id) : null,
         client_order_id: fields.client_order_id ? String(fields.client_order_id) : null,
         exchange_order_id: fields.exchange_order_id ? String(fields.exchange_order_id) : null,
+        exchange_trade_id: fields.exchange_trade_id ? String(fields.exchange_trade_id) : null,
         account_scope: fields.account_scope ? String(fields.account_scope) : null,
         anchor_epoch: nullableNumber(fields.anchor_epoch),
         lease_generation: opts.leaseGeneration || "dry-run-no-lease",
@@ -240,3 +245,42 @@ export function createExperimentTelemetry(opts: {
 
   return { dir, manifestPath, eventsPath, manifest, manifestSha256, droppedEvents: () => dropped, emit };
 }
+
+export function fillFieldsFromExecution(record: ExecutionRecord): Partial<ExperimentEvent> {
+  return {
+    source: "exchange",
+    venue: record.venue,
+    symbol: record.market,
+    side: record.side,
+    order_price: record.price,
+    filled_qty: record.quantity,
+    remaining_qty: record.remainingQuantity ?? null,
+    exchange_order_id: record.exchangeOrderId ?? null,
+    client_order_id: record.clientOrderId ?? null,
+    exchange_trade_id: record.exchangeTradeId ?? null,
+    order_id: record.exchangeOrderId ?? null,
+    exchange_ts: record.exchangeTimestamp ?? null,
+  };
+}
+
+export function publishExecutionJournal(
+  emit: (event: ExperimentEventName, fields?: Partial<ExperimentEvent>) => unknown,
+  drain: ExecutionJournalDrain,
+): void {
+  try {
+    for (const fault of drain.faults) {
+      emit("EXECUTION_RECONCILIATION_REQUIRED", {
+        source: "classic-grid",
+        error_code: fault.code,
+        venue: "extended",
+      });
+    }
+    for (const record of drain.executions) {
+      emit("FILL", fillFieldsFromExecution(record));
+    }
+  } catch {
+    /* telemetry must never control trading */
+  }
+}
+
+export type { ExecutionFault, ExecutionJournalDrain, ExecutionRecord };
