@@ -38,8 +38,8 @@ BASE_HEAD=8d52b67d234ed5a76bb972f566c41ae42e7dda5c
 BASE_TREE=5db57c5b43940195bc295d72dbf0367a9f8d108c
 IMPLEMENTATION_HEAD=69b4a6b608cd6ec95757bea0ca42b9dfb00f3f88
 IMPLEMENTATION_TREE=1482e0214593161114b7d6380e4b901926fc327c
-RESULT_HEAD=5af0244b7dbe7956dd824bed8964260649a2751a
-RESULT_TREE=b4bb6bceb48c39de09d298e3f257335cabffcb5a
+RESULT_HEAD=2ed5db8e1e22b0b6cf48cb83f2f9288dbbce7e8a
+RESULT_TREE=e9fcbbffd67b1900f2b549d792cdd86054236404
 ```
 
 Current-byte check at start of this corrective: HEAD and TREE matched `EXPECTED_START_*`. Working tree was clean. Branch was ff-only with `origin/experiment/classic-v0.2-100u-safety`. No reset and no force-push.
@@ -300,11 +300,24 @@ No `npm audit fix` and no `npm audit fix --force` were run.
 ## CI_RUN_IDS
 
 ```text
-CI_RUN_IDS=PENDING_AFTER_PUSH
-EXPECTED_TOOLCHAIN=Node 22.23.2 / npm 10.9.8
+PUSH_CI_RUN_ID=32708746391
+PR_CI_RUN_ID=32708751744
+PROVEN_HEAD=2ed5db8e1e22b0b6cf48cb83f2f9288dbbce7e8a
+TOOLCHAIN=Node v22.23.2 / npm 10.9.8
+TEST_TOTAL=280
+TEST_PASS=280
+TEST_FAIL=0
+TEST_SKIP=0
+UBUNTU_CRASH_CASES_SKIPPED=0
+LIVE_EXCHANGE_WRITE=NO
+REAL_FUND_TESTING=NO
 ```
 
-GitHub Actions must show exact branch-push HEAD success and PR event success, zero skipped crash cases on Ubuntu, 280 node:test tests passing, no production credential, no live exchange mutation.
+Push: https://github.com/danny0971haha/classic-grid/actions/runs/32708746391 — `event=push`, `head_sha=2ed5db8e1e22b0b6cf48cb83f2f9288dbbce7e8a`, `compiler-and-tests` success, Node v22.23.2 / npm 10.9.8, `# tests 280` `# pass 280` `# skipped 0`. C-C18/C-C19/C-C20 ran and passed on Ubuntu.
+
+PR: https://github.com/danny0971haha/classic-grid/actions/runs/32708751744 — `event=pull_request`, same HEAD, success.
+
+The `Dependency audit inventory` step is `continue-on-error: true` because `npm audit --json` exits 1 when findings exist. The JSON is printed in the log and is not hidden.
 
 ## Independent review
 
