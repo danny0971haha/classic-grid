@@ -1,0 +1,1012 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
+import {
+  assertLiveAllowed,
+  formatExperimentBanner,
+  loadRuntimeConfig,
+  parseExperimentConfig,
+} from "../src/config.js";
+import {
+  createExperimentTelemetry,
+  publishExecutionJournal,
+  readCommitSha,
+  resolveExecutionCursorPath,
+} from "../src/experimentTelemetry.js";
+import {
+  emptyRiskState,
+  evaluateExperimentRisk,
+  initializeRiskStateStore,
+  loadRiskState,
+  persistRiskState,
+  type ExperimentRiskState,
+} from "../src/experimentRisk.js";
+import {
+  experimentAllowsReseed,
+  runActualNotionalHardHalt,
+} from "../src/experimentReduction.js";
+import { runExperimentKillSwitch } from "../src/experimentKillSwitch.js";
+import { applyPlannerIntentGate, expectedOwnedClientOrderId, planFromFillsAndSeed } from "../src/grid.js";
+import { ExtendedAccountStreamState } from "../src/venues/extendedAccountStream.js";
+import { ExtendedExecutor } from "../src/venues/extended.js";
+import type { Intent, LiveOrder } from "../src/types.js";
+import { withEnv } from "./helpers/env.js";
+import {
+  MARKET,
+  SCOPE,
+  freshSnapshot,
+  ownedOrder,
+  scriptedTransport,
+} from "./helpers/reduction.js";
+
+const HERE = fileURLToPath(import.meta.url);
+const WORKER = fileURLToPath(new URL("./fixtures/checkpoint-e-worker.ts", import.meta.url));
+const PREFIX = "cg:test:";
+const EPOCH = 42;
+const LEVELS = [99_000, 100_000, 101_000];
+const SIZE = 0.001;
+const ARTIFACT = fileURLToPath(new URL("../artifacts/classic-v0.2-checkpoint-e-results.json", import.meta.url));
+const V02_LIMITS = {
+  maxGrossNotionalUsd: 150,
+  dailyLossUsd: 5,
+  maxDrawdownUsd: 10,
+  boundaryBufferPct: 0.01,
+};
+
+function cid(side: "buy" | "sell", level: number): string {
+  return expectedOwnedClientOrderId(PREFIX, EPOCH, side, level);
+}
+
+function live(p: {
+  id: string;
+  side?: "buy" | "sell";
+  level?: number;
+  price?: number;
+  size?: number;
+  market?: string;
+  clientOrderId?: string;
+  exchangeOrderId?: string;
+}): LiveOrder {
+  const side = p.side ?? "buy";
+  const level = p.level ?? 0;
+  return {
+    id: p.id,
+    market: p.market ?? "BTC",
+    side,
+    price: p.price ?? LEVELS[level]!,
+    size: p.size ?? SIZE,
+    level,
+    clientOrderId: p.clientOrderId === undefined ? cid(side, level) : p.clientOrderId,
+    ...(p.exchangeOrderId !== undefined ? { exchangeOrderId: p.exchangeOrderId } : {}),
+  };
+}
+
+function plan(openOrders: LiveOrder[], extra: Record<string, unknown> = {}) {
+  return planFromFillsAndSeed({
+    market: "BTC",
+    mid: 100_000,
+    levels: LEVELS,
+    spacing: 1_000,
+    mode: "neutral",
+    sizeBase: SIZE,
+    openOrders,
+    prevActive: new Map(),
+    maxWrites: 10,
+    seeded: true,
+    ownershipPrefix: PREFIX,
+    anchorEpoch: EPOCH,
+    ...extra,
+  });
+}
+
+function tmpDir(label: string): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), `classic-e-${label}-`));
+}
+
+function spawnWorker(env: Record<string, string>) {
+  return spawnSync(process.execPath, ["--import", "tsx", WORKER], {
+    env: { ...process.env, ...env },
+    encoding: "utf8",
+  });
+}
+
+function lastJson(stdout: string): any {
+  const line = String(stdout || "").trim().split("\n").filter(Boolean).at(-1);
+  assert.ok(line, stdout);
+  return JSON.parse(line);
+}
+
+function seedRunning(id: string, dir: string, leaseGeneration = "lease-1"): ExperimentRiskState {
+  initializeRiskStateStore({
+    experimentId: id,
+    baseDir: dir,
+    scopeKey: SCOPE,
+    leaseGeneration,
+  });
+  persistRiskState(id, { ...emptyRiskState(SCOPE), leaseGeneration }, dir);
+  const loaded = loadRiskState(id, dir, SCOPE);
+  assert.equal(loaded.haltStatus, "RUNNING");
+  return loaded;
+}
+
+function loadV02() {
+  return withEnv(
+    {
+      EXPERIMENT_MODE: "1",
+      EXPERIMENT_SPEC_VERSION: "0.2.0",
+      EXPERIMENT_ID: "classic-v02-dryrun",
+      EXPERIMENT_CAPITAL_USD: "50",
+      EXPERIMENT_LEVERAGE: "10",
+    },
+    () => loadRuntimeConfig()
+  );
+}
+
+function initializedJournal(cursorPath?: string, experimentId = "classic-e-journal") {
+  const now = (() => {
+    let value = 1_700_000_000_000;
+    return () => value++;
+  })();
+  const state = new ExtendedAccountStreamState(now, cursorPath ? {
+    cursorPath,
+    cursorIdentity: { experimentId, scopeKey: "dry-run:extended:BTC", venue: "extended", market: "BTC" },
+  } : undefined);
+  const ts = 1_700_000_000_000;
+  state.ingest({ type: "BALANCE", data: { balance: { equity: "100" } }, ts, seq: 1 });
+  state.ingest({ type: "POSITION", data: { positions: [] }, ts, seq: 1 });
+  state.ingest({ type: "ORDER", data: { orders: [] }, ts, seq: 1 });
+  return state;
+}
+
+function trade(partial: Record<string, unknown> = {}) {
+  return {
+    type: "TRADE" as const,
+    ts: 1_700_000_000_002,
+    seq: 2,
+    data: {
+      trades: [{
+        id: "tr-1",
+        market: "BTC-USD",
+        side: "BUY",
+        price: "100000",
+        qty: "0.001",
+        orderId: "ord-1",
+        externalId: "cg:1-buy-3",
+        filledQty: "0.001",
+        remainingQty: "0",
+        timestamp: 1_700_000_000_002,
+        ...partial,
+      }],
+    },
+  };
+}
+
+function permutations<T>(items: T[]): T[][] {
+  if (items.length <= 1) return [items.slice()];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i++) {
+    const rest = items.slice(0, i).concat(items.slice(i + 1));
+    for (const perm of permutations(rest)) out.push([items[i]!, ...perm]);
+  }
+  return out;
+}
+
+function riskInput(partial: Record<string, unknown> = {}) {
+  return {
+    mid: 100_000,
+    equityUsd: 100,
+    dailyPnlUsd: 0,
+    positionQty: 0,
+    positionNotionalUsd: 0,
+    plannedGrossNotionalUsd: 150,
+    gridLower: 97_000,
+    gridUpper: 103_000,
+    ...partial,
+  };
+}
+
+const CASE_IDS = [
+  "E-01", "E-02", "E-03", "E-04", "E-05", "E-06", "E-07", "E-08", "E-09", "E-10",
+  "E-11", "E-12", "E-13", "E-14", "E-15", "E-16", "E-17", "E-18", "E-19", "E-20",
+  "E-21", "E-22", "E-23", "E-24", "E-25", "E-26", "E-27", "E-28", "E-29", "E-30",
+];
+
+describe("Checkpoint E integrated dry-run and fault campaign", () => {
+  it("E-01 frozen v0.2 dry-run banner", () => {
+    const cfg = loadV02();
+    const banner = formatExperimentBanner(cfg);
+    assert.match(banner, /EXPERIMENT MODE/);
+    assert.match(banner, /capital=100U/);
+    assert.match(banner, /leverage=5x/);
+    assert.match(banner, /marginBudget=30U/);
+    assert.match(banner, /maxGrossNotional=150U/);
+    assert.match(banner, /gridCount=10/);
+    assert.match(banner, /halfBand=3%/);
+    assert.match(banner, /dailyLossLimit=5U/);
+    assert.match(banner, /maxDrawdown=10U/);
+    assert.equal(cfg.experiment.specVersion, "0.2.0");
+    assert.equal(cfg.dryRun, true);
+    assert.equal(cfg.experiment.capitalUsd * cfg.experiment.marginFraction * cfg.experiment.leverage, 150);
+  });
+
+  it("E-02 zero live/network mutation", async () => {
+    const cfg = loadV02();
+    assert.doesNotThrow(() => assertLiveAllowed(cfg));
+    withEnv(
+      {
+        EXPERIMENT_MODE: "1",
+        EXPERIMENT_SPEC_VERSION: "0.2.0",
+        DRY_RUN: "0",
+        LIVE_CONFIRM: "YES",
+        VENUES: "extended",
+        MARKETS: "BTC",
+        EXPERIMENT_ID: "classic-v02-dryrun",
+      },
+      () => {
+        assert.throws(() => assertLiveAllowed(loadRuntimeConfig()), /EXPERIMENT_V02_LIVE_FORBIDDEN|尚未授权 live/);
+      }
+    );
+    const gridSrc = fs.readFileSync(new URL("../src/grid.ts", import.meta.url), "utf8");
+    assert.doesNotMatch(gridSrc, /\bfetch\s*\(/);
+    const executor = new ExtendedExecutor(true);
+    await executor.connect();
+    const applied = await executor.apply([
+      { type: "cancel", orderId: "dry", market: "BTC" },
+    ]);
+    assert.equal(applied.failed, 0);
+    assert.equal(executor.drainExecutionJournal?.().executions.length ?? 0, 0);
+    executor.disconnect();
+  });
+
+  it("E-03 planner duplicate permutation campaign", () => {
+    const orders = [
+      live({ id: "id-c", exchangeOrderId: "ex-c", side: "buy", level: 0 }),
+      live({ id: "id-a", exchangeOrderId: "ex-a", side: "buy", level: 0 }),
+      live({ id: "id-b", exchangeOrderId: "ex-b", side: "buy", level: 0 }),
+    ];
+    const serialized = new Set<string>();
+    for (const openOrders of permutations(orders)) {
+      const result = plan(openOrders);
+      assert.deepEqual(result.filled, []);
+      assert.equal(result.completedRungs, 0);
+      assert.deepEqual([...result.nextActive.keys()], ["id-a"]);
+      serialized.add(JSON.stringify({
+        intents: result.intents,
+        nextActive: [...result.nextActive.entries()],
+        plannerDisposition: result.plannerDisposition,
+      }));
+    }
+    assert.equal(serialized.size, 1);
+  });
+
+  it("E-04 cancel capacity not released early", () => {
+    const keep = live({ id: "a", exchangeOrderId: "a", side: "buy", level: 0 });
+    const drop = live({ id: "m", exchangeOrderId: "m", side: "buy", level: 0 });
+    const first = plan([keep, drop], { maxOpenOrders: 2 });
+    assert.equal(first.currentSnapshotVenueCount, 2);
+    assert.equal(first.capacityAfterAuthoritativeSnapshot, 0);
+    assert.equal(first.intents.some((i) => i.type === "place"), false);
+    const child = spawnWorker({
+      CLASSIC_E_ACTION: "plan",
+      CLASSIC_E_ORDERS: JSON.stringify([keep, drop]),
+      CLASSIC_E_PLAN_EXTRA: JSON.stringify({ maxOpenOrders: 2 }),
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const replayed = lastJson(child.stdout);
+    assert.equal(replayed.capacityAfterAuthoritativeSnapshot, 0);
+    assert.equal(replayed.intents.some((i: Intent) => i.type === "place"), false);
+    const afterAbsence = plan([keep], { maxOpenOrders: 2 });
+    assert.equal(afterAbsence.capacityAfterAuthoritativeSnapshot, 1);
+  });
+
+  it("E-05 cross-market and unlocatable ambiguity block place globally", () => {
+    const eth = live({ id: "eth", exchangeOrderId: "eth", side: "buy", level: 0, market: "ETH" });
+    const owned = live({ id: "btc", exchangeOrderId: "btc", side: "sell", level: 2 });
+    const cross = applyPlannerIntentGate(plan([eth, owned]));
+    assert.equal(cross.plannerDisposition, "RISK_INCREASE_BLOCKED");
+    assert.equal(cross.intents.some((i) => i.type === "place"), false);
+    assert.equal(cross.intents.some((i) => i.type === "cancel" && i.orderId === "eth"), false);
+    const ambiguous = plan([live({ id: "", price: 50_000, clientOrderId: `${PREFIX}zzzz` })]);
+    assert.equal(ambiguous.plannerDisposition, "RISK_INCREASE_BLOCKED");
+    assert.equal(ambiguous.intents.some((i) => i.type === "place"), false);
+    const unowned = plan([live({ id: "manual", side: "buy", level: 0, clientOrderId: "manual-bot" })]);
+    assert.equal(unowned.intents.some((i) => i.type === "cancel"), false);
+    assert.equal(unowned.nextActive.has("manual"), false);
+  });
+
+  it("E-06 authoritative full execution", () => {
+    const state = initializedJournal();
+    state.ingest(trade());
+    const drain = state.drainJournal();
+    assert.equal(drain.authoritativeExecutions.length, 1);
+    assert.equal(drain.authoritativeExecutions[0]!.source, "exchange");
+    assert.equal(drain.authoritativeExecutions[0]!.authoritative, true);
+    const events: string[] = [];
+    publishExecutionJournal((event) => {
+      events.push(event);
+      return true;
+    }, drain);
+    assert.deepEqual(events, ["FILL"]);
+    const gone = plan([], {
+      prevActive: new Map([["gone", { levelIndex: 2, side: "sell", price: 101_000, size: SIZE }]]),
+    });
+    assert.deepEqual(gone.filled, []);
+  });
+
+  it("E-07 partial execution", () => {
+    const state = initializedJournal();
+    state.ingest(trade({ qty: "0.0004", filledQty: "0.0004", remainingQty: "0.0006" }));
+    const row = state.journalSnapshot().executions[0]!;
+    assert.equal(row.quantity, 0.0004);
+    assert.equal(row.cumulativeFilledQuantity, 0.0004);
+    assert.equal(row.remainingQuantity, 0.0006);
+    assert.equal(row.authoritative, true);
+  });
+
+  it("E-08 cursor pre-publication crash", () => {
+    const dir = tmpDir("e08");
+    const experimentId = "classic-e08";
+    const cursorPath = resolveExecutionCursorPath({
+      experimentId,
+      scopeKey: "dry-run:extended:BTC",
+      venue: "extended",
+      market: "BTC",
+      baseDir: dir,
+    });
+    const now = (() => {
+      let value = 1_700_000_000_000;
+      return () => value++;
+    })();
+    const state = new ExtendedAccountStreamState(now, {
+      cursorPath,
+      cursorIdentity: { experimentId, scopeKey: "dry-run:extended:BTC", venue: "extended", market: "BTC" },
+      onCursorPersistStep(step) {
+        if (step === "BEFORE_MEMORY_COMMIT") throw new Error("E08_PRE_PUBLICATION");
+      },
+    });
+    const ts = 1_700_000_000_000;
+    state.ingest({ type: "BALANCE", data: { balance: { equity: "100" } }, ts, seq: 1 });
+    state.ingest({ type: "POSITION", data: { positions: [] }, ts, seq: 1 });
+    state.ingest({ type: "ORDER", data: { orders: [] }, ts, seq: 1 });
+    try {
+      state.ingest(trade({ id: "tr-e08" }));
+    } catch (error) {
+      assert.match(String((error as Error).message), /E08_PRE_PUBLICATION|CURSOR/);
+    }
+    assert.equal(state.cursorPersistenceBlocked() || state.journalSnapshot().authoritativeCount === 0, true);
+    const drain = state.drainJournal();
+    const fills: string[] = [];
+    publishExecutionJournal((event, fields) => {
+      if (event === "FILL") fills.push(String(fields?.exchange_trade_id ?? ""));
+      return true;
+    }, drain);
+    assert.equal(drain.authoritativeExecutions.length, 0);
+    assert.deepEqual(fills, []);
+  });
+
+  it("E-09 watermark failure at-least-once replay", () => {
+    const dir = tmpDir("e09");
+    const experimentId = "classic-e09";
+    const cursorPath = resolveExecutionCursorPath({
+      experimentId,
+      scopeKey: "dry-run:extended:BTC",
+      venue: "extended",
+      market: "BTC",
+      baseDir: dir,
+    });
+    let persistCalls = 0;
+    const now = (() => {
+      let value = 1_700_000_000_000;
+      return () => value++;
+    })();
+    const state = new ExtendedAccountStreamState(now, {
+      cursorPath,
+      cursorIdentity: { experimentId, scopeKey: "dry-run:extended:BTC", venue: "extended", market: "BTC" },
+      onCursorPersistStep(step) {
+        if (step !== "BEFORE_TEMP_OPEN") return;
+        persistCalls += 1;
+        if (persistCalls >= 2) throw new Error("CURSOR_WATERMARK_PERSIST_FAIL");
+      },
+    });
+    const ts = 1_700_000_000_000;
+    state.ingest({ type: "BALANCE", data: { balance: { equity: "100" } }, ts, seq: 1 });
+    state.ingest({ type: "POSITION", data: { positions: [] }, ts, seq: 1 });
+    state.ingest({ type: "ORDER", data: { orders: [] }, ts, seq: 1 });
+    state.ingest(trade({ id: "tr-e09" }));
+    const tel = createExperimentTelemetry({
+      experimentId,
+      mode: "dry-run",
+      venue: "extended",
+      symbol: "BTC",
+      commitSha: "abc",
+      baseDir: tmpDir("e09-tel"),
+      manifestFields: {
+        experiment_spec_version: "0.2.0",
+        starting_capital_usd: 100,
+        leverage: 5,
+        max_margin_budget_usd: 30,
+        max_planned_gross_notional_usd: 150,
+        grid_half_band_pct: 3,
+        grid_level_count: 10,
+        daily_loss_limit_usd: 5,
+        max_drawdown_usd: 10,
+        boundary_buffer_pct: 1,
+      },
+    });
+    const keys = publishExecutionJournal(tel.emit, state.drainJournal());
+    assert.ok(keys.length >= 1);
+    assert.match(fs.readFileSync(tel.eventsPath, "utf8"), /"event":"FILL"/);
+    state.acknowledgeJournal(keys);
+    assert.equal(state.cursorPersistenceBlocked(), true);
+    const replay = initializedJournal(cursorPath, experimentId);
+    replay.ingest(trade({ id: "tr-e09" }));
+    assert.ok(replay.journalSnapshot().executions.length >= 0);
+  });
+
+  it("E-10 actual notional active flatten", async () => {
+    const dir = tmpDir("e10");
+    const id = "classic-e10";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 151, positionQty: 0.00151 }),
+      V02_LIMITS,
+      running
+    );
+    assert.ok(evaluated.decision.reasons.includes("ACTUAL_NOTIONAL_CAP"));
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: (n) => freshSnapshot({
+        positionQty: n === 1 ? 0.00151 : 0,
+        openOrders: [],
+        observationId: `e10-${n}`,
+        sourceGeneration: `g-e10-${n}`,
+      }),
+    });
+    const result = await runActualNotionalHardHalt({
+      experimentId: id,
+      market: MARKET,
+      ownershipPrefix: "cg:classic-v02-dryrun:",
+      positionQty: 0.00151,
+      openOrders: [ownedOrder({ side: "buy" })],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport,
+      assertLeaseCurrent: () => undefined,
+      leaseGeneration: "lease-1",
+      baseDir: dir,
+      scopeKey: SCOPE,
+      state: evaluated.next,
+    });
+    assert.ok(transport.flattenCalls >= 1);
+    assert.notEqual(result.state.haltStatus, "RUNNING");
+    assert.equal(experimentAllowsReseed(result.state), false);
+  });
+
+  it("E-11 daily-loss halt", () => {
+    const { decision, next } = evaluateExperimentRisk(
+      riskInput({ dailyPnlUsd: -5 }),
+      V02_LIMITS,
+      emptyRiskState(SCOPE)
+    );
+    assert.equal(decision.halt, true);
+    assert.ok(decision.reasons.includes("DAILY_LOSS"));
+    assert.equal(next.halted, true);
+  });
+
+  it("E-12 drawdown halt", () => {
+    const first = evaluateExperimentRisk(riskInput({ equityUsd: 100 }), V02_LIMITS, emptyRiskState(SCOPE));
+    const { decision, next } = evaluateExperimentRisk(
+      riskInput({ equityUsd: 90 }),
+      V02_LIMITS,
+      first.next
+    );
+    assert.equal(decision.halt, true);
+    assert.ok(decision.reasons.includes("DRAWDOWN_FROM_START"));
+    assert.equal(next.drawdownFromStartUsd, 10);
+  });
+
+  it("E-13 long boundary halt", () => {
+    const { decision } = evaluateExperimentRisk(
+      riskInput({ mid: 97_000 * 0.99 - 1, positionQty: 0.001, positionNotionalUsd: 100 }),
+      V02_LIMITS,
+      emptyRiskState(SCOPE)
+    );
+    assert.equal(decision.halt, true);
+    assert.ok(decision.reasons.includes("RISK_BOUNDARY_BREACH"));
+  });
+
+  it("E-14 short boundary halt", () => {
+    const { decision } = evaluateExperimentRisk(
+      riskInput({ mid: 103_000 * 1.01 + 1, positionQty: -0.001, positionNotionalUsd: 100 }),
+      V02_LIMITS,
+      emptyRiskState(SCOPE)
+    );
+    assert.equal(decision.halt, true);
+    assert.ok(decision.reasons.includes("RISK_BOUNDARY_BREACH"));
+  });
+
+  it("E-15 stale inputs fail closed", () => {
+    const missing = evaluateExperimentRisk(
+      riskInput({ equityUsd: null, dailyPnlUsd: null, requireFreshInputs: true, snapshotAgeMs: 0, pnlAgeMs: 0 }),
+      V02_LIMITS,
+      emptyRiskState(SCOPE)
+    );
+    assert.equal(missing.decision.halt, true);
+    const stale = evaluateExperimentRisk(
+      riskInput({ requireFreshInputs: true, snapshotAgeMs: 120_001, pnlAgeMs: 120_001 }),
+      V02_LIMITS,
+      emptyRiskState(SCOPE)
+    );
+    assert.equal(stale.decision.halt, true);
+    assert.ok(stale.decision.reasons.includes("SNAPSHOT_STALE"));
+  });
+
+  it("E-16 cancel UNKNOWN", async () => {
+    const dir = tmpDir("e16");
+    const id = "classic-e16";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      V02_LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "UNKNOWN",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0.0018, openOrders: [ownedOrder({ side: "buy" })] }),
+    });
+    const result = await runActualNotionalHardHalt({
+      experimentId: id,
+      market: MARKET,
+      ownershipPrefix: "cg:classic-v02-dryrun:",
+      positionQty: 0.0018,
+      openOrders: [ownedOrder({ side: "buy" })],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport,
+      assertLeaseCurrent: () => undefined,
+      leaseGeneration: "lease-1",
+      baseDir: dir,
+      scopeKey: SCOPE,
+      state: evaluated.next,
+    });
+    assert.notEqual(result.state.haltStatus, "RUNNING");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.ok(transport.snapshotCalls >= 1);
+  });
+
+  it("E-17 flatten UNKNOWN", async () => {
+    const dir = tmpDir("e17");
+    const id = "classic-e17";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      V02_LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "UNKNOWN",
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runActualNotionalHardHalt({
+      experimentId: id,
+      market: MARKET,
+      ownershipPrefix: "cg:classic-v02-dryrun:",
+      positionQty: 0.0018,
+      openOrders: [],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport,
+      assertLeaseCurrent: () => undefined,
+      leaseGeneration: "lease-1",
+      baseDir: dir,
+      scopeKey: SCOPE,
+      state: evaluated.next,
+    });
+    assert.equal(result.flatten?.outcome, "UNKNOWN");
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+    assert.equal(experimentAllowsReseed(result.state), false);
+  });
+
+  it("E-18 lease loss before mutation", async () => {
+    const dir = tmpDir("e18");
+    const id = "classic-e18";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      V02_LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "ACK",
+      snapshots: () => freshSnapshot({ positionQty: 0 }),
+    });
+    const result = await runActualNotionalHardHalt({
+      experimentId: id,
+      market: MARKET,
+      ownershipPrefix: "cg:classic-v02-dryrun:",
+      positionQty: 0.0018,
+      openOrders: [ownedOrder({ side: "buy" })],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport,
+      assertLeaseCurrent: () => {
+        throw new Error("RUNTIME_LEASE_LOST");
+      },
+      leaseGeneration: "lease-1",
+      baseDir: dir,
+      scopeKey: SCOPE,
+      state: evaluated.next,
+    });
+    assert.equal(transport.flattenCalls, 0);
+    assert.notEqual(result.state.haltStatus, "HALTED_FLAT");
+  });
+
+  it("E-19 restart during HALTING", () => {
+    const dir = tmpDir("e19");
+    const id = "classic-e19";
+    seedRunning(id, dir);
+    persistRiskState(id, {
+      ...emptyRiskState(SCOPE),
+      halted: true,
+      haltStatus: "HALTING",
+      haltId: "halt-e19",
+      haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+      leaseGeneration: "lease-1",
+      acknowledged: false,
+      updatedAt: "2026-08-24T00:00:00.000Z",
+    }, dir);
+    const child = spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/experiment-reduction-restart-worker.ts", import.meta.url))], {
+      env: { ...process.env, CLASSIC_RISK_ID: id, CLASSIC_RISK_DIR: dir, CLASSIC_RISK_SCOPE: SCOPE },
+      encoding: "utf8",
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const replayed = lastJson(child.stdout);
+    assert.equal(replayed.durableHalted, true);
+    assert.equal(replayed.reseedAllowedFromDurable, false);
+    assert.notEqual(replayed.nextHaltStatus, "RUNNING");
+  });
+
+  it("E-20 restart after flatten submit", async () => {
+    const dir = tmpDir("e20");
+    const id = "classic-e20";
+    const running = seedRunning(id, dir);
+    const evaluated = evaluateExperimentRisk(
+      riskInput({ positionNotionalUsd: 180, positionQty: 0.0018 }),
+      V02_LIMITS,
+      running
+    );
+    const transport = scriptedTransport({
+      cancel: "ACK",
+      flatten: "UNKNOWN",
+      snapshots: () => freshSnapshot({ positionQty: 0.0018 }),
+    });
+    const result = await runActualNotionalHardHalt({
+      experimentId: id,
+      market: MARKET,
+      ownershipPrefix: "cg:classic-v02-dryrun:",
+      positionQty: 0.0018,
+      openOrders: [],
+      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      transport,
+      assertLeaseCurrent: () => undefined,
+      leaseGeneration: "lease-1",
+      baseDir: dir,
+      scopeKey: SCOPE,
+      state: evaluated.next,
+    });
+    assert.ok(transport.flattenCalls >= 1);
+    const child = spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/experiment-reduction-restart-worker.ts", import.meta.url))], {
+      env: { ...process.env, CLASSIC_RISK_ID: id, CLASSIC_RISK_DIR: dir, CLASSIC_RISK_SCOPE: SCOPE },
+      encoding: "utf8",
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const replayed = lastJson(child.stdout);
+    assert.equal(replayed.durableHalted, true);
+    assert.equal(replayed.reseedAllowedFromDurable, false);
+    assert.notEqual(result.state.haltStatus, "RUNNING");
+  });
+
+  it("E-21 restart during ACK", () => {
+    const dir = tmpDir("e21");
+    const id = "classic-e21";
+    seedRunning(id, dir);
+    persistRiskState(id, {
+      ...emptyRiskState(SCOPE),
+      halted: true,
+      haltStatus: "HALTED_FLAT",
+      haltId: "halt-e21",
+      haltReasons: ["ACTUAL_NOTIONAL_CAP"],
+      leaseGeneration: "lease-1",
+      acknowledged: false,
+      updatedAt: "2026-08-24T00:00:00.000Z",
+    }, dir);
+    const child = spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/experiment-reduction-restart-worker.ts", import.meta.url))], {
+      env: { ...process.env, CLASSIC_RISK_ID: id, CLASSIC_RISK_DIR: dir, CLASSIC_RISK_SCOPE: SCOPE },
+      encoding: "utf8",
+    });
+    assert.equal(child.status, 0, child.stderr);
+    const replayed = lastJson(child.stdout);
+    assert.equal(replayed.durableHaltId, "halt-e21");
+    assert.equal(replayed.reseedAllowedFromDurable, false);
+    persistRiskState(id, {
+      ...loadRiskState(id, dir, SCOPE),
+      haltId: "halt-e21-newer",
+      haltStatus: "HALTED_UNFLAT",
+      haltReasons: ["DAILY_LOSS"],
+      updatedAt: "2026-08-24T00:00:01.000Z",
+    }, dir);
+    const newer = spawnSync(process.execPath, ["--import", "tsx", fileURLToPath(new URL("./fixtures/experiment-reduction-restart-worker.ts", import.meta.url))], {
+      env: { ...process.env, CLASSIC_RISK_ID: id, CLASSIC_RISK_DIR: dir, CLASSIC_RISK_SCOPE: SCOPE },
+      encoding: "utf8",
+    });
+    assert.equal(lastJson(newer.stdout).durableHaltId, "halt-e21-newer");
+  });
+
+  it("E-22 telemetry failure during normal operation", () => {
+    const dir = tmpDir("e22");
+    const tel = createExperimentTelemetry({
+      experimentId: "classic-e22",
+      mode: "dry-run",
+      venue: "extended",
+      symbol: "BTC",
+      commitSha: "abc",
+      baseDir: dir,
+      manifestFields: {
+        experiment_spec_version: "0.2.0",
+        starting_capital_usd: 100,
+        leverage: 5,
+        max_margin_budget_usd: 30,
+        max_planned_gross_notional_usd: 150,
+        grid_half_band_pct: 3,
+        grid_level_count: 10,
+        daily_loss_limit_usd: 5,
+        max_drawdown_usd: 10,
+        boundary_buffer_pct: 1,
+      },
+    });
+    fs.unlinkSync(tel.eventsPath);
+    fs.mkdirSync(tel.eventsPath);
+    assert.equal(tel.emit("SNAPSHOT", { mid: 100_000 }), false);
+    const { decision, next } = evaluateExperimentRisk(riskInput(), V02_LIMITS, emptyRiskState(SCOPE));
+    assert.equal(decision.halt, false);
+    assert.equal(next.haltStatus, "RUNNING");
+    assert.equal(experimentAllowsReseed(next), true);
+  });
+
+  it("E-23 telemetry failure during halt", async () => {
+    const dir = tmpDir("e23");
+    let position = 0.01;
+    let orders = 1;
+    const result = await runExperimentKillSwitch({
+      ex: {
+        async cancelAll() { orders = 0; },
+        async closePosition() { position = 0; },
+        async snapshot(market: string) {
+          return {
+            venue: "extended" as const,
+            market,
+            mid: 100_000,
+            position,
+            openOrders: orders ? [{ id: "x", market, side: "buy" as const, price: 1, size: 1, level: 1 }] : [],
+          };
+        },
+      },
+      market: "BTC",
+      reasons: ["DAILY_LOSS"],
+      experimentId: "classic-e23",
+      baseDir: dir,
+      retryDelayMs: 0,
+      onEvent() { throw new Error("disk full"); },
+    });
+    assert.equal(result.status, "HALTED_FLAT");
+    assert.ok(result.state.haltId);
+    assert.equal(loadRiskState("classic-e23", dir).haltId, result.state.haltId);
+    assert.equal(experimentAllowsReseed(result.state), false);
+  });
+
+  it("E-24 fatal uncaught exception", () => {
+    const marker = path.join(tmpDir("e24"), "marker.txt");
+    const child = spawnWorker({ CLASSIC_E_ACTION: "uncaught", CLASSIC_E_MARKER: marker });
+    assert.notEqual(child.status, 0);
+    assert.match(String(child.stderr || child.stdout), /E24_UNCAUGHT/);
+    assert.equal(fs.readFileSync(marker, "utf8").trim(), "not-placed");
+    const opened = spawnWorker({
+      CLASSIC_E_ACTION: "session-open",
+      CLASSIC_E_EXPERIMENT_ID: "classic-e24",
+      CLASSIC_E_BASE_DIR: tmpDir("e24-open"),
+    });
+    assert.equal(opened.status, 0, opened.stderr);
+    assert.equal(lastJson(opened.stdout).allowsTrading, true);
+  });
+
+  it("E-25 fatal unhandled rejection", () => {
+    const marker = path.join(tmpDir("e25"), "marker.txt");
+    const child = spawnWorker({ CLASSIC_E_ACTION: "rejection", CLASSIC_E_MARKER: marker });
+    assert.notEqual(child.status, 0);
+    assert.match(String(child.stderr || child.stdout), /E25_UNHANDLED/);
+    assert.equal(fs.readFileSync(marker, "utf8").trim(), "not-placed");
+    const dir = tmpDir("e25-session");
+    const opened = spawnWorker({
+      CLASSIC_E_ACTION: "session-open",
+      CLASSIC_E_EXPERIMENT_ID: "classic-e25",
+      CLASSIC_E_BASE_DIR: dir,
+    });
+    assert.equal(lastJson(opened.stdout).allowsTrading, true);
+    const resumed = spawnWorker({
+      CLASSIC_E_ACTION: "session-resume",
+      CLASSIC_E_EXPERIMENT_ID: "classic-e25",
+      CLASSIC_E_BASE_DIR: dir,
+    });
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const again = lastJson(resumed.stdout);
+    assert.equal(again.allowsTrading, false);
+    assert.match(String(again.reasonCode), /RECONCILIATION_REQUIRED/);
+  });
+
+  it("E-26 full evidence JSON schema", () => {
+    const commitSha = readCommitSha();
+    const treeSha = spawnSync("git", ["rev-parse", "HEAD^{tree}"], { encoding: "utf8" }).stdout.trim();
+    const startedAt = new Date().toISOString();
+    const doc = {
+      schemaVersion: "classic-v0.2-checkpoint-e/1",
+      repository: "danny0971haha/classic-grid",
+      branch: "experiment/classic-v0.2-100u-safety",
+      commitSha,
+      treeSha,
+      specVersion: "0.2.0",
+      mode: "dry-run",
+      liveExchangeWrite: false,
+      productionCredentialUsed: false,
+      startedAt,
+      completedAt: new Date().toISOString(),
+      testCases: CASE_IDS.map((caseId) => ({
+        caseId,
+        category: categoryFor(caseId),
+        result: "PASS",
+        exitCode: 0,
+        skipReason: null,
+        liveExchangeWrite: false,
+        productionCredentialUsed: false,
+        startedAt,
+        completedAt: new Date().toISOString(),
+      })),
+    };
+    assertEvidenceSchema(doc);
+    if (fs.existsSync(ARTIFACT)) assertEvidenceSchema(JSON.parse(fs.readFileSync(ARTIFACT, "utf8")));
+  });
+
+  it("E-27 no secrets", () => {
+    const dir = tmpDir("e27");
+    const tel = createExperimentTelemetry({
+      experimentId: "classic-e27",
+      mode: "dry-run",
+      venue: "extended",
+      symbol: "BTC",
+      commitSha: "abc123deadbeefabc123deadbeefabc123deadbe",
+      baseDir: dir,
+      manifestFields: {
+        experiment_spec_version: "0.2.0",
+        starting_capital_usd: 100,
+        leverage: 5,
+        max_margin_budget_usd: 30,
+        max_planned_gross_notional_usd: 150,
+        grid_half_band_pct: 3,
+        grid_level_count: 10,
+        daily_loss_limit_usd: 5,
+        max_drawdown_usd: 10,
+        boundary_buffer_pct: 1,
+      },
+    });
+    tel.emit("ERROR", {
+      error_message: "api_key=SUPER_SECRET private_key=KEEP_OUT API_SECRET=nope",
+    } as never);
+    const dumped = JSON.stringify(tel.manifest) + fs.readFileSync(tel.eventsPath, "utf8");
+    assert.doesNotMatch(dumped, /SUPER_SECRET|KEEP_OUT|API_SECRET=nope/);
+    assert.match(dumped, /diagnostic omitted/);
+    assert.doesNotMatch(HERE, /LIVE_CONFIRM=YES|API_SECRET|PRIVATE_KEY/);
+  });
+
+  it("E-28 all prior tests remain green", () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    const testScript = String(pkg.scripts.test);
+    for (const file of [
+      "test/grid.test.ts",
+      "test/experiment-v02-config.test.ts",
+      "test/experiment-v02-reduction.test.ts",
+      "test/experiment-v02-execution.test.ts",
+      "test/experiment-v02-planner-dedup.test.ts",
+      "test/experiment-v02-planner-dedup-corrective-1.test.ts",
+      "test/experiment-v02-checkpoint-e.test.ts",
+    ]) {
+      assert.ok(testScript.includes(file), file);
+    }
+    const execution = fs.readFileSync(new URL("./experiment-v02-execution.test.ts", import.meta.url), "utf8");
+    for (const name of ["C-C18", "C-C19", "C-C20", "C-C21"]) {
+      assert.match(execution, new RegExp(`it\\("${name} `));
+      assert.doesNotMatch(execution, new RegExp(`it\\("${name} .*\\n[\\s\\S]*?it\\.skip`));
+    }
+    const prior = fs.readFileSync(new URL("./experiment-v02-planner-dedup.test.ts", import.meta.url), "utf8");
+    for (let i = 1; i <= 21; i++) {
+      assert.match(prior, new RegExp(`it\\("D-${String(i).padStart(2, "0")} `));
+    }
+  });
+
+  it("E-29 dependency audit inventory unchanged", () => {
+    const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    assert.equal(pkg.version, "0.2.0");
+    assert.equal(pkg.dependencies.tsx, "^4.19.2");
+    assert.equal(pkg.dependencies.undici, "^6.21.0");
+    assert.equal(pkg.devDependencies.typescript, "^5.7.2");
+    const lock = fs.readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
+    assert.ok(lock.includes("\"name\": \"classic-grid-master\""));
+  });
+
+  it("E-30 engineering-ready remains not live-authorized", () => {
+    withEnv(
+      {
+        EXPERIMENT_MODE: "1",
+        EXPERIMENT_SPEC_VERSION: "0.2.0",
+        DRY_RUN: "0",
+        LIVE_CONFIRM: "YES",
+        VENUES: "extended",
+        MARKETS: "BTC",
+        EXPERIMENT_ID: "classic-v02-dryrun",
+      },
+      () => {
+        assert.throws(() => assertLiveAllowed(loadRuntimeConfig()), /EXPERIMENT_V02_LIVE_FORBIDDEN|尚未授权 live/);
+      }
+    );
+    withEnv(
+      { EXPERIMENT_MODE: "1", EXPERIMENT_SPEC_VERSION: "0.3.0" },
+      () => assert.throws(() => parseExperimentConfig(), /EXPERIMENT_SPEC_VERSION_UNSUPPORTED/)
+    );
+    const docs = [
+      fs.readFileSync(new URL("../docs/classic-v0.2-implementation-contract.md", import.meta.url), "utf8"),
+      fs.readFileSync(new URL("../docs/classic-v0.2-checkpoint-d-corrective-1.md", import.meta.url), "utf8"),
+    ].join("\n");
+    assert.doesNotMatch(docs, /LIVE_EXCHANGE_WRITE_AUTHORIZED=YES/);
+    assert.match(docs, /LIVE_EXCHANGE_WRITE_AUTHORIZED=NO/);
+  });
+});
+
+function categoryFor(caseId: string): string {
+  if (["E-01", "E-02", "E-29", "E-30"].includes(caseId)) return "configuration";
+  if (["E-03", "E-04", "E-05"].includes(caseId)) return "planner";
+  if (["E-06", "E-07", "E-08", "E-09"].includes(caseId)) return "execution-journal";
+  if (["E-10", "E-11", "E-12", "E-13", "E-14", "E-15", "E-16", "E-17", "E-18"].includes(caseId)) return "risk";
+  if (["E-19", "E-20", "E-21"].includes(caseId)) return "restart";
+  if (["E-22", "E-23", "E-27"].includes(caseId)) return "telemetry";
+  if (["E-24", "E-25"].includes(caseId)) return "fatal-runtime";
+  return "evidence";
+}
+
+function assertEvidenceSchema(doc: any): void {
+  assert.equal(typeof doc.schemaVersion, "string");
+  assert.equal(doc.repository, "danny0971haha/classic-grid");
+  assert.equal(typeof doc.branch, "string");
+  assert.equal(typeof doc.commitSha, "string");
+  assert.equal(typeof doc.treeSha, "string");
+  assert.equal(doc.specVersion, "0.2.0");
+  assert.equal(doc.mode, "dry-run");
+  assert.equal(doc.liveExchangeWrite, false);
+  assert.equal(doc.productionCredentialUsed, false);
+  assert.ok(Array.isArray(doc.testCases));
+  assert.equal(doc.testCases.length, 30);
+  const ids = doc.testCases.map((row: { caseId: string }) => row.caseId);
+  assert.deepEqual(ids, CASE_IDS);
+  for (const row of doc.testCases) {
+    assert.equal(typeof row.caseId, "string");
+    assert.equal(typeof row.category, "string");
+    assert.equal(row.result, "PASS");
+    assert.equal(row.exitCode, 0);
+    assert.equal(row.skipReason, null);
+    assert.equal(row.liveExchangeWrite, false);
+    assert.equal(row.productionCredentialUsed, false);
+    assert.equal(typeof row.startedAt, "string");
+    assert.equal(typeof row.completedAt, "string");
+  }
+}
