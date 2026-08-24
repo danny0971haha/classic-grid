@@ -38,8 +38,8 @@ BASE_HEAD=8d52b67d234ed5a76bb972f566c41ae42e7dda5c
 BASE_TREE=5db57c5b43940195bc295d72dbf0367a9f8d108c
 IMPLEMENTATION_HEAD=69b4a6b608cd6ec95757bea0ca42b9dfb00f3f88
 IMPLEMENTATION_TREE=1482e0214593161114b7d6380e4b901926fc327c
-RESULT_HEAD=PENDING_DOCS_BIND
-RESULT_TREE=PENDING_DOCS_BIND
+RESULT_HEAD=5af0244b7dbe7956dd824bed8964260649a2751a
+RESULT_TREE=b4bb6bceb48c39de09d298e3f257335cabffcb5a
 ```
 
 Current-byte check at start of this corrective: HEAD and TREE matched `EXPECTED_START_*`. Working tree was clean. Branch was ff-only with `origin/experiment/classic-v0.2-100u-safety`. No reset and no force-push.
