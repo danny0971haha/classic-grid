@@ -36,8 +36,10 @@ BASE_HEAD=13a96e12b7fc29485cb46fe471fb3cf5c0604404
 BASE_TREE=b019ef52da1d14051781ecd63334def0dfc6463c
 IMPLEMENTATION_HEAD=1bc54a3e4706af6edd20426ea6e0eaacde61e181
 IMPLEMENTATION_TREE=afed733e5a3827a092fe2e921762229e22b97045
-RESULT_HEAD=PENDING_EVIDENCE_COMMIT
-RESULT_TREE=PENDING_EVIDENCE_COMMIT
+EVIDENCE_HEAD=bf6640a915b0619e0ae63e76120cf742fee0d8f1
+EVIDENCE_TREE=0f34382812563776abbd4be9362e22deb54da072
+RESULT_HEAD=bf6640a915b0619e0ae63e76120cf742fee0d8f1
+RESULT_TREE=0f34382812563776abbd4be9362e22deb54da072
 ```
 
 Current-byte check at start: HEAD and TREE matched `EXPECTED_START_*`. Working tree was clean. Branch was ff-only with `origin/experiment/classic-v0.2-100u-safety`. No reset and no force-push. Branch had not advanced beyond the accepted Checkpoint C head.
