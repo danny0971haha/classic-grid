@@ -37,6 +37,8 @@ EXPECTED_START_HEAD=ab673cadc8a12afb3051c5bbeb8ca53545de27f6
 EXPECTED_START_TREE=1b49f2a6d08f8ddd4521bb799fc737a1774955c7
 IMPLEMENTATION_HEAD=161a62aadd1227acd7b2e5264baf1adc1167a37c
 IMPLEMENTATION_TREE=39dc032b8ced106f7955329644dfaddd4a94c056
+STAGE_1_RESULT_HEAD=3f0376ef06944f3b673be64f841c01a56a9e3d43
+STAGE_1_RESULT_TREE=accb579d506ae0eb0cd096907a9a2b40b2b2ddf8
 PRIOR_TEST_TOTAL=301
 PRIOR_TEST_PASS=301
 PRIOR_TEST_FAIL=0
@@ -238,7 +240,7 @@ docs/classic-v0.2-checkpoint-d-corrective-1.md — no secrets
 ## KNOWN_LIMITATIONS
 
 - This note does not declare Checkpoint D PASS.
-- Checkpoint E, if started after this Stage 1 hard gate, remains a separate review candidate.
+- Stage 1 hard internal gate passed locally; Checkpoint E is a separate review candidate and is not self-declared PASS.
 - Execution records still do not advance planner completed-rung or `plan.filled`.
 - `plan.filled=[]` and `completedRungs=0` remain required; disappearance is not FILL.
 - Directory-fsync SIGKILL proof for Checkpoint C remains Ubuntu CI.
