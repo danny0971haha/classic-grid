@@ -8,6 +8,20 @@
 **Pre-contract v0.2 head:** `b9289ed485e9033f0867fc84e333c93e85e19dba`  
 **Functional specification:** [`docs/experiment-spec-v0.2-100u-safety.md`](./experiment-spec-v0.2-100u-safety.md)
 
+```text
+CHECKPOINT_D_CORRECTIVE_1=PASS
+CHECKPOINT_E=REJECT
+CHECKPOINT_E_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_E_SELF_DECLARED_PASS=NO
+LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
+REAL_FUND_TESTING_AUTHORIZED=NO
+DEPLOYMENT_AUTHORIZED=NO
+MERGE_AUTHORIZED=NO
+FORCE_PUSH_AUTHORIZED=NO
+```
+
+This status block does **not** declare Checkpoint E PASS. Independent review rejected the original Checkpoint E evidence. Corrective 1 is a review candidate only.
+
 ## 1. Decision
 
 The v0.2 branch is **not ready for feature implementation to be treated as accepted**, and it is not live-canary-ready.
