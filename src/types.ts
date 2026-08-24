@@ -83,6 +83,39 @@ export type Intent =
   | { type: "place"; order: DesiredOrder }
   | { type: "cancel"; orderId: string; market: string };
 
+/** Experiment-owned logical slot. Price alone is never a slot key. */
+export type PlannerLogicalSlot = {
+  market: string;
+  anchorEpoch: number;
+  side: Side;
+  levelIndex: number;
+};
+
+export type PlannerOrderClass =
+  | "VALID_OWNED_CURRENT"
+  | "MALFORMED_OWNED"
+  | "STALE_EPOCH_OWNED"
+  | "UNOWNED"
+  | "AMBIGUOUS";
+
+export type PlannerDiagnosticCode =
+  | "DUPLICATE_OWNED_CANCELLED"
+  | "MALFORMED_OWNED"
+  | "STALE_EPOCH_OWNED"
+  | "UNOWNED_BLOCKS_SLOT"
+  | "AMBIGUOUS_ORDER"
+  | "RECONCILIATION_REQUIRED"
+  | "MISSING_CANCEL_IDENTITY";
+
+export type PlannerDiagnostic = {
+  code: PlannerDiagnosticCode;
+  class: PlannerOrderClass;
+  slot?: PlannerLogicalSlot;
+  orderId?: string;
+  exchangeOrderId?: string;
+  clientOrderId?: string;
+};
+
 export type ApplyResult = {
   placed: number;
   cancelled: number;
