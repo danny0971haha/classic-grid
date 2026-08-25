@@ -1,0 +1,275 @@
+{
+  "schemaVersion": "classic-v0.2-security-audit-baseline/1",
+  "lockfile": {
+    "path": "package-lock.json",
+    "sha256": "f278d8b7f0d559839e35ee64e94db9e39c7d6037f5692d0cafa02ba6c6b254ed"
+  },
+  "policy": {
+    "failOnAnyCritical": true,
+    "allowResolvedHigh": true,
+    "existingHighAreNotCleared": true
+  },
+  "highFindings": [
+    {
+      "advisoryId": "1123967",
+      "sourceId": "1123967",
+      "ghsaId": "GHSA-gcfj-64vw-6mp9",
+      "package": "axios",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/axios"
+      ],
+      "vulnerableRange": ">=1.15.2 <1.18.0",
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "advisoryId": "1103747",
+      "sourceId": "1103747",
+      "ghsaId": "GHSA-3gc7-fjrx-p6mg",
+      "package": "bigint-buffer",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/bigint-buffer"
+      ],
+      "vulnerableRange": "<=1.1.5",
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "advisoryId": "1123259",
+      "sourceId": "1123259",
+      "ghsaId": "GHSA-96hv-2xvq-fx4p",
+      "package": "ws",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/viem/node_modules/ws"
+      ],
+      "vulnerableRange": ">=8.0.0 <8.21.0",
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    }
+  ],
+  "highPackages": [
+    {
+      "package": "@n1xyz/nord-ts",
+      "severity": "high",
+      "isDirect": true,
+      "dependencyPaths": [
+        "node_modules/@n1xyz/nord-ts"
+      ],
+      "vulnerableRange": ">=0.0.4",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@n1xyz/proton",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@n1xyz/proton"
+      ],
+      "vulnerableRange": "*",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@nadohq/client",
+      "severity": "high",
+      "isDirect": true,
+      "dependencyPaths": [
+        "node_modules/@nadohq/client"
+      ],
+      "vulnerableRange": "<=0.1.1 || >=0.10.0",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@nadohq/engine-client",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@nadohq/engine-client"
+      ],
+      "vulnerableRange": "<=0.1.1 || >=0.10.0",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": true
+    },
+    {
+      "package": "@nadohq/indexer-client",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@nadohq/indexer-client"
+      ],
+      "vulnerableRange": "<=0.1.1 || >=0.10.0",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": true
+    },
+    {
+      "package": "@nadohq/mobile-client",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@nadohq/mobile-client"
+      ],
+      "vulnerableRange": "*",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@nadohq/shared",
+      "severity": "high",
+      "isDirect": true,
+      "dependencyPaths": [
+        "node_modules/@nadohq/shared"
+      ],
+      "vulnerableRange": "<=0.1.1 || >=0.10.0",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@nadohq/shared",
+        "version": "0.9.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@nadohq/trigger-client",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@nadohq/trigger-client"
+      ],
+      "vulnerableRange": "<=0.1.2 || >=0.10.0",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@solana/buffer-layout-utils",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@solana/buffer-layout-utils"
+      ],
+      "vulnerableRange": "*",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "@solana/spl-token",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@solana/spl-token"
+      ],
+      "vulnerableRange": "*",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "axios",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/axios"
+      ],
+      "vulnerableRange": "1.0.0 - 1.17.0",
+      "viaHighAdvisoryIds": [
+        "1123967"
+      ],
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "bigint-buffer",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/bigint-buffer"
+      ],
+      "vulnerableRange": "*",
+      "viaHighAdvisoryIds": [
+        "1103747"
+      ],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "viem",
+      "severity": "high",
+      "isDirect": true,
+      "dependencyPaths": [
+        "node_modules/viem"
+      ],
+      "vulnerableRange": "<=0.0.0-wagmiv2-20230628182101 || 0.2.2 - 2.54.1",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "ws",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/viem/node_modules/ws"
+      ],
+      "vulnerableRange": "8.0.0 - 8.20.1",
+      "viaHighAdvisoryIds": [
+        "1123259"
+      ],
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.26.0",
+        "isSemVerMajor": true
+      }
+    }
+  ]
+}

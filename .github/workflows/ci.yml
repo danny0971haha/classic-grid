@@ -5,25 +5,42 @@ on:
   push:
     branches: [main, "experiment/**"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   compiler-and-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     env:
       CHECKPOINT_E_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CHECKPOINT_E_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
       EVIDENCE_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       EVIDENCE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Fetch pull-request head for identity
         if: github.event_name == 'pull_request'
-        run: git fetch --no-tags origin ${{ github.event.pull_request.head.sha }}
-      - uses: actions/setup-node@v4
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if git cat-file -e "${HEAD_SHA}^{commit}"; then
+            echo "source head already present after credential-free checkout"
+          else
+            git fetch --no-tags "https://github.com/${{ github.repository }}.git" "${HEAD_SHA}"
+          fi
+          git cat-file -e "${HEAD_SHA}^{commit}"
+          git rev-parse --verify "${HEAD_SHA}^{tree}"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22.23.2
           cache: npm
@@ -55,7 +72,7 @@ jobs:
       - name: Verify Checkpoint E evidence
         run: npm run evidence:checkpoint-e:verify
       - name: Upload Checkpoint E evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: classic-v0.2-checkpoint-e-results
           path: artifacts/classic-v0.2-checkpoint-e-results.json
@@ -65,14 +82,39 @@ jobs:
       - name: Verify Checkpoint F evidence
         run: npm run evidence:checkpoint-f:verify
       - name: Upload Checkpoint F evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: classic-v0.2-checkpoint-f-results
           path: artifacts/classic-v0.2-checkpoint-f-results.json
           if-no-files-found: error
-      - name: Dependency audit inventory
-        continue-on-error: true
-        run: npm audit --json
+      - name: Security checker tests
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/security
+          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts \
+            | node --import tsx scripts/security/audit-baseline.ts sanitize-log \
+            > artifacts/security/security-checker-tests.log
+      - name: Dependency audit policy
+        run: npm run audit:security-baseline
+      - name: Assert security inventory files
+        run: |
+          set -euo pipefail
+          for f in \
+            artifacts/security/audit.json \
+            artifacts/security/audit-baseline-verification.json \
+            artifacts/security/action-pin-inventory.json \
+            artifacts/security/package-lock.sha256 \
+            artifacts/security/security-checker-tests.log
+          do
+            test -s "$f"
+          done
+      - name: Upload security inventory
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: classic-v0.2-security-inventory-${{ github.event.pull_request.head.sha || github.sha }}
+          path: artifacts/security/
+          if-no-files-found: error
+          retention-days: 90
       - name: Whitespace check
         run: |
           git diff --check

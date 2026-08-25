@@ -8,10 +8,18 @@ secrets/
 
 # 运维脚本 / 探针（含生产环境地址与账户信息，勿提交公开库）
 deploy/
-scripts/
+scripts/*
+!scripts/security/
+!scripts/security/**
 
 # 生产快照 / 内部文档 / 研究模板
 docs/live-snapshot*.json
 .env.research.example
 定档.md
 vendor/risex/package-from-vps.json
+
+# Generated evidence and security inventory (CI artifacts only)
+artifacts/classic-v0.2-checkpoint-e-results.json
+artifacts/classic-v0.2-checkpoint-f-results.json
+artifacts/security/
+artifacts/security-tmp-*
