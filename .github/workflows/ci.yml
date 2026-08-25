@@ -14,6 +14,8 @@ jobs:
     env:
       CHECKPOINT_E_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
       CHECKPOINT_E_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+      EVIDENCE_SOURCE_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      EVIDENCE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +40,9 @@ jobs:
           echo "head=$(git rev-parse HEAD)"
           echo "tree=$(git rev-parse 'HEAD^{tree}')"
           echo "source_head=${CHECKPOINT_E_SOURCE_HEAD_SHA}"
+          echo "evidence_source_head=${EVIDENCE_SOURCE_HEAD_SHA}"
           echo "base=${CHECKPOINT_E_BASE_SHA}"
+          echo "evidence_base=${EVIDENCE_BASE_SHA}"
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:checkpoint-e
@@ -58,6 +62,8 @@ jobs:
           if-no-files-found: error
       - name: Generate Checkpoint F evidence
         run: npm run evidence:checkpoint-f
+      - name: Verify Checkpoint F evidence
+        run: npm run evidence:checkpoint-f:verify
       - name: Upload Checkpoint F evidence
         uses: actions/upload-artifact@v4
         with:

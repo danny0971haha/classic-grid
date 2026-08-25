@@ -719,7 +719,7 @@ function ingestRecord(p: {
     return;
   }
   if (!record.dedupeKey || typeof record.dedupeKey !== "string") {
-    reject("MALFORMED_IDENTITY");
+    latchRecon(ledger, "MALFORMED_IDENTITY");
     return;
   }
   if (String(record.venue || "").trim().toLowerCase() !== identity.venue) {
@@ -887,7 +887,8 @@ function ingestRecord(p: {
 export function ingestAuthoritativeDrain(p: {
   path: string;
   identity: StrategyLedgerIdentity;
-  drain: Pick<ExecutionJournalDrain, "authoritativeExecutions" | "faults" | "authority">;
+  drain: Pick<ExecutionJournalDrain, "authoritativeExecutions" | "faults" | "authority">
+    & Partial<Pick<ExecutionJournalDrain, "executions" | "authoritativeCount">>;
   ownershipPrefix: string;
   levels: number[];
   spacing: number;

@@ -36,7 +36,7 @@ AUTHORITATIVE_START_TREE=7e46f9db25240f2ff57c2403481502bc4b75ff18
 SOURCE_BRANCH=experiment/classic-v0.2-100u-safety
 ```
 
-Tested commit SHA and tree SHA are the Checkpoint F implementation commit after it lands on the branch. Bind them from `git rev-parse HEAD` / `git rev-parse HEAD^{tree}` at evidence generation time, and from GitHub Actions on push/PR. Do not hand-write PASS.
+Tested commit SHA and tree SHA are bound at evidence generation time. On `push` and local checkouts, `sourceHeadSha` and `testedCheckoutSha` may be the same commit. On `pull_request`, the GitHub merge checkout is `testedCheckoutSha` only. `sourceHeadSha` must come from `EVIDENCE_SOURCE_HEAD_SHA` or `github.event.pull_request.head.sha`. Evidence generation must not treat `git rev-parse HEAD` or `GITHUB_SHA` as the PR source head. Do not hand-write PASS.
 
 Local toolchain during implementation: Node v26.5.0 / npm 11.17.0. GitHub Actions must prove Node v22.23.2 / npm 10.9.8.
 
@@ -157,15 +157,16 @@ Local implementation run (Node v26.5.0 / npm 11.17.0). CI pin is Node v22.23.2 /
 
 | Command | Result |
 |---|---|
-| `npm run test:checkpoint-f` | 35 tests, 35 pass, 0 fail, 0 skipped, 0 todo, exit 0 |
-| `npm test` | `grid.test.ts OK` then node:test **393 pass / 0 fail / 0 skipped / 0 todo**, exit 0 |
+| `npm run test:checkpoint-f` | 40 tests, 40 pass, 0 fail, 0 skipped, 0 todo, exit 0 |
+| `npm test` | `grid.test.ts OK` then node:test TAP from the current `package.json` file list, exit 0 |
 | `npm run typecheck` / `npm run build` | `tsc --noEmit`, exit 0 |
-| `npm run check` | typecheck + full suite, same 393/0/0/0 |
+| `npm run check` | typecheck + full suite |
+| `npm run evidence:checkpoint-f` / `npm run evidence:checkpoint-f:verify` | schema `classic-v0.2-checkpoint-f/2`; independent verify required |
 | `git diff --check <start>...<HEAD>` | recorded against `3960e3634b1fc68ab90bd8f73cd6effd925932e2` after the implementation commit |
 
-Baseline before Checkpoint F was 358 node:test tests. 358 + 35 = 393. No prior test was deleted or skipped. Crash cases F-10..F-13 used a real child process and SIGKILL.
+Baseline before Checkpoint F was 358 node:test tests. Checkpoint F added F-01..F-40. Evidence identity tests live in `test/experiment-v02-checkpoint-f-evidence.test.ts`. No prior test was deleted or skipped. Crash cases F-10..F-13 used a real child process and SIGKILL.
 
-Tested commit SHA and tree SHA are the Checkpoint F implementation commit (`git rev-parse HEAD` / `git rev-parse HEAD^{tree}` at review time). Do not treat local Node v26 as a substitute for the pinned CI toolchain.
+On `pull_request`, `identity.sourceHeadSha` is the PR head and `identity.testedCheckoutSha` is the GitHub merge checkout. Bind them from `EVIDENCE_SOURCE_HEAD_SHA` / `git rev-parse HEAD` at review time. Do not treat local Node v26 as a substitute for the pinned CI toolchain. Do not treat `requestedVerdict` or a self-ACCEPT field as a gate result.
 
 ## Known limitations
 

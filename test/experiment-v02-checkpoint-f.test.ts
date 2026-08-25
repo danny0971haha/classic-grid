@@ -1000,6 +1000,117 @@ describe("Checkpoint F authoritative execution consumption", () => {
     assert.equal(loaded.condition, "VALID");
     assert.equal(loaded.ledger.obligations.length, 1);
   });
+
+  it("F-36 non-authoritative and inferred executions are ignored", () => {
+    const dir = tmpDir("f36");
+    const rejected = ingest(dir, [exec({ tid: "tr-na", authoritative: false })]);
+    assert.ok(rejected.ledger!.reconciliationCodes.includes("NOT_AUTHORITATIVE"));
+    assert.equal(plannerObligationsFromLedger(rejected.ledger!).length, 0);
+    const inferred = exec({ tid: "tr-inf" });
+    const ignored = ingestAuthoritativeDrain({
+      path: ledgerPath(dir, "inf"),
+      identity: identity("inf"),
+      drain: {
+        executions: [inferred],
+        authoritativeExecutions: [],
+        faults: [],
+        authority: "trusted",
+        authoritativeCount: 0,
+      },
+      ownershipPrefix: PREFIX,
+      levels: LEVELS,
+      spacing: SPACING,
+      sizeBase: SIZE,
+      mode: "neutral",
+    });
+    assert.equal(ignored.proven, true);
+    assert.equal(ignored.ledger!.obligations.length, 0);
+    assert.equal(ignored.newlyIngestedDedupeKeys.length, 0);
+  });
+
+  it("F-37 empty or malformed dedupeKey fails closed", () => {
+    const dir = tmpDir("f37");
+    const emptyKey = { ...exec({ tid: "tr-empty" }), dedupeKey: "" };
+    const result = ingestAuthoritativeDrain({
+      path: ledgerPath(dir),
+      identity: identity(),
+      drain: drainOf([emptyKey]),
+      ownershipPrefix: PREFIX,
+      levels: LEVELS,
+      spacing: SPACING,
+      sizeBase: SIZE,
+      mode: "neutral",
+    });
+    assert.equal(result.proven, true);
+    assert.ok(result.ledger!.reconciliationCodes.includes("MALFORMED_IDENTITY"));
+    assert.equal(plannerObligationsFromLedger(result.ledger!).length, 0);
+    assert.equal(result.riskIncreaseBlocked, true);
+  });
+
+  it("F-38 non-finite quantity fails closed", () => {
+    const dir = tmpDir("f38");
+    const nanQty = ingest(dir, [exec({ tid: "tr-nan", qty: Number.NaN })]);
+    assert.ok(nanQty.ledger!.reconciliationCodes.includes("NON_FINITE_FIELDS"));
+    assert.equal(plannerObligationsFromLedger(nanQty.ledger!).length, 0);
+    const infQty = ingest(tmpDir("f38b"), [exec({ tid: "tr-inf-qty", qty: Number.POSITIVE_INFINITY })]);
+    assert.ok(infQty.ledger!.reconciliationCodes.includes("NON_FINITE_FIELDS"));
+    assert.equal(plannerObligationsFromLedger(infQty.ledger!).length, 0);
+  });
+
+  it("F-39 overfill against proven original quantity fails closed", () => {
+    const dir = tmpDir("f39");
+    const first = ingest(dir, [exec({
+      tid: "tr-of1",
+      qty: 0.0004,
+      cum: 0.0004,
+      remaining: 0.0006,
+      oid: "ord-over",
+    })]);
+    assert.equal(first.ledger!.obligations[0]!.authoritativeExecutedQuantity, 0.0004);
+    const over = ingest(dir, [exec({
+      tid: "tr-of2",
+      qty: 0.0008,
+      cum: 0.0012,
+      remaining: 0,
+      seq: 3,
+      oid: "ord-over",
+    })]);
+    assert.ok(over.ledger!.reconciliationCodes.includes("CUMULATIVE_EXCEEDS_ORIGINAL"));
+    assert.equal(over.ledger!.ingested.filter((row) => row.accepted).reduce((s, row) => s + row.incrementalQuantity, 0), 0.0004);
+    assert.equal(plannerObligationsFromLedger(over.ledger!).length, 1);
+    assert.equal(plannerObligationsFromLedger(over.ledger!)[0]!.outstandingQuantity, 0.0004);
+  });
+
+  it("F-40 truncated clientOrderId cannot collide with or claim an exact replacement", () => {
+    const dir = tmpDir("f40");
+    const first = ingest(dir, [exec({ tid: "tr-trunc-src" })]);
+    const exact = first.ledger!.obligations[0]!.replacementClientOrderId!;
+    assert.match(exact, /-r-[a-f0-9]{16}$/);
+    const truncated = exact.slice(0, -2);
+    assert.notEqual(truncated, exact);
+    const parsedTrunc = truncated.startsWith(PREFIX);
+    assert.equal(parsedTrunc, true);
+    const replay = ingest(dir, [exec({
+      tid: "tr-trunc-fill",
+      cid: truncated,
+      side: "sell",
+      level: 1,
+      seq: 3,
+      oid: "ord-trunc",
+    })]);
+    assert.ok(replay.ledger!.reconciliationCodes.includes("MALFORMED_OWNERSHIP_PREFIX"));
+    const exactRow = replay.ledger!.obligations.find((row) => row.replacementClientOrderId === exact);
+    assert.ok(exactRow);
+    assert.equal(exactRow!.lifecycle, "READY");
+    assert.equal(replay.ledger!.obligations.filter((row) => row.replacementClientOrderId === truncated).length, 0);
+    const openOrders = [live({
+      id: "rep-exact",
+      side: "sell",
+      level: 1,
+      clientOrderId: exact,
+    })];
+    assert.equal(replacementPlaces(plan(openOrders, replay.ledger).intents).length, 0);
+  });
 });
 
 void STRATEGY_LEDGER_SCHEMA_VERSION;
