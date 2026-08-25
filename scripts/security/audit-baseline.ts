@@ -5,11 +5,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   BASELINE_RELATIVE_PATH,
   LOCKFILE_RELATIVE_PATH,
-  WORKFLOW_RELATIVE_PATH,
   actionInventoryDocument,
   evaluateAuditPolicy,
   failedPolicy,
-  parseActionPins,
+  inventoryGitRepository,
   parseAuditReport,
   readAuditFile,
   repoPath,
@@ -55,8 +54,8 @@ function commandFailedResult(baseline: AuditBaseline, lockfileSha256: string, co
   return failedPolicy(code, lockfileSha256, baseline.lockfile.sha256);
 }
 
-function writeActionInventory(root: string, outDir: string): ReturnType<typeof parseActionPins> {
-  const actionInventory = parseActionPins(fs.readFileSync(repoPath(root, WORKFLOW_RELATIVE_PATH), "utf8"));
+function writeActionInventory(root: string, outDir: string): ReturnType<typeof inventoryGitRepository> {
+  const actionInventory = inventoryGitRepository(root, { requireProductionPins: true });
   writeRelative(
     root,
     path.join(outDir, "action-pin-inventory.json"),
@@ -120,7 +119,7 @@ function main(argv: string[]): void {
   const auditJsonIndex = argv.indexOf("--audit-json");
   const auditJsonPath = auditJsonIndex >= 0 ? argv[auditJsonIndex + 1] : undefined;
   const result = runAuditBaseline(root, { auditJsonPath });
-  const actions = parseActionPins(fs.readFileSync(repoPath(root, WORKFLOW_RELATIVE_PATH), "utf8"));
+  const actions = inventoryGitRepository(root, { requireProductionPins: true });
   if (!result.ok || !actions.overallPolicyOk) {
     console.error(JSON.stringify({
       ok: false,

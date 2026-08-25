@@ -91,11 +91,13 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/security
-          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts \
+          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts \
             | node --import tsx scripts/security/audit-baseline.ts sanitize-log \
             > artifacts/security/security-checker-tests.log
       - name: Dependency audit policy
         run: npm run audit:security-baseline
+      - name: Verify GitHub Actions inventory
+        run: npm run verify:action-inventory
       - name: Assert security inventory files
         run: |
           set -euo pipefail

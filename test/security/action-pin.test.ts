@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { describe, it } from "node:test";
 import {
   evaluateWorkflowActions,
+  inventoryGitRepository,
   parseActionPins,
 } from "../../scripts/security/action-pin-policy.js";
 
@@ -14,6 +15,8 @@ const OTHER_SHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 function workflow(steps: string): string {
   return `name: ci
 on: push
+permissions:
+  contents: read
 jobs:
   x:
     runs-on: ubuntu-latest
@@ -127,12 +130,13 @@ describe("GitHub Action uses pin policy", () => {
     assert.equal(inventory.occurrences[0]?.identity, "evil/unknown");
   });
 
-  it("G-08 accepts only safe relative local actions", () => {
+  it("G-08 rejects local actions unless a Git index can verify them", () => {
     const safe = evaluateWorkflowActions(workflow("      - uses: ./.github/actions/safe-action\n"));
     assert.equal(safe.occurrences[0]?.kind, "local");
-    assert.equal(safe.occurrences[0]?.allowlisted, true);
-    assert.equal(safe.occurrences[0]?.immutablePin, true);
-    assert.equal(safe.occurrences[0]?.codes.includes("ACTION_LOCAL_PATH_UNSAFE"), false);
+    assert.equal(safe.occurrences[0]?.allowlisted, false);
+    assert.equal(safe.occurrences[0]?.immutablePin, false);
+    assert.equal(safe.overallPolicyOk, false);
+    assert.ok(safe.codes.includes("ACTION_LOCAL_UNTRACKED"));
 
     const parent = evaluateWorkflowActions(workflow("      - uses: ../escape\n"));
     assert.equal(parent.overallPolicyOk, false);
@@ -147,12 +151,19 @@ describe("GitHub Action uses pin policy", () => {
     assert.ok(absolute.codes.includes("ACTION_LOCAL_PATH_UNSAFE"));
   });
 
-  it("G-09 rejects a docker action tag without a digest", () => {
-    const inventory = evaluateWorkflowActions(workflow("      - uses: docker://alpine:3.20\n"));
-    assert.equal(inventory.overallPolicyOk, false);
-    assert.ok(inventory.codes.includes("ACTION_DOCKER_DIGEST_MISSING"));
-    assert.equal(inventory.occurrences[0]?.kind, "docker");
-    assert.equal(inventory.occurrences[0]?.immutablePin, false);
+  it("G-09 rejects every docker action, including digest-pinned images", () => {
+    const tagged = evaluateWorkflowActions(workflow("      - uses: docker://alpine:3.20\n"));
+    assert.equal(tagged.overallPolicyOk, false);
+    assert.ok(tagged.codes.includes("ACTION_DOCKER_FORBIDDEN"));
+    assert.equal(tagged.occurrences[0]?.kind, "docker");
+    assert.equal(tagged.occurrences[0]?.immutablePin, false);
+    assert.equal(tagged.occurrences[0]?.allowlisted, false);
+
+    const digested = evaluateWorkflowActions(workflow("      - uses: docker://evil/image@sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n"));
+    assert.equal(digested.overallPolicyOk, false);
+    assert.ok(digested.codes.includes("ACTION_DOCKER_FORBIDDEN"));
+    assert.equal(digested.occurrences[0]?.kind, "docker");
+    assert.equal(digested.occurrences[0]?.allowlisted, false);
   });
 
   it("G-10 accepts the current workflow and inventories every uses occurrence", () => {
@@ -160,7 +171,7 @@ describe("GitHub Action uses pin policy", () => {
     const inventory = parseActionPins(workflowText);
     assert.equal(inventory.overallPolicyOk, true);
     assert.deepEqual(inventory.codes, ["PASS"]);
-    assert.equal(inventory.schemaVersion, "classic-v0.2-action-pin-inventory/2");
+    assert.equal(inventory.schemaVersion, "classic-v0.2-action-pin-inventory/3");
     assert.equal(inventory.checkoutOccurrenceCount, 1);
     assert.equal(inventory.setupNodeOccurrenceCount, 1);
     assert.ok(inventory.uploadArtifactOccurrenceCount >= 1);
@@ -180,5 +191,82 @@ describe("GitHub Action uses pin policy", () => {
         assert.equal(row.checkoutFetchDepth, 0);
       }
     }
+  });
+
+  it("G-13 parses quoted uses through the YAML parser", () => {
+    const inventory = evaluateWorkflowActions(workflow(
+      `      - uses: "actions/checkout@${CHECKOUT}"\n` +
+      "        with:\n" +
+      "          persist-credentials: false\n" +
+      "          fetch-depth: 0\n",
+    ));
+    assert.equal(inventory.occurrences[0]?.raw, `actions/checkout@${CHECKOUT}`);
+    assert.equal(inventory.occurrences[0]?.allowlisted, true);
+  });
+
+  it("G-14 parses flow-mapping uses or fails closed", () => {
+    const inventory = evaluateWorkflowActions(`name: ci
+on: push
+permissions:
+  contents: read
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - { uses: actions/checkout@${CHECKOUT}, with: { persist-credentials: false, fetch-depth: 0 } }
+`);
+    assert.equal(inventory.occurrences.length, 1);
+    assert.equal(inventory.occurrences[0]?.identity, "actions/checkout");
+    assert.equal(inventory.occurrences[0]?.ref, CHECKOUT);
+    assert.equal(inventory.occurrences[0]?.allowlisted, true);
+    assert.equal(inventory.occurrences[0]?.checkoutPersistCredentials, false);
+    assert.equal(inventory.occurrences[0]?.checkoutFetchDepth, 0);
+    assert.equal(inventory.overallPolicyOk, true);
+  });
+
+  it("rejects duplicate mapping keys and alias bypasses", () => {
+    const duplicate = evaluateWorkflowActions(`name: ci
+on: push
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@${CHECKOUT}
+`);
+    assert.equal(duplicate.overallPolicyOk, false);
+    assert.ok(duplicate.codes.includes("ACTION_YAML_DUPLICATE_KEY") || duplicate.codes.includes("ACTION_YAML_MALFORMED"));
+
+    const aliased = evaluateWorkflowActions(`name: ci
+on: push
+permissions:
+  contents: read
+jobs:
+  x:
+    runs-on: ubuntu-latest
+    steps:
+      - &evil
+        uses: actions/cache@v4
+      - *evil
+`);
+    assert.equal(aliased.overallPolicyOk, false);
+    assert.ok(aliased.codes.includes("ACTION_YAML_ALIAS") || aliased.codes.includes("ACTION_REF_NOT_IMMUTABLE"));
+  });
+
+  it("G-16/G-17 accepts the official repository inventory and exact approved SHAs", () => {
+    const inventory = inventoryGitRepository(process.cwd(), { requireProductionPins: true });
+    assert.equal(inventory.overallPolicyOk, true);
+    assert.deepEqual(inventory.codes, ["PASS"]);
+    assert.deepEqual(inventory.trackedManifests, [".github/workflows/ci.yml"]);
+    assert.ok(inventory.scannedFiles.includes(".github/workflows/ci.yml"));
+    const tuples = new Set(inventory.occurrences.filter((row) => row.kind === "external").map((row) => `${row.identity}@${row.ref}`));
+    assert.ok(tuples.has(`actions/checkout@${CHECKOUT}`));
+    assert.ok(tuples.has(`actions/setup-node@${SETUP_NODE}`));
+    assert.ok(tuples.has(`actions/upload-artifact@${UPLOAD}`));
+    assert.equal(inventory.occurrences.every((row) => row.kind === "external" && row.allowlisted === true), true);
+    assert.equal(inventory.dockerActionCount, 0);
+    assert.equal(inventory.graph.cycles.length, 0);
   });
 });

@@ -386,7 +386,7 @@ describe("security audit baseline policy", () => {
     const inventory = parseActionPins(workflow);
     assert.equal(inventory.overallPolicyOk, true);
     assert.deepEqual(inventory.codes, ["PASS"]);
-    assert.equal(inventory.schemaVersion, "classic-v0.2-action-pin-inventory/2");
+    assert.equal(inventory.schemaVersion, "classic-v0.2-action-pin-inventory/3");
     assert.equal(inventory.checkoutOccurrenceCount, 1);
     assert.equal(inventory.setupNodeOccurrenceCount, 1);
     assert.ok(inventory.uploadArtifactOccurrenceCount >= 1);

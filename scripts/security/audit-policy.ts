@@ -5,11 +5,12 @@ import path from "node:path";
 import {
   ACTION_PIN_SCHEMA,
   evaluateWorkflowActions,
+  inventoryGitRepository,
   parseActionPins,
   type ActionPinInventory,
 } from "./action-pin-policy.js";
 
-export { ACTION_PIN_SCHEMA, evaluateWorkflowActions, parseActionPins };
+export { ACTION_PIN_SCHEMA, evaluateWorkflowActions, inventoryGitRepository, parseActionPins };
 export type { ActionPinInventory, ActionPolicyCode, ActionUseOccurrence } from "./action-pin-policy.js";
 
 export const BASELINE_SCHEMA = "classic-v0.2-security-audit-baseline/1";
@@ -757,8 +758,14 @@ export function actionInventoryDocument(inventory: ActionPinInventory): Record<s
     uploadArtifactOccurrenceCount: inventory.uploadArtifactOccurrenceCount,
     unpinnedExternalActions: inventory.unpinnedExternalActions,
     unsafeCheckouts: inventory.unsafeCheckouts,
+    dockerActionCount: inventory.dockerActionCount,
+    trackedManifests: inventory.trackedManifests,
+    scannedFiles: inventory.scannedFiles,
+    allowlist: inventory.allowlist,
+    graph: inventory.graph,
     occurrences: inventory.occurrences.map((row) => ({
       index: row.index,
+      file: row.file,
       line: row.line,
       raw: row.raw,
       kind: row.kind,
@@ -768,6 +775,7 @@ export function actionInventoryDocument(inventory: ActionPinInventory): Record<s
       allowlisted: row.allowlisted,
       checkoutPersistCredentials: row.checkoutPersistCredentials,
       checkoutFetchDepth: row.checkoutFetchDepth,
+      source: row.source,
       codes: row.codes,
     })),
   }) as Record<string, unknown>;
