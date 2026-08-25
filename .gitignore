@@ -21,5 +21,9 @@ vendor/risex/package-from-vps.json
 # Generated evidence and security inventory (CI artifacts only)
 artifacts/classic-v0.2-checkpoint-e-results.json
 artifacts/classic-v0.2-checkpoint-f-results.json
+artifacts/classic-v0.2-dependency-boundary-corrective-1.json
 artifacts/security/
 artifacts/security-tmp-*
+artifacts/extended-canary/
+packages/extended-canary/node_modules/
+packages/extended-canary/dist/

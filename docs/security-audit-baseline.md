@@ -15,11 +15,13 @@ CHECKPOINT_F_ACCEPTED_IMPLEMENTATION_BASE=79c88bd08eaf96d069b7eaf947feb7b70739b5
 CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
 CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REJECT
-CHECKPOINT_F_CI_HARDENING_CORRECTIVE_2=REVIEW_CANDIDATE
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_2=ACCEPT_AT_EXACT_HEAD
 CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
 DEPENDENCY_REMEDIATION=BLOCKED
 DEPENDENCY_SECURITY_CLEARANCE=NO
+GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
+EXTENDED_CANARY_DEPENDENCY_BOUNDARY=REVIEW_CANDIDATE
 LIVE_RELEASE_BLOCKED=YES
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
@@ -139,7 +141,21 @@ LIVE_RELEASE_BLOCKED=YES
 REAL_FUND_TESTING_AUTHORIZED=NO
 ```
 
-No `fix(deps)` commit is created. The committed baseline file is unchanged.
+No `fix(deps)` commit is created for the root lockfile. The committed root baseline file is unchanged.
+
+## Extended canary boundary (not global clearance)
+
+Root High findings cannot be removed without breaking unrelated N1/Nado/Phoenix/PopDEX adapters. Corrective 1 adds `packages/extended-canary` with a separate production lockfile. The canary artifact is installable without the root `node_modules` and must audit at `critical=0` / `high=0`. That result is **not** `GLOBAL_DEPENDENCY_SECURITY_CLEARANCE`.
+
+```text
+GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
+EXTENDED_CANARY_DEPENDENCY_BOUNDARY=REVIEW_CANDIDATE
+LIVE_RELEASE_BLOCKED=YES
+independentReview=NOT_PERFORMED
+gateStatus=NOT_EMITTED
+```
+
+See `docs/classic-v0.2-dependency-boundary-corrective-1.md`.
 
 ## Checker
 

@@ -69,8 +69,9 @@ import {
 
 export { applyPlannerIntentGate };
 import { loadVenueSessionCounters } from "./ledger.js";
-import { getOfficialCache, refreshOfficialStats } from "./officialStats.js";
-import { createExecutor, type VenueExecutor } from "./venues/index.js";
+import type { OfficialBundle } from "./officialStats.js";
+import type { ExecutorFactory } from "./venues/factory.js";
+import type { VenueExecutor } from "./venues/types.js";
 import type { GridParams, Side, VenueId, VenueSnapshot } from "./types.js";
 import {
   classifyTrade,
@@ -81,6 +82,49 @@ import {
   isSoftPlaceError,
   tgOpen,
 } from "./telegram.js";
+
+export type LoopRuntimeBindings = {
+  createExecutor?: ExecutorFactory;
+  refreshOfficialStats?: (opts?: {
+    force?: boolean;
+    minIntervalMs?: number;
+  }) => Promise<OfficialBundle>;
+  getOfficialCache?: () => OfficialBundle | null | undefined;
+};
+
+let boundCreateExecutor: ExecutorFactory | null = null;
+let boundGetOfficialCache: LoopRuntimeBindings["getOfficialCache"] | null = null;
+let boundRefreshOfficialStats: LoopRuntimeBindings["refreshOfficialStats"] | null = null;
+
+async function bindLoopRuntime(bindings?: LoopRuntimeBindings): Promise<void> {
+  boundCreateExecutor =
+    bindings?.createExecutor ?? (await import("./venues/index.js")).createExecutor;
+  if (bindings?.refreshOfficialStats && bindings?.getOfficialCache) {
+    boundRefreshOfficialStats = bindings.refreshOfficialStats;
+    boundGetOfficialCache = bindings.getOfficialCache;
+    return;
+  }
+  const official = await import("./officialStats.js");
+  boundRefreshOfficialStats = bindings?.refreshOfficialStats ?? official.refreshOfficialStats;
+  boundGetOfficialCache = bindings?.getOfficialCache ?? official.getOfficialCache;
+}
+
+function createExecutor(venue: VenueId, dryRun: boolean): VenueExecutor {
+  if (!boundCreateExecutor) throw new Error("EXECUTOR_FACTORY_UNBOUND");
+  return boundCreateExecutor(venue, dryRun);
+}
+
+function getOfficialCache(): OfficialBundle | null | undefined {
+  return boundGetOfficialCache ? boundGetOfficialCache() : undefined;
+}
+
+async function refreshOfficialStats(opts?: {
+  force?: boolean;
+  minIntervalMs?: number;
+}): Promise<OfficialBundle> {
+  if (!boundRefreshOfficialStats) throw new Error("OFFICIAL_STATS_UNBOUND");
+  return boundRefreshOfficialStats(opts);
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
@@ -996,7 +1040,11 @@ export async function runLoop(opts?: {
   once?: boolean;
   /** Offline fault-injection seam. It can only force a fail-closed startup error. */
   lifecycleFaultAt?: RunLoopLifecycleFaultPoint;
+  createExecutor?: ExecutorFactory;
+  refreshOfficialStats?: LoopRuntimeBindings["refreshOfficialStats"];
+  getOfficialCache?: LoopRuntimeBindings["getOfficialCache"];
 }): Promise<void> {
+  await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
   const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.dryRun ? "dry-run" : "")).trim();
@@ -1414,7 +1462,8 @@ export async function runLoop(opts?: {
   }
 }
 
-export async function runStatus(): Promise<void> {
+export async function runStatus(opts?: LoopRuntimeBindings): Promise<void> {
+  await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
   const dry = cfg.dryRun;
   if (dry) {
@@ -1451,7 +1500,8 @@ export async function runStatus(): Promise<void> {
   }
 }
 
-export async function runFlat(): Promise<void> {
+export async function runFlat(opts?: LoopRuntimeBindings): Promise<void> {
+  await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
   if (cfg.dryRun) {

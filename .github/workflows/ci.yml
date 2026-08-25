@@ -91,13 +91,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/security
-          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts \
+          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts test/security/extended-canary-boundary.test.ts \
             | node --import tsx scripts/security/audit-baseline.ts sanitize-log \
             > artifacts/security/security-checker-tests.log
       - name: Dependency audit policy
         run: npm run audit:security-baseline
       - name: Verify GitHub Actions inventory
         run: npm run verify:action-inventory
+      - name: Extended canary dependency boundary
+        run: npm run verify:extended-canary
+      - name: Record dependency-boundary evidence
+        run: npm run evidence:dependency-boundary
       - name: Assert security inventory files
         run: |
           set -euo pipefail
@@ -106,7 +110,10 @@ jobs:
             artifacts/security/audit-baseline-verification.json \
             artifacts/security/action-pin-inventory.json \
             artifacts/security/package-lock.sha256 \
-            artifacts/security/security-checker-tests.log
+            artifacts/security/security-checker-tests.log \
+            artifacts/security/extended-canary-verification.json \
+            artifacts/security/extended-canary-audit.json \
+            artifacts/classic-v0.2-dependency-boundary-corrective-1.json
           do
             test -s "$f"
           done
@@ -117,6 +124,12 @@ jobs:
           path: artifacts/security/
           if-no-files-found: error
           retention-days: 90
+      - name: Upload dependency-boundary evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: classic-v0.2-dependency-boundary-corrective-1
+          path: artifacts/classic-v0.2-dependency-boundary-corrective-1.json
+          if-no-files-found: error
       - name: Whitespace check
         run: |
           git diff --check

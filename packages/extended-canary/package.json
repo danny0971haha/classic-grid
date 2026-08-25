@@ -1,0 +1,26 @@
+{
+  "name": "@classic-grid/extended-canary",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Extended-only 100U safety canary production artifact. This is not a global repository dependency-security clearance.",
+  "scripts": {
+    "start": "node --import tsx src/cli/run-extended-canary.ts",
+    "start:once": "node --import tsx src/cli/run-extended-canary.ts --once"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "package-lock.json",
+    "README.md",
+    "src",
+    "vendor",
+    "public"
+  ],
+  "dependencies": {
+    "tsx": "^4.19.2",
+    "undici": "^6.21.0",
+    "ws": "^8.21.3"
+  }
+}
