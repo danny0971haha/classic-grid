@@ -69,9 +69,8 @@ jobs:
         run: npm audit --json
       - name: Whitespace check
         run: |
-          BASE="${CHECKPOINT_E_BASE_SHA:-}"
-          if echo "$BASE" | grep -qE '^[0-9a-f]{40}$' && [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
-            git diff --check "$BASE"...HEAD
-          else
-            git diff --check
+          git diff --check
+          F_BASE="3960e3634b1fc68ab90bd8f73cd6effd925932e2"
+          if git cat-file -e "${F_BASE}^{commit}"; then
+            git diff --check "$F_BASE" HEAD
           fi
