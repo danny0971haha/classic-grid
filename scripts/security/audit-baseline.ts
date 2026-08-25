@@ -6,6 +6,7 @@ import {
   BASELINE_RELATIVE_PATH,
   LOCKFILE_RELATIVE_PATH,
   WORKFLOW_RELATIVE_PATH,
+  actionInventoryDocument,
   evaluateAuditPolicy,
   failedPolicy,
   parseActionPins,
@@ -54,6 +55,16 @@ function commandFailedResult(baseline: AuditBaseline, lockfileSha256: string, co
   return failedPolicy(code, lockfileSha256, baseline.lockfile.sha256);
 }
 
+function writeActionInventory(root: string, outDir: string): ReturnType<typeof parseActionPins> {
+  const actionInventory = parseActionPins(fs.readFileSync(repoPath(root, WORKFLOW_RELATIVE_PATH), "utf8"));
+  writeRelative(
+    root,
+    path.join(outDir, "action-pin-inventory.json"),
+    `${JSON.stringify(actionInventoryDocument(actionInventory), null, 2)}\n`,
+  );
+  return actionInventory;
+}
+
 export function runAuditBaseline(root = repoRootFromHere(), options: {
   auditJsonPath?: string;
   outDir?: string;
@@ -68,6 +79,7 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
     if (!loaded.ok) {
       const result = commandFailedResult(baseline, lockfileSha256, "AUDIT_FILE_MISSING");
       writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
+      writeActionInventory(root, outDir);
       return result;
     }
     auditRaw = loaded.raw;
@@ -76,6 +88,7 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
     if (!audited.ok) {
       const result = commandFailedResult(baseline, lockfileSha256, "AUDIT_COMMAND_FAILED");
       writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
+      writeActionInventory(root, outDir);
       return result;
     }
     auditRaw = audited.raw;
@@ -89,11 +102,7 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
   writeRelative(root, path.join(outDir, "audit.json"), `${JSON.stringify(parsed.ok ? parsed.raw : { malformed: true }, null, 2)}\n`);
   writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
   writeRelative(root, path.join(outDir, "package-lock.sha256"), `${lockfileSha256}  ${LOCKFILE_RELATIVE_PATH}\n`);
-  writeRelative(
-    root,
-    path.join(outDir, "action-pin-inventory.json"),
-    `${JSON.stringify(parseActionPins(fs.readFileSync(repoPath(root, WORKFLOW_RELATIVE_PATH), "utf8")), null, 2)}\n`,
-  );
+  writeActionInventory(root, outDir);
   return result;
 }
 
@@ -111,16 +120,31 @@ function main(argv: string[]): void {
   const auditJsonIndex = argv.indexOf("--audit-json");
   const auditJsonPath = auditJsonIndex >= 0 ? argv[auditJsonIndex + 1] : undefined;
   const result = runAuditBaseline(root, { auditJsonPath });
-  if (!result.ok) {
-    console.error(JSON.stringify({ ok: false, codes: result.codes }, null, 2));
+  const actions = parseActionPins(fs.readFileSync(repoPath(root, WORKFLOW_RELATIVE_PATH), "utf8"));
+  if (!result.ok || !actions.overallPolicyOk) {
+    console.error(JSON.stringify({
+      ok: false,
+      codes: result.codes,
+      actionCodes: actions.codes,
+      metadataMatchesObserved: result.metadataMatchesObserved,
+      overallPolicyOk: false,
+    }, null, 2));
     process.exit(1);
   }
   console.log(JSON.stringify({
     ok: true,
     codes: result.codes,
+    metadata: result.metadata,
+    observed: result.observed,
+    metadataMatchesObserved: result.metadataMatchesObserved,
     high: result.highCount,
     critical: result.criticalCount,
+    total: result.totalCount,
     resolvedHigh: result.resolvedHigh.map((row) => row.advisoryId),
+    actionUsesTotal: actions.actionUsesTotal,
+    unpinnedExternalActions: actions.unpinnedExternalActions,
+    unsafeCheckouts: actions.unsafeCheckouts,
+    existingHighAreNotCleared: true,
   }, null, 2));
 }
 

@@ -2,19 +2,34 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import {
+  ACTION_PIN_SCHEMA,
+  evaluateWorkflowActions,
+  parseActionPins,
+  type ActionPinInventory,
+} from "./action-pin-policy.js";
+
+export { ACTION_PIN_SCHEMA, evaluateWorkflowActions, parseActionPins };
+export type { ActionPinInventory, ActionPolicyCode, ActionUseOccurrence } from "./action-pin-policy.js";
 
 export const BASELINE_SCHEMA = "classic-v0.2-security-audit-baseline/1";
-export const VERIFICATION_SCHEMA = "classic-v0.2-security-audit-verification/1";
-export const ACTION_PIN_SCHEMA = "classic-v0.2-action-pin-inventory/1";
+export const VERIFICATION_SCHEMA = "classic-v0.2-security-audit-verification/2";
 export const BASELINE_RELATIVE_PATH = "scripts/security/npm-audit-baseline.json";
 export const LOCKFILE_RELATIVE_PATH = "package-lock.json";
 export const WORKFLOW_RELATIVE_PATH = ".github/workflows/ci.yml";
+
+export const SEVERITY_LEVELS = ["info", "low", "moderate", "high", "critical"] as const;
+export type SeverityLevel = (typeof SEVERITY_LEVELS)[number];
 
 export type PolicyCode =
   | "PASS"
   | "AUDIT_COMMAND_FAILED"
   | "AUDIT_JSON_MALFORMED"
   | "AUDIT_MISSING_FIELDS"
+  | "AUDIT_COUNT_INVALID"
+  | "AUDIT_COUNT_MISMATCH"
+  | "AUDIT_SEVERITY_INVALID"
+  | "ADVISORY_IDENTITY_MISSING"
   | "AUDIT_FILE_MISSING"
   | "LOCKFILE_HASH_MISMATCH"
   | "CRITICAL_VULNERABILITY"
@@ -22,6 +37,15 @@ export type PolicyCode =
   | "ADVISORY_REPLACED"
   | "DEPENDENCY_PATH_CHANGED"
   | "PACKAGE_IDENTITY_CHANGED";
+
+export type SeverityCounts = {
+  info: number;
+  low: number;
+  moderate: number;
+  high: number;
+  critical: number;
+  total: number;
+};
 
 export type FixAvailable =
   | boolean
@@ -49,6 +73,17 @@ export type HighPackage = {
   fixAvailable: FixAvailable;
 };
 
+export type PackageRow = {
+  name: string;
+  severity: SeverityLevel;
+  viaAdvisoryIds: string[];
+};
+
+export type AdvisoryIdentityMissing = {
+  advisoryId: string;
+  package: string;
+};
+
 export type AuditBaseline = {
   schemaVersion: typeof BASELINE_SCHEMA;
   lockfile: { path: typeof LOCKFILE_RELATIVE_PATH; sha256: string };
@@ -61,31 +96,22 @@ export type AuditBaseline = {
   highPackages: HighPackage[];
 };
 
-export type ActionPin = {
-  action: string;
-  commitSha: string;
-  version: string;
-};
-
-export type ActionPinInventory = {
-  schemaVersion: typeof ACTION_PIN_SCHEMA;
-  persistCredentials: false | true;
-  fetchDepth: number;
-  pins: ActionPin[];
-};
-
 export type PolicyResult = {
   ok: boolean;
   codes: PolicyCode[];
   lockfileSha256: string;
   expectedLockfileSha256: string;
   auditReportVersion: number | null;
+  metadata: SeverityCounts;
+  observed: SeverityCounts;
+  metadataMatchesObserved: boolean;
   highCount: number;
   criticalCount: number;
   totalCount: number;
   matchingHigh: HighFinding[];
   resolvedHigh: HighFinding[];
   newHigh: HighFinding[];
+  advisoryIdentityMissing: AdvisoryIdentityMissing[];
   critical: Array<{ package: string; advisoryId: string | null; severity: "critical" }>;
   advisoryReplaced: Array<{ package: string; expectedAdvisoryId: string; actualAdvisoryId: string }>;
   dependencyPathChanged: Array<{ advisoryId: string; package: string; expected: string[]; actual: string[] }>;
@@ -93,6 +119,18 @@ export type PolicyResult = {
 };
 
 const SECRET_KEY = /^(env|environment|headers|authorization|token|secret|password|home|npm_token|github_token)$/i;
+
+export function zeroCounts(): SeverityCounts {
+  return { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 };
+}
+
+export function severitySum(counts: Pick<SeverityCounts, SeverityLevel>): number {
+  return counts.info + counts.low + counts.moderate + counts.high + counts.critical;
+}
+
+export function countsEqual(a: SeverityCounts, b: SeverityCounts): boolean {
+  return SEVERITY_LEVELS.every((level) => a[level] === b[level]) && a.total === b.total;
+}
 
 export function sha256Bytes(bytes: Buffer | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -155,8 +193,14 @@ function asBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
 }
 
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
+function parseNonNegativeSafeInt(value: unknown): number | null {
+  if (typeof value !== "number") return null;
+  if (!Number.isFinite(value) || !Number.isSafeInteger(value) || value < 0) return null;
+  return value;
+}
+
+function isSeverity(value: string): value is SeverityLevel {
+  return (SEVERITY_LEVELS as readonly string[]).includes(value);
 }
 
 function ghsaFromUrl(url: unknown): string | null {
@@ -180,21 +224,39 @@ function normalizeFixAvailable(value: unknown): FixAvailable | null {
 
 export type ParseFailure = {
   ok: false;
-  code: Extract<PolicyCode, "AUDIT_JSON_MALFORMED" | "AUDIT_MISSING_FIELDS">;
+  code: Extract<
+    PolicyCode,
+    | "AUDIT_JSON_MALFORMED"
+    | "AUDIT_MISSING_FIELDS"
+    | "AUDIT_COUNT_INVALID"
+    | "AUDIT_COUNT_MISMATCH"
+    | "AUDIT_SEVERITY_INVALID"
+    | "ADVISORY_IDENTITY_MISSING"
+  >;
+  metadata: SeverityCounts | null;
+  observed: SeverityCounts | null;
+  metadataMatchesObserved: false;
 };
 
 export type ParsedAudit = {
   ok: true;
   auditReportVersion: number;
-  metadata: { high: number; critical: number; total: number };
+  metadata: SeverityCounts;
+  observed: SeverityCounts;
+  metadataMatchesObserved: true;
   highFindings: HighFinding[];
   highPackages: HighPackage[];
+  packageRows: PackageRow[];
   critical: Array<{ package: string; advisoryId: string | null; severity: "critical" }>;
   raw: Record<string, unknown>;
 };
 
-function missing(): ParseFailure {
-  return { ok: false, code: "AUDIT_MISSING_FIELDS" };
+function parseFail(
+  code: ParseFailure["code"],
+  metadata: SeverityCounts | null = null,
+  observed: SeverityCounts | null = null,
+): ParseFailure {
+  return { ok: false, code, metadata, observed, metadataMatchesObserved: false };
 }
 
 function parseViaAdvisory(
@@ -205,17 +267,20 @@ function parseViaAdvisory(
     nodes: string[];
     fixAvailable: FixAvailable;
   },
-): { severity: string; finding: Omit<HighFinding, "severity"> & { severity: "high" | "critical" } } | ParseFailure | null {
+): { sourceId: string; severity: string; finding: Omit<HighFinding, "severity"> & { severity: "high" | "critical" } } | ParseFailure | { sourceId: string; severity: string; finding: null } | null {
   if (typeof via === "string") return null;
-  if (!isRecord(via)) return missing();
+  if (!isRecord(via)) return parseFail("AUDIT_MISSING_FIELDS");
   const source = via.source;
   const sourceId = typeof source === "number" || typeof source === "string" ? String(source) : null;
   const name = asString(via.name) ?? asString(via.dependency);
   const severity = asString(via.severity);
   const range = asString(via.range);
-  if (!sourceId || !name || !severity || !range) return missing();
-  if (severity !== "high" && severity !== "critical") return null;
+  if (!sourceId || !name || !severity || !range) return parseFail("AUDIT_MISSING_FIELDS");
+  if (severity !== "high" && severity !== "critical") {
+    return { sourceId, severity, finding: null };
+  }
   return {
+    sourceId,
     severity,
     finding: {
       advisoryId: sourceId,
@@ -231,43 +296,62 @@ function parseViaAdvisory(
   };
 }
 
+function parseMetadataCounts(meta: Record<string, unknown>): { ok: true; counts: SeverityCounts } | { ok: false } {
+  const counts = zeroCounts();
+  for (const level of [...SEVERITY_LEVELS, "total"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(meta, level)) return { ok: false };
+    const parsed = parseNonNegativeSafeInt(meta[level]);
+    if (parsed === null) return { ok: false };
+    counts[level] = parsed;
+  }
+  return { ok: true, counts };
+}
+
 export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
   if (typeof raw !== "string" || raw.trim().length === 0) {
-    return { ok: false, code: "AUDIT_JSON_MALFORMED" };
+    return parseFail("AUDIT_JSON_MALFORMED");
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { ok: false, code: "AUDIT_JSON_MALFORMED" };
+    return parseFail("AUDIT_JSON_MALFORMED");
   }
-  if (!isRecord(parsed)) return missing();
-  if (parsed.auditReportVersion !== 2) return missing();
-  if (!isRecord(parsed.vulnerabilities)) return missing();
-  if (!isRecord(parsed.metadata) || !isRecord(parsed.metadata.vulnerabilities)) return missing();
-  const meta = parsed.metadata.vulnerabilities;
-  const high = asNumber(meta.high);
-  const critical = asNumber(meta.critical);
-  const total = asNumber(meta.total);
-  if (high === null || critical === null || total === null) return missing();
+  if (!isRecord(parsed)) return parseFail("AUDIT_MISSING_FIELDS");
+  if (parsed.auditReportVersion !== 2) return parseFail("AUDIT_MISSING_FIELDS");
+  if (!isRecord(parsed.vulnerabilities)) return parseFail("AUDIT_MISSING_FIELDS");
+  if (!isRecord(parsed.metadata) || !isRecord(parsed.metadata.vulnerabilities)) {
+    return parseFail("AUDIT_MISSING_FIELDS");
+  }
+  const metadataParsed = parseMetadataCounts(parsed.metadata.vulnerabilities);
+  if (!metadataParsed.ok) return parseFail("AUDIT_COUNT_INVALID");
+  const metadata = metadataParsed.counts;
+  if (metadata.total !== severitySum(metadata)) {
+    return parseFail("AUDIT_COUNT_MISMATCH", metadata, null);
+  }
 
   const highFindings: HighFinding[] = [];
   const highPackages: HighPackage[] = [];
+  const packageRows: PackageRow[] = [];
   const criticalRows: ParsedAudit["critical"] = [];
+  const observed = zeroCounts();
 
   for (const [key, entry] of Object.entries(parsed.vulnerabilities)) {
-    if (!isRecord(entry)) return missing();
+    if (!isRecord(entry)) return parseFail("AUDIT_MISSING_FIELDS", metadata, observed);
     const name = asString(entry.name) ?? key;
-    const severity = asString(entry.severity);
+    const severityRaw = asString(entry.severity);
     const isDirect = asBoolean(entry.isDirect);
     const range = asString(entry.range);
     const nodes = entry.nodes;
     const via = entry.via;
     const fixAvailable = normalizeFixAvailable(entry.fixAvailable);
-    if (!name || !severity || isDirect === null || !range || !Array.isArray(nodes) || !Array.isArray(via) || fixAvailable === null) {
-      return missing();
+    if (!name || !severityRaw || isDirect === null || !range || !Array.isArray(nodes) || !Array.isArray(via) || fixAvailable === null) {
+      return parseFail("AUDIT_MISSING_FIELDS", metadata, observed);
     }
-    if (!nodes.every((node) => typeof node === "string")) return missing();
+    if (!isSeverity(severityRaw)) return parseFail("AUDIT_SEVERITY_INVALID", metadata, observed);
+    if (!nodes.every((node) => typeof node === "string")) {
+      return parseFail("AUDIT_MISSING_FIELDS", metadata, observed);
+    }
     const pkg = {
       name,
       isDirect,
@@ -275,11 +359,16 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
       fixAvailable,
     };
 
+    const viaAdvisoryIds: string[] = [];
     const viaHighAdvisoryIds: string[] = [];
     for (const item of via) {
       const parsedVia = parseViaAdvisory(item, pkg);
-      if (parsedVia !== null && "ok" in parsedVia) return parsedVia;
+      if (parsedVia !== null && "ok" in parsedVia) {
+        return parseFail(parsedVia.code, metadata, observed);
+      }
       if (parsedVia === null) continue;
+      viaAdvisoryIds.push(parsedVia.sourceId);
+      if (parsedVia.finding === null) continue;
       if (parsedVia.severity === "critical") {
         criticalRows.push({
           package: parsedVia.finding.package,
@@ -292,9 +381,16 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
       }
     }
 
-    if (severity === "critical") {
-      criticalRows.push({ package: name, advisoryId: viaHighAdvisoryIds[0] ?? null, severity: "critical" });
-    } else if (severity === "high") {
+    observed[severityRaw] += 1;
+    packageRows.push({
+      name,
+      severity: severityRaw,
+      viaAdvisoryIds: sortedUnique(viaAdvisoryIds),
+    });
+
+    if (severityRaw === "critical") {
+      criticalRows.push({ package: name, advisoryId: viaHighAdvisoryIds[0] ?? viaAdvisoryIds[0] ?? null, severity: "critical" });
+    } else if (severityRaw === "high") {
       highPackages.push({
         package: name,
         severity: "high",
@@ -307,12 +403,20 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
     }
   }
 
+  observed.total = severitySum(observed);
+  if (!countsEqual(metadata, observed)) {
+    return parseFail("AUDIT_COUNT_MISMATCH", metadata, observed);
+  }
+
   return {
     ok: true,
     auditReportVersion: 2,
-    metadata: { high, critical, total },
+    metadata,
+    observed,
+    metadataMatchesObserved: true,
     highFindings,
     highPackages,
+    packageRows,
     critical: criticalRows,
     raw: parsed,
   };
@@ -326,14 +430,20 @@ export function readAuditFile(filePath: string): { ok: true; raw: string } | { o
 }
 
 function emptyResult(partial: Partial<PolicyResult> & Pick<PolicyResult, "ok" | "codes" | "lockfileSha256" | "expectedLockfileSha256">): PolicyResult {
+  const metadata = partial.metadata ?? zeroCounts();
+  const observed = partial.observed ?? zeroCounts();
   return {
-    highCount: 0,
-    criticalCount: 0,
-    totalCount: 0,
     auditReportVersion: null,
+    metadata,
+    observed,
+    metadataMatchesObserved: false,
+    highCount: metadata.high,
+    criticalCount: metadata.critical,
+    totalCount: metadata.total,
     matchingHigh: [],
     resolvedHigh: [],
     newHigh: [],
+    advisoryIdentityMissing: [],
     critical: [],
     advisoryReplaced: [],
     dependencyPathChanged: [],
@@ -343,20 +453,37 @@ function emptyResult(partial: Partial<PolicyResult> & Pick<PolicyResult, "ok" | 
 }
 
 export function failedPolicy(
-  code: Extract<PolicyCode, "AUDIT_COMMAND_FAILED" | "AUDIT_FILE_MISSING" | "AUDIT_JSON_MALFORMED" | "AUDIT_MISSING_FIELDS" | "LOCKFILE_HASH_MISMATCH">,
+  code: Extract<
+    PolicyCode,
+    | "AUDIT_COMMAND_FAILED"
+    | "AUDIT_FILE_MISSING"
+    | "AUDIT_JSON_MALFORMED"
+    | "AUDIT_MISSING_FIELDS"
+    | "AUDIT_COUNT_INVALID"
+    | "AUDIT_COUNT_MISMATCH"
+    | "AUDIT_SEVERITY_INVALID"
+    | "ADVISORY_IDENTITY_MISSING"
+    | "LOCKFILE_HASH_MISMATCH"
+  >,
   lockfileSha256: string,
   expectedLockfileSha256: string,
+  extra: Partial<PolicyResult> = {},
 ): PolicyResult {
   return emptyResult({
     ok: false,
     codes: [code],
     lockfileSha256,
     expectedLockfileSha256,
+    ...extra,
   });
 }
 
 function uniqueCodes(codes: PolicyCode[]): PolicyCode[] {
   return [...new Set(codes)];
+}
+
+function packageStillHigh(severity: SeverityLevel | undefined): boolean {
+  return severity === "high" || severity === "critical";
 }
 
 export function evaluateAuditPolicy(input: {
@@ -383,19 +510,23 @@ export function evaluateAuditPolicy(input: {
     });
   }
 
-  const parsed = input.parsed ?? (typeof input.auditRaw === "string" ? parseAuditReport(input.auditRaw) : { ok: false as const, code: "AUDIT_JSON_MALFORMED" as const });
+  const parsed = input.parsed ?? (typeof input.auditRaw === "string" ? parseAuditReport(input.auditRaw) : parseFail("AUDIT_JSON_MALFORMED"));
   if (!parsed.ok) {
     return emptyResult({
       ok: false,
       codes: [parsed.code],
       lockfileSha256: input.lockfileSha256,
       expectedLockfileSha256,
+      metadata: parsed.metadata ?? zeroCounts(),
+      observed: parsed.observed ?? zeroCounts(),
+      metadataMatchesObserved: false,
     });
   }
 
   const codes: PolicyCode[] = [];
   const matchingHigh: HighFinding[] = [];
   const newHigh: HighFinding[] = [];
+  const advisoryIdentityMissing: AdvisoryIdentityMissing[] = [];
   const advisoryReplaced: PolicyResult["advisoryReplaced"] = [];
   const dependencyPathChanged: PolicyResult["dependencyPathChanged"] = [];
   const packageIdentityChanged: PolicyResult["packageIdentityChanged"] = [];
@@ -408,6 +539,14 @@ export function evaluateAuditPolicy(input: {
     input.baseline.highFindings.map((finding) => [`${finding.package}\0${sortedUnique(finding.dependencyPaths).join("\0")}`, finding]),
   );
   const seenCurrentIds = new Set<string>();
+  const currentAdvisoryIds = new Set<string>();
+  for (const row of parsed.packageRows) {
+    for (const id of row.viaAdvisoryIds) currentAdvisoryIds.add(id);
+  }
+  const currentByName = new Map<string, PackageRow>();
+  for (const row of parsed.packageRows) {
+    currentByName.set(row.name, row);
+  }
 
   for (const current of parsed.highFindings) {
     seenCurrentIds.add(current.advisoryId);
@@ -452,7 +591,19 @@ export function evaluateAuditPolicy(input: {
     newHigh.push(current);
   }
 
-  const resolvedHigh = input.baseline.highFindings.filter((finding) => !seenCurrentIds.has(finding.advisoryId));
+  const resolvedHigh: HighFinding[] = [];
+  for (const finding of input.baseline.highFindings) {
+    if (seenCurrentIds.has(finding.advisoryId) || currentAdvisoryIds.has(finding.advisoryId)) {
+      continue;
+    }
+    const pkg = currentByName.get(finding.package);
+    if (pkg && packageStillHigh(pkg.severity)) {
+      codes.push("ADVISORY_IDENTITY_MISSING");
+      advisoryIdentityMissing.push({ advisoryId: finding.advisoryId, package: finding.package });
+      continue;
+    }
+    resolvedHigh.push(finding);
+  }
 
   const baselinePackages = new Map(input.baseline.highPackages.map((row) => [row.package, row]));
   for (const current of parsed.highPackages) {
@@ -508,6 +659,11 @@ export function evaluateAuditPolicy(input: {
             fixAvailable: current.fixAvailable,
           });
         }
+      } else if (removed.length > 0 && packageStillHigh(current.severity)) {
+        codes.push("ADVISORY_IDENTITY_MISSING");
+        for (const id of removed) {
+          advisoryIdentityMissing.push({ advisoryId: id, package: current.package });
+        }
       }
     }
   }
@@ -524,12 +680,16 @@ export function evaluateAuditPolicy(input: {
     lockfileSha256: input.lockfileSha256,
     expectedLockfileSha256,
     auditReportVersion: parsed.auditReportVersion,
+    metadata: parsed.metadata,
+    observed: parsed.observed,
+    metadataMatchesObserved: parsed.metadataMatchesObserved,
     highCount: parsed.metadata.high,
     criticalCount: parsed.metadata.critical,
     totalCount: parsed.metadata.total,
     matchingHigh,
     resolvedHigh,
     newHigh,
+    advisoryIdentityMissing,
     critical: parsed.critical,
     advisoryReplaced,
     dependencyPathChanged,
@@ -551,26 +711,11 @@ export function buildBaseline(lockfileSha256: string, parsed: ParsedAudit): Audi
   };
 }
 
-export function parseActionPins(workflowText: string): ActionPinInventory {
-  const pins: ActionPin[] = [];
-  const uses = [...workflowText.matchAll(/uses:\s+(actions\/(?:checkout|setup-node|upload-artifact))@([0-9a-f]{40})\s+#\s+(v\d+\.\d+\.\d+)/g)];
-  for (const match of uses) {
-    pins.push({ action: match[1]!, commitSha: match[2]!, version: match[3]! });
-  }
-  const persistCredentials = /persist-credentials:\s*false/.test(workflowText);
-  const depthMatch = workflowText.match(/fetch-depth:\s*(\d+)/);
-  return {
-    schemaVersion: ACTION_PIN_SCHEMA,
-    persistCredentials: persistCredentials ? false : true,
-    fetchDepth: depthMatch ? Number(depthMatch[1]) : -1,
-    pins,
-  };
-}
-
 export function verificationDocument(result: PolicyResult): Record<string, unknown> {
   return sanitizeValue({
     schemaVersion: VERIFICATION_SCHEMA,
     ok: result.ok,
+    overallPolicyOk: result.ok,
     codes: result.codes,
     existingHighAreNotCleared: true,
     lockfile: {
@@ -578,19 +723,53 @@ export function verificationDocument(result: PolicyResult): Record<string, unkno
       sha256: result.lockfileSha256,
       matchesBaseline: result.lockfileSha256 === result.expectedLockfileSha256,
     },
+    metadata: result.metadata,
+    observed: result.observed,
+    metadataMatchesObserved: result.metadataMatchesObserved,
     audit: {
       auditReportVersion: result.auditReportVersion,
-      high: result.highCount,
-      critical: result.criticalCount,
-      total: result.totalCount,
+      info: result.metadata.info,
+      low: result.metadata.low,
+      moderate: result.metadata.moderate,
+      high: result.metadata.high,
+      critical: result.metadata.critical,
+      total: result.metadata.total,
     },
     matchingHigh: result.matchingHigh,
     resolvedHigh: result.resolvedHigh,
     newHigh: result.newHigh,
+    advisoryIdentityMissing: result.advisoryIdentityMissing,
     critical: result.critical,
     advisoryReplaced: result.advisoryReplaced,
     dependencyPathChanged: result.dependencyPathChanged,
     packageIdentityChanged: result.packageIdentityChanged,
+  }) as Record<string, unknown>;
+}
+
+export function actionInventoryDocument(inventory: ActionPinInventory): Record<string, unknown> {
+  return sanitizeValue({
+    schemaVersion: inventory.schemaVersion,
+    overallPolicyOk: inventory.overallPolicyOk,
+    codes: inventory.codes,
+    actionUsesTotal: inventory.actionUsesTotal,
+    checkoutOccurrenceCount: inventory.checkoutOccurrenceCount,
+    setupNodeOccurrenceCount: inventory.setupNodeOccurrenceCount,
+    uploadArtifactOccurrenceCount: inventory.uploadArtifactOccurrenceCount,
+    unpinnedExternalActions: inventory.unpinnedExternalActions,
+    unsafeCheckouts: inventory.unsafeCheckouts,
+    occurrences: inventory.occurrences.map((row) => ({
+      index: row.index,
+      line: row.line,
+      raw: row.raw,
+      kind: row.kind,
+      identity: row.identity,
+      ref: row.ref,
+      immutablePin: row.immutablePin,
+      allowlisted: row.allowlisted,
+      checkoutPersistCredentials: row.checkoutPersistCredentials,
+      checkoutFetchDepth: row.checkoutFetchDepth,
+      codes: row.codes,
+    })),
   }) as Record<string, unknown>;
 }
 

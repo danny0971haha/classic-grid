@@ -6,8 +6,22 @@
 **Lockfile SHA-256:** `f278d8b7f0d559839e35ee64e94db9e39c7d6037f5692d0cafa02ba6c6b254ed`
 **Machine-readable baseline:** `scripts/security/npm-audit-baseline.json`
 **Audit command:** `npm audit --omit=dev --json`
+**Verification schema:** `classic-v0.2-security-audit-verification/2`
+**Action inventory schema:** `classic-v0.2-action-pin-inventory/2`
 
-Existing high findings are **not** treated as safe. CI fails closed on any critical, any high advisory or high package that is not in the baseline, any high advisory ID replacement, any high dependency-path or package-identity change, lockfile hash mismatch, or unreadable audit output. Moderate findings are stored in the CI `audit.json` artifact and do not pass this gate by themselves.
+```text
+CHECKPOINT_F_IMPLEMENTATION=ACCEPT
+CHECKPOINT_F_ACCEPTED_IMPLEMENTATION_BASE=79c88bd08eaf96d069b7eaf947feb7b70739b551
+CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
+CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
+CHECKPOINT_F_SELF_DECLARED_PASS=NO
+```
+
+Current `npm audit --omit=dev` known baseline: **14 high / 0 critical / 22 total** package rows. That match is "consistent with the known baseline", not "vulnerabilities cleared". Existing High findings are not repaired and not treated as safe. Dependency remediation and reachability closure remain live-release blockers. This CI corrective does not change dependency versions or the committed npm-audit baseline file.
+
+Existing high findings are **not** treated as safe. CI fails closed on any critical, any high advisory or high package that is not in the baseline, any high advisory ID replacement, any high dependency-path or package-identity change, metadata/row count mismatch, invalid severity counts, missing advisory identity while a package remains high, lockfile hash mismatch, unreadable audit output, or an unpinned / non-allowlisted / unparseable GitHub Action `uses`. Moderate findings are stored in the CI `audit.json` artifact and do not pass this gate by themselves.
 
 `npm audit fix --force` and major-version upgrades were not applied. Several npm `fixAvailable` values point at major downgrades (`@nadohq/client@0.26.0`, `@n1xyz/nord-ts@0.0.1`) and are recorded only as vendor suggestions.
 
@@ -85,4 +99,4 @@ npm run audit:security-baseline
 npm run test:security
 ```
 
-The checker has no third-party dependencies. Generated `audit.json` is a CI artifact and is not committed.
+The checker has no third-party dependencies. Generated `audit.json` is a CI artifact and is not committed. A metadata match of 14 high / 0 critical / 22 total only means the report still matches the known baseline. It is not a remediation or clearance statement.

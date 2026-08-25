@@ -1,11 +1,11 @@
 # Classic Grid v0.2 — Bounded Implementation Contract
 
-**Status:** AUTHORITATIVE ENGINEERING PLAN / IMPLEMENTATION NOT YET ACCEPTED  
-**Date:** 2026-08-22  
-**Tracking issue:** [#2](../issues/2)  
-**Draft PR:** [#3](../pull/3)  
-**Parent safety baseline:** `experiment/classic-v0.1` @ `a168c487e210306aab17cf428dec67d8168b68fe`  
-**Pre-contract v0.2 head:** `b9289ed485e9033f0867fc84e333c93e85e19dba`  
+**Status:** CHECKPOINT F IMPLEMENTATION ACCEPTED; CI HARDENING CORRECTIVE 1 IS A REVIEW CANDIDATE
+**Date:** 2026-08-22
+**Tracking issue:** [#2](../issues/2)
+**Draft PR:** [#3](../pull/3)
+**Parent safety baseline:** `experiment/classic-v0.1` @ `a168c487e210306aab17cf428dec67d8168b68fe`
+**Pre-contract v0.2 head:** `b9289ed485e9033f0867fc84e333c93e85e19dba`
 **Functional specification:** [`docs/experiment-spec-v0.2-100u-safety.md`](./experiment-spec-v0.2-100u-safety.md)
 
 ```text
@@ -13,23 +13,29 @@ CHECKPOINT_D_CORRECTIVE_1=PASS
 CHECKPOINT_E=REJECT
 CHECKPOINT_E_CORRECTIVE_1=REJECT
 CHECKPOINT_E_CORRECTIVE_2=ACCEPT
-CHECKPOINT_F=REVIEW_CANDIDATE
+CHECKPOINT_F_IMPLEMENTATION=ACCEPT
+CHECKPOINT_F_ACCEPTED_IMPLEMENTATION_BASE=79c88bd08eaf96d069b7eaf947feb7b70739b551
+CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
+CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_E_SELF_DECLARED_PASS=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
 DEPLOYMENT_AUTHORIZED=NO
 MERGE_AUTHORIZED=NO
+NEXT_CHECKPOINT_AUTHORIZED=NO
 FORCE_PUSH_AUTHORIZED=NO
 ```
 
-Independent review accepted Checkpoint E Corrective 2 as evidence-schema correction only. That ACCEPT does not authorize live canary, real funds, merge, or deploy. Checkpoint F is a review candidate for authoritative execution consumption.
+Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That implementation remains accepted. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8`. The current CI security-hardening corrective is a review candidate only. Current HEAD is not accepted. This document does not self-declare PASS.
+
+Known npm production-tree audit baseline remains **14 high / 0 critical / 22 total**. Existing High findings are not cleared. Dependency remediation is a live-release blocker and is not part of this CI corrective.
 
 ## 1. Decision
 
-The v0.2 branch is **not ready for feature implementation to be treated as accepted**, and it is not live-canary-ready.
-
-The branch currently contains the v0.2 specification only. Before the 100U configuration, active exposure reduction, or fill telemetry can be accepted, the implementation must close inherited v0.1 fail-closed gaps in durable halt acknowledgement and halt identity.
+The v0.2 Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551` is independently accepted. The branch is **not** live-canary-ready. Current HEAD is not accepted: CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` was rejected, and CI hardening corrective 1 is a review candidate only.
 
 Required execution order:
 
@@ -68,7 +74,7 @@ PR #3 must remain Draft until a separate, explicit live-canary review is complet
 |---|---|---|
 | v0.2 specification | Present | PASS as planning input only |
 | Baseline CI for pre-contract head | Successful | PASS as build evidence only |
-| v0.2 implementation | No functional code changes yet | NOT STARTED |
+| v0.2 implementation | Checkpoint F implementation accepted at `79c88bd08eaf96d069b7eaf947feb7b70739b551`; current CI HEAD is not accepted | CHECKPOINT_F_IMPLEMENTATION=ACCEPT; CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO |
 | Durable ACK final-authority semantics | Caller state can still authorize a clear | BLOCKED |
 | Non-running halt identity | `haltId` is not enforced for every non-`RUNNING` state | BLOCKED |
 | Actual notional over cap | Classified as `reduceOnly`, but only cancel intents survive | BLOCKED |
@@ -424,7 +430,7 @@ Open-order disappearance and position delta still do not prove a fill. Position-
 
 Grid gaps may continue to be repaired from authoritative open-order snapshots subject to ownership and notional guards.
 
-Checkpoint F is a review candidate. Independent ACCEPT of Checkpoint E Corrective 2 does not authorize live canary, real funds, merge, or deploy.
+Checkpoint F implementation was independently accepted at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. Independent ACCEPT of Checkpoint E Corrective 2 does not authorize live canary, real funds, merge, or deploy. CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` was rejected; the current CI corrective is a review candidate and must not be treated as an implementation regression.
 
 ## 21. Telemetry semantics
 

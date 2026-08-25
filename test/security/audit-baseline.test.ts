@@ -80,9 +80,13 @@ function viaObject(source: number, name: string, severity: string, range: string
 }
 
 function auditJson(input: {
+  info?: number;
+  low?: number;
+  moderate?: number;
   high?: number;
   critical?: number;
   total?: number;
+  metadataVulnerabilities?: Record<string, unknown>;
   vulnerabilities: Record<string, {
     name?: string;
     severity: string;
@@ -95,6 +99,9 @@ function auditJson(input: {
 }): string {
   const high = input.high ?? Object.values(input.vulnerabilities).filter((row) => row.severity === "high").length;
   const critical = input.critical ?? Object.values(input.vulnerabilities).filter((row) => row.severity === "critical").length;
+  const info = input.info ?? 0;
+  const low = input.low ?? 0;
+  const moderate = input.moderate ?? 0;
   return JSON.stringify({
     auditReportVersion: 2,
     vulnerabilities: Object.fromEntries(Object.entries(input.vulnerabilities).map(([name, row]) => [name, {
@@ -107,13 +114,13 @@ function auditJson(input: {
       fixAvailable: row.fixAvailable ?? false,
     }])),
     metadata: {
-      vulnerabilities: {
-        info: 0,
-        low: 0,
-        moderate: 0,
+      vulnerabilities: input.metadataVulnerabilities ?? {
+        info,
+        low,
+        moderate,
         high,
         critical,
-        total: input.total ?? high + critical,
+        total: input.total ?? info + low + moderate + high + critical,
       },
     },
   });
@@ -144,7 +151,7 @@ describe("security audit baseline policy", () => {
     assert.equal(result.resolvedHigh.length, 0);
   });
 
-  it("passes and reports when a high advisory is resolved", () => {
+  it("A-08 passes when package and advisory disappear and metadata is zeroed", () => {
     const result = evaluateAuditPolicy({
       baseline: baseline(),
       lockfileSha256: LOCK_SHA,
@@ -156,11 +163,15 @@ describe("security audit baseline policy", () => {
     });
     assert.equal(result.ok, true);
     assert.deepEqual(result.codes, ["PASS"]);
+    assert.equal(result.metadataMatchesObserved, true);
     assert.equal(result.resolvedHigh.length, 1);
     assert.equal(result.resolvedHigh[0]?.advisoryId, "1001");
+    assert.equal(result.advisoryIdentityMissing.length, 0);
     const document = verificationDocument(result);
+    assert.equal(document.schemaVersion, "classic-v0.2-security-audit-verification/2");
     assert.equal(Array.isArray(document.resolvedHigh), true);
     assert.equal((document.resolvedHigh as unknown[]).length, 1);
+    assert.equal(document.existingHighAreNotCleared, true);
   });
 
   it("rejects a new high advisory", () => {
@@ -321,7 +332,16 @@ describe("security audit baseline policy", () => {
           fixAvailable: false,
         },
       },
-      metadata: { vulnerabilities: { high: 1, critical: 0, total: 1 } },
+      metadata: {
+        vulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          high: 1,
+          critical: 0,
+          total: 1,
+        },
+      },
     }));
     assert.equal(parsed.ok, false);
     if (parsed.ok) throw new Error("expected missing fields");
@@ -364,16 +384,236 @@ describe("security audit baseline policy", () => {
   it("requires workflow action pins to be immutable commit SHAs", () => {
     const workflow = fs.readFileSync(".github/workflows/ci.yml", "utf8");
     const inventory = parseActionPins(workflow);
-    assert.equal(inventory.persistCredentials, false);
-    assert.equal(inventory.fetchDepth, 0);
-    const names = inventory.pins.map((pin) => pin.action).sort();
-    assert.deepEqual([...new Set(names)], ["actions/checkout", "actions/setup-node", "actions/upload-artifact"].sort());
-    for (const pin of inventory.pins) {
-      assert.match(pin.commitSha, /^[0-9a-f]{40}$/);
-      assert.match(pin.version, /^v4\.\d+\.\d+$/);
-    }
+    assert.equal(inventory.overallPolicyOk, true);
+    assert.deepEqual(inventory.codes, ["PASS"]);
+    assert.equal(inventory.schemaVersion, "classic-v0.2-action-pin-inventory/2");
+    assert.equal(inventory.checkoutOccurrenceCount, 1);
+    assert.equal(inventory.setupNodeOccurrenceCount, 1);
+    assert.ok(inventory.uploadArtifactOccurrenceCount >= 1);
+    assert.equal(inventory.actionUsesTotal, inventory.occurrences.length);
+    assert.equal(inventory.unpinnedExternalActions, 0);
+    assert.equal(inventory.unsafeCheckouts, 0);
     assert.equal(workflow.includes("actions/checkout@v4"), false);
     assert.equal(workflow.includes("actions/setup-node@v4"), false);
     assert.equal(workflow.includes("actions/upload-artifact@v4"), false);
+  });
+});
+
+describe("audit adversarial metadata and identity cases", () => {
+  it("A-01 rejects metadata.high=1 with empty vulnerability rows", () => {
+    const parsed = parseAuditReport(auditJson({
+      high: 1,
+      total: 1,
+      vulnerabilities: {},
+    }));
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) throw new Error("expected reject");
+    assert.equal(parsed.code, "AUDIT_COUNT_MISMATCH");
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({ high: 1, total: 1, vulnerabilities: {} }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_COUNT_MISMATCH"]);
+  });
+
+  it("A-02 rejects metadata.high=0 when a high package row exists", () => {
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({
+        high: 0,
+        total: 0,
+        vulnerabilities: {
+          axios: {
+            severity: "high",
+            via: [viaObject(1001, "axios", "high", ">=1.15.2 <1.18.0")],
+          },
+        },
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_COUNT_MISMATCH"]);
+  });
+
+  it("A-03 rejects metadata.total that does not equal the severity sum", () => {
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({
+        high: 1,
+        total: 9,
+        vulnerabilities: {
+          axios: {
+            severity: "high",
+            via: [viaObject(1001, "axios", "high", ">=1.15.2 <1.18.0")],
+          },
+        },
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_COUNT_MISMATCH"]);
+  });
+
+  it("A-04 rejects a negative severity count", () => {
+    const parsed = parseAuditReport(auditJson({
+      high: -1,
+      total: 0,
+      vulnerabilities: {},
+    }));
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) throw new Error("expected reject");
+    assert.equal(parsed.code, "AUDIT_COUNT_INVALID");
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({ high: -1, total: 0, vulnerabilities: {} }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_COUNT_INVALID"]);
+  });
+
+  it("A-05 rejects a fractional severity count", () => {
+    const parsed = parseAuditReport(auditJson({
+      high: 0.5,
+      total: 0.5,
+      vulnerabilities: {},
+    }));
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) throw new Error("expected reject");
+    assert.equal(parsed.code, "AUDIT_COUNT_INVALID");
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({ high: 1.5, total: 1.5, vulnerabilities: {} }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_COUNT_INVALID"]);
+  });
+
+  it("A-06 rejects an unknown package severity", () => {
+    const parsed = parseAuditReport(auditJson({
+      high: 1,
+      total: 1,
+      vulnerabilities: {
+        axios: {
+          severity: "urgent",
+          via: [viaObject(1001, "axios", "high", ">=1.15.2 <1.18.0")],
+        },
+      },
+    }));
+    assert.equal(parsed.ok, false);
+    if (parsed.ok) throw new Error("expected reject");
+    assert.equal(parsed.code, "AUDIT_SEVERITY_INVALID");
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({
+        high: 1,
+        total: 1,
+        vulnerabilities: {
+          axios: {
+            severity: "urgent",
+            via: [viaObject(1001, "axios", "high", ">=1.15.2 <1.18.0")],
+          },
+        },
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_SEVERITY_INVALID"]);
+  });
+
+  it("A-07 rejects a still-high package whose advisory identity disappeared", () => {
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({
+        high: 1,
+        total: 1,
+        vulnerabilities: {
+          axios: {
+            severity: "high",
+            via: [],
+          },
+        },
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.ok(result.codes.includes("ADVISORY_IDENTITY_MISSING"));
+    assert.equal(result.resolvedHigh.length, 0);
+    assert.equal(result.advisoryIdentityMissing.some((row) => row.advisoryId === "1001" && row.package === "axios"), true);
+  });
+
+  it("A-09 rejects malformed or missing count fields", () => {
+    const missingHigh = parseAuditReport(auditJson({
+      metadataVulnerabilities: {
+        info: 0,
+        low: 0,
+        moderate: 0,
+        critical: 0,
+        total: 0,
+      },
+      vulnerabilities: {},
+    }));
+    assert.equal(missingHigh.ok, false);
+    if (missingHigh.ok) throw new Error("expected reject");
+    assert.equal(missingHigh.code, "AUDIT_COUNT_INVALID");
+
+    const stringCount = parseAuditReport(auditJson({
+      metadataVulnerabilities: {
+        info: 0,
+        low: 0,
+        moderate: 0,
+        high: "1",
+        critical: 0,
+        total: 1,
+      },
+      vulnerabilities: {},
+    }));
+    assert.equal(stringCount.ok, false);
+    if (stringCount.ok) throw new Error("expected reject");
+    assert.equal(stringCount.code, "AUDIT_COUNT_INVALID");
+
+    const result = evaluateAuditPolicy({
+      baseline: baseline(),
+      lockfileSha256: LOCK_SHA,
+      auditRaw: auditJson({
+        metadataVulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          critical: 0,
+          total: 0,
+        },
+        vulnerabilities: {},
+      }),
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.codes, ["AUDIT_COUNT_INVALID"]);
+  });
+
+  it("A-10 accepts the current real audit baseline without clearing existing highs", () => {
+    const committed = JSON.parse(fs.readFileSync(BASELINE_RELATIVE_PATH, "utf8")) as AuditBaseline;
+    assert.equal(committed.policy.existingHighAreNotCleared, true);
+    assert.equal(committed.highPackages.length, 14);
+    const outDir = path.join("artifacts", `security-a10-${process.pid}`);
+    const result = runAuditBaseline(process.cwd(), { outDir });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.codes, ["PASS"]);
+    assert.equal(result.metadataMatchesObserved, true);
+    assert.equal(result.metadata.high, 14);
+    assert.equal(result.metadata.critical, 0);
+    assert.equal(result.metadata.total, 22);
+    assert.deepEqual(result.observed, result.metadata);
+    assert.equal(result.resolvedHigh.length, 0);
+    const document = verificationDocument(result);
+    assert.equal(document.schemaVersion, "classic-v0.2-security-audit-verification/2");
+    assert.equal(document.existingHighAreNotCleared, true);
+    assert.equal(document.metadataMatchesObserved, true);
+    assert.equal(document.ok, true);
+    const dumped = JSON.stringify(document);
+    assert.equal(dumped.includes(os.homedir()), false);
+    fs.rmSync(outDir, { recursive: true, force: true });
   });
 });

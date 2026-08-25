@@ -1,16 +1,18 @@
-# Checkpoint F validation after bounded CI hardening
+# Checkpoint F validation after CI security hardening corrective 1
 
 **Date:** 2026-08-25
 **Repository:** `danny0971haha/classic-grid`
 **Branch:** `experiment/classic-v0.2-100u-safety`
 **Draft PR:** `#3`
 
-This document does **not** declare Checkpoint F PASS for the CI-hardening HEAD. It does not authorize live exchange writes, real funds, merge, deploy, or the next checkpoint.
+This document does **not** declare Checkpoint F PASS. It does not authorize live exchange writes, real funds, merge, deploy, or the next checkpoint. It does not self-declare this CI corrective PASS.
 
 ```text
+CHECKPOINT_F_IMPLEMENTATION=ACCEPT
 CHECKPOINT_F_ACCEPTED_IMPLEMENTATION_BASE=79c88bd08eaf96d069b7eaf947feb7b70739b551
-CHECKPOINT_F_ACCEPTED_IMPLEMENTATION_TREE=2d6c874df460485def1c11214bee11346ed4ef9e
-CHECKPOINT_F_CI_HARDENING=REVIEW_CANDIDATE
+CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
+CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REVIEW_CANDIDATE
 CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
@@ -20,24 +22,30 @@ DEPLOYMENT_AUTHORIZED=NO
 NEXT_CHECKPOINT_AUTHORIZED=NO
 ```
 
-## Preserved acceptance history
+Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That acceptance does not transfer onto later CI/supply-chain HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8`, which was rejected. This corrective is a review candidate for CI security audit policy and GitHub Action pin verification only. Checkpoint F strategy, risk, execution, recovery, journal, planner, and exchange-adapter implementation is unchanged and remains accepted at the implementation base above.
 
-Independent review accepted Checkpoint E Corrective 2 as evidence-schema correction only.
+Schema `classic-v0.2-checkpoint-f/2` is unchanged. `tools/checkpoint-e-evidence.ts` and `tools/checkpoint-f-evidence.ts` were not modified.
 
-Independent review of Checkpoint F on implementation HEAD `79c88bd08eaf96d069b7eaf947feb7b70739b551` (tree `2d6c874df460485def1c11214bee11346ed4ef9e`) remains the Checkpoint F implementation base. That acceptance does **not** transfer automatically onto a later HEAD that changes GitHub Actions, audit policy, or other CI supply-chain bytes.
+## Known npm audit baseline (not clearance)
 
-Schema `classic-v0.2-checkpoint-f/2` is unchanged. Checkpoint F case semantics, strategy/risk/execution/recovery/journal/planner/exchange-adapter code, and tools/checkpoint-e-evidence.ts plus tools/checkpoint-f-evidence.ts were not modified by this CI-hardening task.
+`npm audit --omit=dev` against the committed lockfile currently reports **14 high / 0 critical / 22 total** package rows. That is a known baseline, not a vulnerability clearance.
 
-## What the new HEAD is waiting for
+- Existing High findings are **not** remediated or cleared.
+- `existingHighAreNotCleared=true` remains binding.
+- Dependency remediation and reachability closure are live-release blockers.
+- This corrective does **not** change `package-lock.json`, dependency versions, or `scripts/security/npm-audit-baseline.json`.
 
-The CI-hardening HEAD is a review candidate for:
+## What this corrective is waiting for
 
-- pinned `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact` commit SHAs on the current v4 major
-- `persist-credentials: false` with `fetch-depth: 0` and a credential-free PR source-head fetch
-- job timeout and per-workflow-per-ref concurrency
-- fail-closed `npm run audit:security-baseline` against `scripts/security/npm-audit-baseline.json`
-- a separate security inventory artifact that is not the Checkpoint F evidence artifact
+Independent review of:
+
+- fail-closed audit metadata completeness and metadata-versus-package-row consistency
+- resolvedHigh only when advisory identity and the high package are actually gone
+- fail-closed scanning of every workflow `uses:` (step, job, quoted, local, docker, duplicates)
+- immutable 40-hex pins and the fixed allowlist `actions/checkout`, `actions/setup-node`, `actions/upload-artifact`
+- per-occurrence `persist-credentials: false` and `fetch-depth: 0` on every checkout
+- verification schemas `classic-v0.2-security-audit-verification/2` and `classic-v0.2-action-pin-inventory/2`
 
 On `pull_request`, `sourceHeadSha` (PR head) and `testedCheckoutSha` (merge checkout) must remain distinct. `liveExchangeWrite=false`. `productionCredentialUsed=false`.
 
-CI run IDs, artifact IDs, and digests are recorded on PR #3 after the hardening workflow finishes. They are not hand-written into this file in advance.
+CI run IDs, artifact IDs, and digests are recorded on PR #3 after the corrective workflow finishes. They are not hand-written into this file in advance.
