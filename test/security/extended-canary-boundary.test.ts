@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -8,10 +9,14 @@ import {
   CANARY_VENUE_UNAVAILABLE,
   FORBIDDEN_CANARY_PACKAGES,
   FORBIDDEN_NESTED_WS_PATH,
+  assertCanarySourceBoundary,
   forbiddenPackagesPresentInLockfile,
   isForbiddenModuleSpecifier,
+  normalizeModuleSpecifier,
   readCanaryManifest,
   repoRootFromHere,
+  scanCanarySourceText,
+  scanCanaryTree,
 } from "../../scripts/security/extended-canary-boundary.js";
 import {
   assertCanaryVenueSelection,
@@ -154,5 +159,127 @@ describe("extended canary dependency boundary (unit)", () => {
     assert.match(f, /IDENTITY_COLLISION/);
     assert.match(f, /SOURCE_IDENTITY_CONFLICT/);
     assert.match(f, /requestedVerdict/);
+  });
+});
+
+describe("extended canary boundary adversarial checks", () => {
+  it("PASS_BLOCKED: dynamic import literal of a forbidden venue file is rejected", () => {
+    const hits = scanCanarySourceText('await import("./venues/n1.js");', "src/cli/run-extended-canary.ts");
+    assert.ok(hits.some((hit) => hit.includes("n1.js")));
+  });
+
+  it("PASS_ALLOWED: loop.ts keeps the fail-closed literal fallback import of venues/index.js", () => {
+    const hits = scanCanarySourceText(
+      'bindings?.createExecutor ?? (await import("./venues/index.js")).createExecutor;',
+      "src/loop.ts",
+    );
+    assert.deepEqual(hits, []);
+  });
+
+  it("PASS_BLOCKED: non-literal import concatenation of n1.js is rejected", () => {
+    const hits = scanCanarySourceText(
+      'await import("./venues/" + "n1.js");',
+      "src/cli/run-extended-canary.ts",
+    );
+    assert.ok(hits.some((hit) => hit.includes("n1.js")));
+  });
+
+  it("PASS_ALLOWED: Extended vendor import(pathToFileURL(vendor).href) stays allowed", () => {
+    const hits = scanCanarySourceText(
+      "const mod = await import(pathToFileURL(vendor).href);",
+      "src/venues/extended.ts",
+    );
+    assert.deepEqual(hits, []);
+  });
+
+  it("PASS_BLOCKED: require, require.resolve, and module.createRequire of viem are rejected", () => {
+    assert.ok(scanCanarySourceText('require("viem")', "src/loop.ts").length > 0);
+    assert.ok(scanCanarySourceText('require.resolve("viem")', "src/loop.ts").length > 0);
+    assert.ok(
+      scanCanarySourceText('module.createRequire(import.meta.url)("viem")', "src/loop.ts")
+        .some((hit) => hit === "createRequire" || hit.includes("viem")),
+    );
+    assert.equal(isForbiddenModuleSpecifier("viem"), true);
+  });
+
+  it("PASS_BLOCKED: path tricks that previously bypassed the matcher now resolve to viem", () => {
+    const payloads = [
+      "node_modules/viem",
+      "/tmp/node_modules//viem/index.js",
+      "/tmp/node_modules/./viem/index.js",
+      "/tmp/node_modules/viem/../viem/index.js",
+      "file:///tmp/node_modules/viem/index.js",
+      "file:///tmp/node_modules/viem%2Findex.js",
+      "/tmp/node_modules/viem%2Findex.js",
+      String.raw`C:\tmp\node_modules\viem\index.js`,
+    ];
+    for (const payload of payloads) {
+      assert.equal(isForbiddenModuleSpecifier(payload), true, payload);
+      assert.ok(normalizeModuleSpecifier(payload).replaceAll("\\", "/").includes("viem"), payload);
+    }
+  });
+
+  it("PASS_ALLOWED: direct ws and node builtins are not High-package forbidden specifiers", () => {
+    assert.equal(isForbiddenModuleSpecifier("ws"), false);
+    assert.equal(isForbiddenModuleSpecifier("node:net"), false);
+    assert.equal(isForbiddenModuleSpecifier("node:tls"), false);
+    assert.equal(isForbiddenModuleSpecifier("node:http"), false);
+    assert.equal(isForbiddenModuleSpecifier("node:https"), false);
+    assert.equal(isForbiddenModuleSpecifier("node:dgram"), false);
+  });
+
+  it("PASS_BLOCKED: symlink canary sources that resolve to a different path are rejected", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "classic-canary-symlink-"));
+    try {
+      fs.mkdirSync(path.join(tmp, "src", "venues"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "src", "venues", "n1.ts"), "export const x = 1;\n");
+      fs.symlinkSync(path.join(tmp, "src", "venues", "n1.ts"), path.join(tmp, "src", "venues", "extended.ts"));
+      assert.throws(
+        () => assertCanarySourceBoundary(tmp, "src/venues/extended.ts"),
+        (err: Error) => String(err.message).startsWith("CANARY_SYMLINK_SOURCE:"),
+      );
+      assert.equal(assertCanarySourceBoundary(tmp, "src/venues/n1.ts").endsWith(`${path.sep}n1.ts`), true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("PASS_BLOCKED: production canary tree has no tls/dgram imports, eval, or Function constructor", () => {
+    const hits = scanCanaryTree(ROOT);
+    assert.deepEqual(hits, []);
+    const manifest = readCanaryManifest(ROOT);
+    for (const rel of manifest.files) {
+      if (!rel.endsWith(".ts") && !rel.endsWith(".js")) continue;
+      const text = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      assert.equal(/\bfrom\s+["']node:(tls|dgram)["']/.test(text), false, rel);
+      assert.equal(/\bfrom\s+["'](tls|dgram)["']/.test(text), false, rel);
+    }
+  });
+
+  it("PASS_ALLOWED: node:net (lease) and node:http (dashboard) remain in the canary tree", () => {
+    const lease = fs.readFileSync(path.join(ROOT, "src/runtimeLease.ts"), "utf8");
+    const dashboard = fs.readFileSync(path.join(ROOT, "src/dashboard.ts"), "utf8");
+    assert.match(lease, /from "node:net"/);
+    assert.match(dashboard, /from "node:http"/);
+  });
+
+  it("PASS_ALLOWED: process.env reads in canary config/loadEnv are expected and not treated as High-package loads", () => {
+    const config = fs.readFileSync(path.join(ROOT, "src/config.ts"), "utf8");
+    const loadEnv = fs.readFileSync(path.join(ROOT, "src/loadEnv.ts"), "utf8");
+    assert.match(config, /process\.env/);
+    assert.match(loadEnv, /process\.env/);
+    assert.equal(isForbiddenModuleSpecifier("process"), false);
+    assert.equal(isForbiddenModuleSpecifier("node:process"), false);
+    const hits = scanCanarySourceText("const x = process.env.EXPERIMENT_MODE;", "src/config.ts");
+    assert.deepEqual(hits, []);
+  });
+
+  it("PASS_BLOCKED: eval, Function constructor, and (0, eval) forms are rejected in canary source text", () => {
+    assert.ok(scanCanarySourceText("eval('import(\"viem\")')", "src/loop.ts").includes("eval"));
+    assert.ok(scanCanarySourceText("new Function('return 1')", "src/loop.ts").includes("Function"));
+    assert.ok(scanCanarySourceText("(0, eval)('1')", "src/loop.ts").includes("eval"));
+    assert.ok(scanCanarySourceText("(0, Function)('return 1')", "src/loop.ts").includes("Function"));
+    assert.ok(scanCanarySourceText("globalThis.eval('1')", "src/loop.ts").includes("eval"));
+    assert.ok(scanCanarySourceText("globalThis['eval']('1')", "src/loop.ts").includes("eval"));
   });
 });

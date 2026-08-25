@@ -2,9 +2,9 @@
 
 **Status:** CHECKPOINT_E_REJECTED / CORRECTIVE_1_REJECTED / CORRECTIVE_2_REVIEW_CANDIDATE
 **Date:** 2026-08-25
-**Repository:** `danny0971haha/classic-grid`  
-**Branch:** `experiment/classic-v0.2-100u-safety`  
-**Draft PR:** `#3`  
+**Repository:** `danny0971haha/classic-grid`
+**Branch:** `experiment/classic-v0.2-100u-safety`
+**Draft PR:** `#3`
 **Current task:** `CHECKPOINT_E_CORRECTIVE_2`
 
 This document is engineering evidence only. It does **not** declare Checkpoint E PASS, engineering-ready, live-ready, or deploy-ready.

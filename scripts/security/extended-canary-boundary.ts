@@ -66,20 +66,175 @@ export function forbiddenPackagesPresentInLockfile(lockfileRaw: string): string[
   return [...new Set(present)].sort();
 }
 
+export function normalizeModuleSpecifier(specifier: string): string {
+  let value = specifier.trim();
+  if (/^file:/i.test(value)) {
+    try {
+      value = fileURLToPath(value);
+    } catch {
+      value = value.replace(/^file:\/\//i, "");
+      try {
+        value = decodeURIComponent(value);
+      } catch {
+        /* keep undecodable file URL tail */
+      }
+    }
+  } else {
+    try {
+      value = decodeURIComponent(value);
+    } catch {
+      /* keep original when percent-encoding is malformed */
+    }
+  }
+  value = value.replaceAll("\\", "/").replace(/\/{2,}/g, "/");
+  return path.posix.normalize(value);
+}
+
+function specifierMatchesForbiddenPackage(normalized: string, name: string): boolean {
+  return (
+    normalized === name ||
+    normalized.startsWith(`${name}/`) ||
+    normalized === `node_modules/${name}` ||
+    normalized.startsWith(`node_modules/${name}/`) ||
+    normalized.includes(`/node_modules/${name}/`) ||
+    normalized.endsWith(`/node_modules/${name}`)
+  );
+}
+
 export function isForbiddenModuleSpecifier(specifier: string): boolean {
-  const normalized = specifier.replaceAll("\\", "/");
-  for (const name of FORBIDDEN_CANARY_PACKAGES) {
+  const raw = specifier.replaceAll("\\", "/");
+  const normalized = normalizeModuleSpecifier(specifier);
+  const candidates = new Set([specifier, raw, normalized]);
+  for (const candidate of candidates) {
+    for (const name of FORBIDDEN_CANARY_PACKAGES) {
+      if (specifierMatchesForbiddenPackage(candidate, name) || candidate.startsWith(`${name}/`)) {
+        return true;
+      }
+    }
+    if (candidate.includes("viem/node_modules/ws") || candidate.includes("/viem/node_modules/ws")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+const FORBIDDEN_CANARY_SOURCE_BASENAMES = [
+  "n1.ts",
+  "n1.js",
+  "phoenix.ts",
+  "phoenix.js",
+  "phoenix2.ts",
+  "phoenix2.js",
+  "nado.ts",
+  "nado.js",
+  "popdex.ts",
+  "popdex.js",
+  "decibel.ts",
+  "decibel.js",
+  "decibelLive.ts",
+  "decibelLive.js",
+  "risex.ts",
+  "risex.js",
+  "officialStats.ts",
+  "officialStats.js",
+  "venues/index.ts",
+  "venues/index.js",
+] as const;
+
+function isAllowedLoopFallback(rel: string, specifier: string): boolean {
+  return rel.replaceAll("\\", "/") === "src/loop.ts"
+    && (specifier === "./venues/index.js" || specifier === "./officialStats.js");
+}
+
+function isTypeOnlyImportFrom(source: string, fromIndex: number): boolean {
+  const prefix = source.slice(Math.max(0, fromIndex - 240), fromIndex);
+  const stmt = prefix.slice(prefix.lastIndexOf(";") + 1);
+  return /^\s*import\s+type\b/.test(stmt);
+}
+
+function specifierLooksLikeForbiddenSource(specifier: string): boolean {
+  const normalized = normalizeModuleSpecifier(specifier);
+  for (const base of FORBIDDEN_CANARY_SOURCE_BASENAMES) {
     if (
-      specifier === name ||
-      specifier.startsWith(`${name}/`) ||
-      normalized.includes(`/node_modules/${name}/`) ||
-      normalized.endsWith(`/node_modules/${name}`) ||
-      normalized.includes(`/node_modules/${name}"`)
+      normalized === base
+      || normalized.endsWith(`/${base}`)
+      || normalized.endsWith(`\\${base}`)
     ) {
       return true;
     }
   }
-  return normalized.includes("/viem/node_modules/ws");
+  return false;
+}
+
+export function scanCanarySourceText(source: string, rel = ""): string[] {
+  const hits: string[] = [];
+  if (
+    /\beval\s*\(/.test(source)
+    || /\(\s*0\s*,\s*eval\s*\)/.test(source)
+    || /globalThis\s*(?:\[\s*["']eval["']\s*\]|\.eval\b)/.test(source)
+  ) {
+    hits.push("eval");
+  }
+  if (/\bnew\s+Function\s*\(/.test(source) || /\(\s*0\s*,\s*Function\s*\)/.test(source)) {
+    hits.push("Function");
+  }
+  if (/\bmodule\.createRequire\s*\(/.test(source) || /\bcreateRequire\s*\(/.test(source)) {
+    hits.push("createRequire");
+  }
+  const literalRe =
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bfrom\s+["']([^"']+)["']|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\brequire\.resolve\s*\(\s*["']([^"']+)["']\s*\)/g;
+  for (const match of source.matchAll(literalRe)) {
+    const specifier = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+    if (!specifier || isAllowedLoopFallback(rel, specifier)) continue;
+    if (match[2] && isTypeOnlyImportFrom(source, match.index ?? 0)) continue;
+    if (isForbiddenModuleSpecifier(specifier) || specifierLooksLikeForbiddenSource(specifier)) {
+      hits.push(`specifier:${specifier}`);
+    }
+  }
+  for (const match of source.matchAll(/\bimport\s*\(([^)]*)\)/g)) {
+    const inner = match[1] ?? "";
+    if (/^\s*["'][^"']*["']\s*$/.test(inner)) continue;
+    if (isAllowedLoopFallback(rel, inner.trim())) continue;
+    for (const base of FORBIDDEN_CANARY_SOURCE_BASENAMES) {
+      if (inner.includes(base)) hits.push(`non-literal-import:${base}`);
+    }
+    for (const name of FORBIDDEN_CANARY_PACKAGES) {
+      if (inner.includes(name)) hits.push(`non-literal-import:${name}`);
+    }
+  }
+  return [...new Set(hits)];
+}
+
+export function scanCanaryTree(root = repoRootFromHere()): string[] {
+  const manifest = readCanaryManifest(root);
+  const hits: string[] = [];
+  for (const rel of manifest.files) {
+    if (!rel.endsWith(".ts") && !rel.endsWith(".js")) continue;
+    const text = fs.readFileSync(path.join(root, rel), "utf8");
+    for (const hit of scanCanarySourceText(text, rel)) hits.push(`${rel}:${hit}`);
+  }
+  return hits;
+}
+
+export function assertCanarySourceBoundary(root: string, rel: string): string {
+  assertRelativeSafe(rel);
+  const src = path.join(root, rel);
+  if (!fs.existsSync(src) || !fs.statSync(src).isFile()) {
+    throw new Error(`CANARY_SOURCE_MISSING:${rel}`);
+  }
+  if (fs.lstatSync(src).isSymbolicLink()) {
+    throw new Error(`CANARY_SYMLINK_SOURCE:${rel}`);
+  }
+  const realRoot = fs.realpathSync(root);
+  const realSrc = fs.realpathSync(src);
+  const relReal = path.relative(realRoot, realSrc).replaceAll("\\", "/");
+  if (relReal.startsWith("..") || path.isAbsolute(relReal)) {
+    throw new Error(`CANARY_PATH_ESCAPE:${rel}`);
+  }
+  if (relReal !== rel.replaceAll("\\", "/")) {
+    throw new Error(`CANARY_SYMLINK_SOURCE:${rel}->${relReal}`);
+  }
+  return realSrc;
 }
 
 function assertRelativeSafe(rel: string): void {
@@ -148,9 +303,7 @@ export function stageExtendedCanary(root = repoRootFromHere(), stagingDir?: stri
   if (fs.existsSync(readme)) copyFileFrozen(readme, path.join(staging, "README.md"));
 
   for (const rel of manifest.files) {
-    assertRelativeSafe(rel);
-    const src = path.join(root, rel);
-    if (!fs.existsSync(src) || !fs.statSync(src).isFile()) throw new Error(`CANARY_SOURCE_MISSING:${rel}`);
+    const src = assertCanarySourceBoundary(root, rel);
     copyFileFrozen(src, path.join(staging, rel));
   }
 
@@ -451,9 +604,11 @@ export function verifyExtendedCanary(root = repoRootFromHere()): CanaryVerificat
   });
   const unavailableText = `${unavailable.stdout}\n${unavailable.stderr}`;
   const codes: string[] = [];
+  const sourceHits = scanCanaryTree(root);
   if (forbiddenInLockfile.length) codes.push("FORBIDDEN_IN_LOCKFILE");
   if (forbiddenInstalled.length) codes.push("FORBIDDEN_INSTALLED");
   if (probe.forbiddenLoaded.length) codes.push("FORBIDDEN_LOADED");
+  if (sourceHits.length) codes.push("FORBIDDEN_SOURCE_SCAN");
   if (probe.unexpectedNetwork.length) codes.push("UNEXPECTED_NETWORK");
   if (secretLikeFiles.length) codes.push("SECRET_LIKE_FILES");
   if (audit.counts.critical !== 0) codes.push("CANARY_AUDIT_CRITICAL");

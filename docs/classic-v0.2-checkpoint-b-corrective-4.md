@@ -1,10 +1,10 @@
 # Classic Grid v0.2 — Checkpoint B Corrective 4
 
-**Status:** AUTHORITATIVE BOUNDED CORRECTIVE CANDIDATE / INDEPENDENT REVIEW REQUIRED  
-**Date:** 2026-08-23  
-**Repository:** `danny0971haha/classic-grid`  
-**Implementation branch:** `experiment/classic-v0.2-100u-safety`  
-**Draft PR:** `#3`  
+**Status:** AUTHORITATIVE BOUNDED CORRECTIVE CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Date:** 2026-08-23
+**Repository:** `danny0971haha/classic-grid`
+**Implementation branch:** `experiment/classic-v0.2-100u-safety`
+**Draft PR:** `#3`
 **Current gate:** Checkpoint B remains REJECT. This change is Corrective 4 only.
 
 This document does **not** declare Checkpoint B PASS. CI success is not a gate verdict.

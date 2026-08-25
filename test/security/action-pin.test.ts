@@ -269,4 +269,44 @@ jobs:
     assert.equal(inventory.dockerActionCount, 0);
     assert.equal(inventory.graph.cycles.length, 0);
   });
+
+  it("upload-artifact runs only after post-build security gates", () => {
+    const workflow = fs.readFileSync(".github/workflows/ci.yml", "utf8");
+    assertUploadsAfterSecurityGates(workflow);
+  });
+
+  it("a workflow that uploads before security scans is rejected by the order gate", () => {
+    const bad = `name: ci
+jobs:
+  x:
+    steps:
+      - uses: actions/upload-artifact@${UPLOAD}
+      - name: Whitespace check
+        run: git diff --check
+`;
+    assert.throws(() => assertUploadsAfterSecurityGates(bad));
+  });
 });
+
+function assertUploadsAfterSecurityGates(workflow: string): void {
+  const firstUpload = workflow.search(/uses:\s*actions\/upload-artifact@/);
+  assert.ok(firstUpload >= 0, "expected at least one upload-artifact");
+  const requiredBefore = [
+    "Extended canary dependency boundary",
+    "Production artifact smoke and forbidden source scan",
+    "Whitespace check",
+    "Working tree clean",
+    "git diff --check",
+    'git diff "origin/${BASE_REF}...HEAD" --check',
+    'git diff "origin/main...HEAD" --check',
+    "git diff --exit-code",
+    "git status --porcelain",
+  ];
+  for (const token of requiredBefore) {
+    const idx = workflow.indexOf(token);
+    assert.notEqual(idx, -1, `missing ${token}`);
+    assert.ok(idx < firstUpload, `${token} must precede upload-artifact`);
+  }
+  assert.equal(workflow.includes("if: always()"), false);
+  assert.equal(workflow.includes("continue-on-error: true"), false);
+}

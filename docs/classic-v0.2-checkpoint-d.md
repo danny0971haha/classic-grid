@@ -1,10 +1,10 @@
 # Classic Grid v0.2 — Checkpoint D
 
-**Status:** CHECKPOINT_D_REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED  
-**Date:** 2026-08-24  
-**Repository:** `danny0971haha/classic-grid`  
-**Branch:** `experiment/classic-v0.2-100u-safety`  
-**Draft PR:** `#3`  
+**Status:** CHECKPOINT_D_REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Date:** 2026-08-24
+**Repository:** `danny0971haha/classic-grid`
+**Branch:** `experiment/classic-v0.2-100u-safety`
+**Draft PR:** `#3`
 **Current task:** `CHECKPOINT_D_ONLY`
 
 This document does **not** declare Checkpoint D PASS. CI success is not a gate verdict. The implementation agent must not self-declare PASS.

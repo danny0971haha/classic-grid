@@ -1,12 +1,12 @@
 # Classic Grid v0.2 — Checkpoint B Corrective 1
 
-**Status:** AUTHORITATIVE BOUNDED CORRECTIVE / CHECKPOINT B REJECTED  
-**Date:** 2026-08-23  
-**Repository:** `danny0971haha/classic-grid`  
-**Implementation branch:** `experiment/classic-v0.2-100u-safety`  
-**Draft PR:** `#3`  
-**Rejected candidate:** `d2a48abe3f49f516a5678dd9119665ac23027671`  
-**Rejected candidate tree:** `2b9aa30162c7c54d54bffec3adb7d653e9e0faab`  
+**Status:** AUTHORITATIVE BOUNDED CORRECTIVE / CHECKPOINT B REJECTED
+**Date:** 2026-08-23
+**Repository:** `danny0971haha/classic-grid`
+**Implementation branch:** `experiment/classic-v0.2-100u-safety`
+**Draft PR:** `#3`
+**Rejected candidate:** `d2a48abe3f49f516a5678dd9119665ac23027671`
+**Rejected candidate tree:** `2b9aa30162c7c54d54bffec3adb7d653e9e0faab`
 **CI evidence:** run `32586238616` succeeded with `162/162` tests, but green CI does not prove the missing authority/fencing invariants.
 
 ## 1. Independent decision

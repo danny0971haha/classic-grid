@@ -1,10 +1,10 @@
 # Classic Grid v0.2 — Checkpoint C Corrective 2
 
-**Status:** CHECKPOINT_C_REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED  
-**Date:** 2026-08-24  
-**Repository:** `danny0971haha/classic-grid`  
-**Branch:** `experiment/classic-v0.2-100u-safety`  
-**Draft PR:** `#3`  
+**Status:** CHECKPOINT_C_REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Date:** 2026-08-24
+**Repository:** `danny0971haha/classic-grid`
+**Branch:** `experiment/classic-v0.2-100u-safety`
+**Draft PR:** `#3`
 **Current task:** `CHECKPOINT_C_CORRECTIVE_2_ONLY`
 
 This document does **not** declare Checkpoint C PASS. CI success is not a gate verdict. The implementation agent must not self-declare PASS.
@@ -125,7 +125,7 @@ Hook context includes `{ cursorPath, phase: "accept" \| "ack" \| "invalidate" }`
 
 ## REAL_SIGKILL_MATRIX
 
-Child worker: `test/fixtures/execution-cursor-crash-worker.ts`  
+Child worker: `test/fixtures/execution-cursor-crash-worker.ts`
 Parent helper: `test/helpers/cursorPersistCrash.ts`
 
 Parent prepares a fresh temp directory, spawns a child, waits for an IPC/ready-file notification at the named boundary, sends real `SIGKILL`, and never reuses child module state. Assertions use a second process (`inspect` / `replay`) that loads only durable bytes.

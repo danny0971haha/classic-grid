@@ -71,22 +71,10 @@ jobs:
         run: npm run evidence:checkpoint-e
       - name: Verify Checkpoint E evidence
         run: npm run evidence:checkpoint-e:verify
-      - name: Upload Checkpoint E evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: classic-v0.2-checkpoint-e-results
-          path: artifacts/classic-v0.2-checkpoint-e-results.json
-          if-no-files-found: error
       - name: Generate Checkpoint F evidence
         run: npm run evidence:checkpoint-f
       - name: Verify Checkpoint F evidence
         run: npm run evidence:checkpoint-f:verify
-      - name: Upload Checkpoint F evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: classic-v0.2-checkpoint-f-results
-          path: artifacts/classic-v0.2-checkpoint-f-results.json
-          if-no-files-found: error
       - name: Security checker tests
         run: |
           set -euo pipefail
@@ -117,6 +105,62 @@ jobs:
           do
             test -s "$f"
           done
+      - name: Production artifact smoke and forbidden source scan
+        run: node --import tsx scripts/security/canary-artifact-smoke.ts
+      - name: Whitespace check
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if [ -z "${BASE_REF}" ]; then
+            BASE_REF="main"
+          fi
+          if [ -z "${HEAD_SHA}" ]; then
+            HEAD_SHA="$(git rev-parse HEAD)"
+          fi
+          echo "pull_request_head_sha=${HEAD_SHA}"
+          echo "base_branch=${BASE_REF}"
+          git fetch --no-tags --prune origin \
+            "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          git rev-parse --verify "refs/remotes/origin/${BASE_REF}"
+          if [ "${BASE_REF}" != "main" ]; then
+            git fetch --no-tags --prune origin \
+              "+refs/heads/main:refs/remotes/origin/main"
+          fi
+          git rev-parse --verify "refs/remotes/origin/main"
+          BASE_REMOTE_SHA="$(git rev-parse --verify "refs/remotes/origin/${BASE_REF}")"
+          MERGE_BASE_SHA="$(git merge-base "origin/${BASE_REF}" HEAD)"
+          echo "base_remote_sha=${BASE_REMOTE_SHA}"
+          echo "merge_base_sha=${MERGE_BASE_SHA}"
+          git diff --check
+          git diff "origin/${BASE_REF}...HEAD" --check
+          git diff "origin/main...HEAD" --check
+          F_BASE="3960e3634b1fc68ab90bd8f73cd6effd925932e2"
+          if git cat-file -e "${F_BASE}^{commit}"; then
+            git diff --check "$F_BASE" HEAD
+          fi
+      - name: Working tree clean
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          if [ -n "$(git status --porcelain)" ]; then
+            git status --porcelain
+            exit 1
+          fi
+      - name: Upload Checkpoint E evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: classic-v0.2-checkpoint-e-results
+          path: artifacts/classic-v0.2-checkpoint-e-results.json
+          if-no-files-found: error
+      - name: Upload Checkpoint F evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: classic-v0.2-checkpoint-f-results
+          path: artifacts/classic-v0.2-checkpoint-f-results.json
+          if-no-files-found: error
       - name: Upload security inventory
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -130,10 +174,3 @@ jobs:
           name: classic-v0.2-dependency-boundary-corrective-1
           path: artifacts/classic-v0.2-dependency-boundary-corrective-1.json
           if-no-files-found: error
-      - name: Whitespace check
-        run: |
-          git diff --check
-          F_BASE="3960e3634b1fc68ab90bd8f73cd6effd925932e2"
-          if git cat-file -e "${F_BASE}^{commit}"; then
-            git diff --check "$F_BASE" HEAD
-          fi

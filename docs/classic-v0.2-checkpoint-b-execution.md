@@ -1,11 +1,11 @@
 # Classic Grid v0.2 — Checkpoint B Execution Contract
 
-**Status:** AUTHORIZED AFTER INDEPENDENT CHECKPOINT A PASS  
-**Date:** 2026-08-23  
-**Repository:** `danny0971haha/classic-grid`  
-**Branch:** `experiment/classic-v0.2-100u-safety`  
-**Accepted Checkpoint A candidate:** `0ebd16161ed2e72f365c1378a7ca1b8533413414`  
-**Checkpoint A CI:** `32582704477` — success, `140/140` tests  
+**Status:** AUTHORIZED AFTER INDEPENDENT CHECKPOINT A PASS
+**Date:** 2026-08-23
+**Repository:** `danny0971haha/classic-grid`
+**Branch:** `experiment/classic-v0.2-100u-safety`
+**Accepted Checkpoint A candidate:** `0ebd16161ed2e72f365c1378a7ca1b8533413414`
+**Checkpoint A CI:** `32582704477` — success, `140/140` tests
 **Parent contract:** `docs/classic-v0.2-implementation-contract.md`
 
 ## 1. Authorization

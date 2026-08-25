@@ -1,7 +1,7 @@
 # Classic Grid Experiment Spec v0.2 — 100U Safety Canary
 
-Status: DRAFT / NO LIVE AUTHORIZATION  
-Date: 2026-08-22  
+Status: DRAFT / NO LIVE AUTHORIZATION
+Date: 2026-08-22
 Base: `experiment/classic-v0.1` @ `a168c487e210306aab17cf428dec67d8168b68fe`
 
 ## Purpose

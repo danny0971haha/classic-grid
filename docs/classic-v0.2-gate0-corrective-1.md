@@ -1,11 +1,11 @@
 # Classic Grid v0.2 — Gate 0 Corrective 1
 
-**Status:** AUTHORITATIVE BOUNDED CORRECTIVE / GATE 0 REJECTED  
-**Date:** 2026-08-22  
-**Repository:** `danny0971haha/classic-grid`  
-**Branch:** `experiment/classic-v0.2-100u-safety`  
-**Rejected candidate:** `f2ff58abd42d7862910cb07fdf62a110ac4baa45`  
-**Rejected candidate tree:** `144caf5c9a00c54c9f0d18f4a48dcbd7a31d3c76`  
+**Status:** AUTHORITATIVE BOUNDED CORRECTIVE / GATE 0 REJECTED
+**Date:** 2026-08-22
+**Repository:** `danny0971haha/classic-grid`
+**Branch:** `experiment/classic-v0.2-100u-safety`
+**Rejected candidate:** `f2ff58abd42d7862910cb07fdf62a110ac4baa45`
+**Rejected candidate tree:** `144caf5c9a00c54c9f0d18f4a48dcbd7a31d3c76`
 **CI evidence:** run `32574237497` completed successfully, but green CI is not sufficient for Gate 0 acceptance.
 
 ## 1. Independent decision
