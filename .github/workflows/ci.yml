@@ -43,7 +43,9 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:checkpoint-e
       - run: npm run test:checkpoint-e-corrective
+      - run: npm run test:checkpoint-f
       - run: npm run check
+      - run: npm run build
       - name: Generate Checkpoint E evidence
         run: npm run evidence:checkpoint-e
       - name: Verify Checkpoint E evidence
@@ -54,8 +56,22 @@ jobs:
           name: classic-v0.2-checkpoint-e-results
           path: artifacts/classic-v0.2-checkpoint-e-results.json
           if-no-files-found: error
+      - name: Generate Checkpoint F evidence
+        run: npm run evidence:checkpoint-f
+      - name: Upload Checkpoint F evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: classic-v0.2-checkpoint-f-results
+          path: artifacts/classic-v0.2-checkpoint-f-results.json
+          if-no-files-found: error
       - name: Dependency audit inventory
         continue-on-error: true
         run: npm audit --json
       - name: Whitespace check
-        run: git diff --check
+        run: |
+          BASE="${CHECKPOINT_E_BASE_SHA:-}"
+          if echo "$BASE" | grep -qE '^[0-9a-f]{40}$' && [ "$BASE" != "0000000000000000000000000000000000000000" ]; then
+            git diff --check "$BASE"...HEAD
+          else
+            git diff --check
+          fi

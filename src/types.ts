@@ -89,6 +89,33 @@ export type PlannerLogicalSlot = {
   anchorEpoch: number;
   side: Side;
   levelIndex: number;
+  /** Present only for obligation-specific replacement identities. */
+  replacementToken?: string;
+};
+
+export type ReplacementObligationLifecycle =
+  | "OBSERVED"
+  | "DURABLY_INGESTED"
+  | "READY"
+  | "SUBMITTING"
+  | "SUBMIT_UNKNOWN"
+  | "CONFIRMED_OPEN"
+  | "TERMINAL_FILLED_OR_REPLACED"
+  | "TERMINAL_EDGE_NOOP"
+  | "RECONCILIATION_REQUIRED";
+
+export type ReplacementApplyDisposition = "CONFIRMED" | "REJECTED" | "UNKNOWN";
+
+/** Planner-facing replacement obligation. Quantity is the proven residual, never sizeBase. */
+export type PlannerReplacementObligation = {
+  obligationId: string;
+  sourceDedupeKey: string;
+  targetSide: Side;
+  targetLevelIndex: number;
+  outstandingQuantity: number;
+  placementQuantity: number;
+  replacementClientOrderId: string;
+  lifecycle: ReplacementObligationLifecycle;
 };
 
 export type PlannerOrderClass =

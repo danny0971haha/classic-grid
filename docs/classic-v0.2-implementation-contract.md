@@ -11,8 +11,11 @@
 ```text
 CHECKPOINT_D_CORRECTIVE_1=PASS
 CHECKPOINT_E=REJECT
-CHECKPOINT_E_CORRECTIVE_1=REVIEW_CANDIDATE
+CHECKPOINT_E_CORRECTIVE_1=REJECT
+CHECKPOINT_E_CORRECTIVE_2=ACCEPT
+CHECKPOINT_F=REVIEW_CANDIDATE
 CHECKPOINT_E_SELF_DECLARED_PASS=NO
+CHECKPOINT_F_SELF_DECLARED_PASS=NO
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
 DEPLOYMENT_AUTHORIZED=NO
@@ -20,7 +23,7 @@ MERGE_AUTHORIZED=NO
 FORCE_PUSH_AUTHORIZED=NO
 ```
 
-This status block does **not** declare Checkpoint E PASS. Independent review rejected the original Checkpoint E evidence. Corrective 1 is a review candidate only.
+Independent review accepted Checkpoint E Corrective 2 as evidence-schema correction only. That ACCEPT does not authorize live canary, real funds, merge, or deploy. Checkpoint F is a review candidate for authoritative execution consumption.
 
 ## 1. Decision
 
@@ -36,7 +39,8 @@ Required execution order:
 4. **Checkpoint C — exchange-observed execution journal and telemetry**
 5. **Checkpoint D — deterministic planner deduplication without inferred fills**
 6. **Checkpoint E — dry-run, restart, and fault-injection evidence**
-7. **Independent phase-gate review**
+7. **Checkpoint F — authoritative execution consumption and deterministic replacement**
+8. **Independent phase-gate review**
 
 No later checkpoint may be used to bypass an earlier failed or incomplete gate.
 
@@ -401,11 +405,26 @@ Do not couple raw websocket callbacks directly to grid order placement.
 
 ## 20. Planner boundary for v0.2
 
-For v0.2, exchange executions may drive telemetry and audited counters, but they must not drive replacement-order state until replay, deduplication, partial-fill, and restart semantics are independently accepted.
+Checkpoint C/D kept `plan.filled` empty so disappearance could not drive replacement. Checkpoint F introduces a durable strategy execution ledger (`src/strategyExecutionLedger.ts`, schema `classic-grid.strategy-ledger.v1`). Authoritative `ExecutionRecord` rows may drive exact replacement obligations only after durable ingest, ownership proof, and fail-closed validation.
 
-The existing safe behavior of keeping `plan.filled` empty is preferable to reintroducing disappearance-based inference.
+Tick order on the experiment path:
+
+1. `drainExecutionJournal()`
+2. inspect authority and faults
+3. idempotent durable ingest (`dedupeKey`), proven only after write, fsync, rename, directory fsync, and readback
+4. planner reads pending obligations from the strategy ledger
+5. telemetry publication
+6. `acknowledgeExecutionJournal()` means telemetry published only
+
+`acknowledgeExecutionJournal()` is not strategy consumption. Telemetry failure must not drop a proven obligation. Ledger persist failure must not ACK new records, must not emit risk-increasing places, and must latch durable `RECONCILIATION_REQUIRED` / cancel-only.
+
+Replacement rule: buy fill at level `i` → sell `i+1`; sell fill at level `i` → buy `i-1`; off-grid → `TERMINAL_EDGE_NOOP`. Quantity is the proven incremental fill, never `sizeBase`. Obligation-specific client IDs (`-r-{16hex}`) coexist with the seed one-order-per-logical-slot rule.
+
+Open-order disappearance and position delta still do not prove a fill. Position-delta Telegram counters are `estimatedCompletedRungs` / `estimatedGridProfit` only. Authoritative realized metrics require an execution pair and are labeled gross until fees are included.
 
 Grid gaps may continue to be repaired from authoritative open-order snapshots subject to ownership and notional guards.
+
+Checkpoint F is a review candidate. Independent ACCEPT of Checkpoint E Corrective 2 does not authorize live canary, real funds, merge, or deploy.
 
 ## 21. Telemetry semantics
 
@@ -559,6 +578,7 @@ Do not cherry-pick `e26ab196e01245ad70d0eb41e1b7ffc64249cd44` wholesale.
 - `src/experimentTelemetry.ts`
 - `src/loop.ts`
 - `src/grid.ts`
+- `src/strategyExecutionLedger.ts` for Checkpoint F durable strategy consumption only
 - `src/runtimeLease.ts` only when required for an explicit lease invariant
 - `src/venues/types.ts`
 - `src/venues/extended.ts`
@@ -596,6 +616,7 @@ Recommended sequence:
 5. `feat(telemetry): journal exchange-observed executions`
 6. `fix(grid): make owned duplicate selection deterministic`
 7. `test(experiment): add v0.2 dry-run and fault evidence`
+8. `feat(strategy): consume authoritative executions via a durable ledger`
 
 After each checkpoint:
 
@@ -614,8 +635,9 @@ Run from a clean checkout using Node 22:
 node --version
 npm --version
 npm ci
+npm run test:checkpoint-f
 npm run check
-git diff --check
+git diff --check <checkpoint-base>...HEAD
 git status --short
 git rev-parse HEAD
 git rev-parse HEAD^{tree}
@@ -709,7 +731,7 @@ A later live-canary contract must separately define account isolation, credentia
 At the end of each checkpoint, respond exactly with:
 
 ```text
-CHECKPOINT=<GATE_0|A|B|C|D|E>
+CHECKPOINT=<GATE_0|A|B|C|D|E|F>
 STATUS=<READY_FOR_REVIEW|BLOCKED>
 REPOSITORY=danny0971haha/classic-grid
 BRANCH=experiment/classic-v0.2-100u-safety
@@ -736,7 +758,7 @@ ARTIFACTS:
 KNOWN_LIMITATIONS:
 <explicit list>
 
-REQUESTED_VERDICT=<PASS|REJECT|BLOCKED>
+REQUESTED_VERDICT=<PASS|ACCEPT|REJECT|BLOCKED>
 ```
 
 No claim such as “safe”, “complete”, “production-ready”, or “live-ready” is valid without the independent gate verdict.

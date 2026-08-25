@@ -8,6 +8,7 @@ import type {
   PlannerDisposition,
   PlannerLogicalSlot,
   PlannerOrderClass,
+  PlannerReplacementObligation,
   SeedOrder,
   Side,
 } from "./types.js";
@@ -239,7 +240,8 @@ export function expectedOwnedClientOrderId(
 }
 
 export function plannerSlotKey(slot: PlannerLogicalSlot): string {
-  return `${slot.market}\u001f${slot.anchorEpoch}\u001f${slot.side}\u001f${slot.levelIndex}`;
+  const base = `${slot.market}\u001f${slot.anchorEpoch}\u001f${slot.side}\u001f${slot.levelIndex}`;
+  return slot.replacementToken ? `${base}\u001f${slot.replacementToken}` : base;
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -330,6 +332,7 @@ type ParsedOwnedIdentity = {
   epoch: number;
   side: Side;
   levelIndex: number;
+  replacementToken: string | null;
 };
 
 /**
@@ -353,6 +356,11 @@ export function planFromFillsAndSeed(p: {
   /** When set, only orders carrying this prefix are owned/cancellable by this run. */
   ownershipPrefix?: string;
   anchorEpoch?: number;
+  replacementObligations?: PlannerReplacementObligation[];
+  replacementSizes?: Record<string, number>;
+  forceCancelOnly?: boolean;
+  authoritativeFilled?: Array<{ side: Side; levelIndex: number; price: number }>;
+  authoritativeCompletedRungs?: number;
 }): {
   intents: Intent[];
   nextActive: Map<string, { levelIndex: number; side: Side; price: number; size: number }>;
@@ -369,9 +377,11 @@ export function planFromFillsAndSeed(p: {
   const currentEpoch =
     typeof p.anchorEpoch === "number" && Number.isSafeInteger(p.anchorEpoch) ? p.anchorEpoch : 0;
   const sizeTol = plannerSizeTolerance(p.sizeBase);
+  const replacementSizes = p.replacementSizes ?? {};
   const diagnostics: PlannerDiagnostic[] = [];
   const blockedLevels = new Set<number>();
   const blockedSlots = new Set<string>();
+  const blockedSeedLevels = new Set<number>();
 
   const collapsed = collapseObservations(p.openOrders.map(toObservation), diagnostics, (obs) => {
     blockInferredSlots(obs, p, prefix, currentEpoch, blockedLevels, blockedSlots);
@@ -380,7 +390,7 @@ export function planFromFillsAndSeed(p: {
 
   const classified: ClassifiedOrder[] = [];
   for (const obs of observations) {
-    classified.push(classifyObservation(obs, p, prefix, currentEpoch, sizeTol));
+    classified.push(classifyObservation(obs, p, prefix, currentEpoch, sizeTol, replacementSizes));
   }
 
   for (const row of classified) {
@@ -449,16 +459,29 @@ export function planFromFillsAndSeed(p: {
   const plannedCancelCount = intents.length;
   const capacityAfterAuthoritativeSnapshot =
     p.maxOpenOrders != null ? Math.max(0, p.maxOpenOrders - currentSnapshotVenueCount) : null;
-  const riskIncreaseBlocked = plannerRiskIncreaseBlocked(
+  const obligations = p.replacementObligations ?? [];
+  const unownedBlocksReplacement = classified.some((row) => {
+    if (row.class !== "UNOWNED") return false;
+    return obligations.some((obl) => {
+      if (obl.lifecycle !== "READY") return false;
+      if (row.slot && row.slot.side === obl.targetSide && row.slot.levelIndex === obl.targetLevelIndex) {
+        return true;
+      }
+      return row.matchedLevel === obl.targetLevelIndex;
+    });
+  });
+  const riskIncreaseBlocked = Boolean(p.forceCancelOnly) || unownedBlocksReplacement || plannerRiskIncreaseBlocked(
     classified,
     collapsed.unresolvedVenueCount,
     p,
     prefix,
     currentEpoch
   );
-  const plannerDisposition: PlannerDisposition = riskIncreaseBlocked
-    ? "RISK_INCREASE_BLOCKED"
-    : "CLEAR";
+  const plannerDisposition: PlannerDisposition = p.forceCancelOnly || unownedBlocksReplacement
+    ? (p.forceCancelOnly ? "CANCEL_ONLY_RECONCILIATION" : "RISK_INCREASE_BLOCKED")
+    : riskIncreaseBlocked
+      ? "RISK_INCREASE_BLOCKED"
+      : "CLEAR";
   let placeSlots =
     riskIncreaseBlocked || plannerDisposition !== "CLEAR"
       ? 0
@@ -481,29 +504,65 @@ export function planFromFillsAndSeed(p: {
   }
 
   // Disappearance is not a fill. Authoritative FILL comes only from the execution journal.
-  const filled: Array<{ side: Side; levelIndex: number; price: number }> = [];
-  const completedRungs = 0;
+  const filled = p.authoritativeFilled ? p.authoritativeFilled.slice() : [];
+  const completedRungs = typeof p.authoritativeCompletedRungs === "number" && Number.isFinite(p.authoritativeCompletedRungs)
+    ? p.authoritativeCompletedRungs
+    : 0;
 
-  const pushPlace = (order: DesiredOrder): boolean => {
+  const pushPlace = (order: DesiredOrder, replacementToken?: string): boolean => {
     if (blockedLevels.has(order.level)) return false;
     const slot: PlannerLogicalSlot = {
       market: p.market,
       anchorEpoch: currentEpoch,
       side: order.side,
       levelIndex: order.level,
+      ...(replacementToken ? { replacementToken } : {}),
     };
     if (blockedSlots.has(plannerSlotKey(slot))) return false;
+    if (!replacementToken && blockedSeedLevels.has(order.level)) return false;
     if (placeSlots <= 0) return false;
     if (intents.length >= p.maxWrites) return false;
-    const clientOrderId = prefix
-      ? expectedOwnedClientOrderId(prefix, currentEpoch, order.side, order.level)
-      : order.clientOrderId;
+    const clientOrderId = order.clientOrderId
+      ? order.clientOrderId
+      : prefix
+        ? expectedOwnedClientOrderId(prefix, currentEpoch, order.side, order.level)
+        : order.clientOrderId;
     intents.push({ type: "place", order: { ...order, clientOrderId } });
     placeSlots -= 1;
-    blockedLevels.add(order.level);
-    blockedSlots.add(plannerSlotKey(slot));
+    if (replacementToken) {
+      blockedSeedLevels.add(order.level);
+      blockedSlots.add(plannerSlotKey(slot));
+    } else {
+      blockedLevels.add(order.level);
+      blockedSlots.add(plannerSlotKey(slot));
+    }
     return true;
   };
+
+  const qtyClose = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-8;
+  for (const obl of obligations) {
+    if (obl.lifecycle !== "READY") continue;
+    const targetPrice = p.levels[obl.targetLevelIndex];
+    if (targetPrice == null) continue;
+    const exact = survivors.some((row) => {
+      if (row.slot?.side !== obl.targetSide || row.slot.levelIndex !== obl.targetLevelIndex) return false;
+      if (!qtyClose(row.obs.order.size, obl.outstandingQuantity) && !qtyClose(row.obs.order.size, obl.placementQuantity)) {
+        return false;
+      }
+      const cid = row.obs.clientOrderId;
+      return cid === obl.replacementClientOrderId || !row.slot.replacementToken;
+    });
+    if (exact) continue;
+    const parsed = prefix ? parseOwnedIdentity(obl.replacementClientOrderId, prefix) : null;
+    pushPlace({
+      market: p.market,
+      side: obl.targetSide,
+      price: targetPrice,
+      size: obl.outstandingQuantity,
+      level: obl.targetLevelIndex,
+      clientOrderId: obl.replacementClientOrderId,
+    }, parsed?.replacementToken || obl.obligationId);
+  }
 
   const seeds = seedOrders({
     levels: p.levels,
@@ -584,7 +643,7 @@ function compareSlot(a: PlannerLogicalSlot, b: PlannerLogicalSlot): number {
   const side = compareOpaqueString(a.side, b.side);
   if (side !== 0) return side;
   if (a.levelIndex !== b.levelIndex) return a.levelIndex < b.levelIndex ? -1 : 1;
-  return 0;
+  return compareOpaqueString(a.replacementToken ?? "", b.replacementToken ?? "");
 }
 
 function parseDecimalUint(digits: string): number | null {
@@ -604,18 +663,24 @@ function parseOwnedIdentity(
 ): ParsedOwnedIdentity | null {
   if (!prefix || !clientOrderId.startsWith(prefix)) return null;
   const rest = clientOrderId.slice(prefix.length);
-  const dash1 = rest.indexOf("-");
-  if (dash1 <= 0) return null;
-  const dash2 = rest.indexOf("-", dash1 + 1);
-  if (dash2 <= dash1 + 1) return null;
-  const epoch = parseDecimalUint(rest.slice(0, dash1));
-  const sideTok = rest.slice(dash1 + 1, dash2);
-  const levelDigits = rest.slice(dash2 + 1);
-  const levelIndex = parseDecimalUint(levelDigits);
-  if (epoch === null || levelIndex === null || !isSide(sideTok) || levelDigits.length === 0) {
-    return null;
-  }
-  return { epoch, side: sideTok, levelIndex };
+  const match = /^(\d{1,15})-(buy|sell)-(\d{1,15})(?:-r-([a-f0-9]{16}))?$/.exec(rest);
+  if (!match) return null;
+  const epoch = parseDecimalUint(match[1]!);
+  const levelIndex = parseDecimalUint(match[3]!);
+  if (epoch === null || levelIndex === null || !isSide(match[2])) return null;
+  return {
+    epoch,
+    side: match[2],
+    levelIndex,
+    replacementToken: match[4] ?? null,
+  };
+}
+
+export function parseOwnedClientOrderId(
+  clientOrderId: string,
+  prefix: string
+): ParsedOwnedIdentity | null {
+  return parseOwnedIdentity(clientOrderId, prefix);
 }
 
 function toObservation(order: LiveOrder): PlannerObservation {
@@ -718,7 +783,8 @@ function classifyObservation(
   },
   prefix: string,
   currentEpoch: number,
-  sizeTol: number
+  sizeTol: number,
+  replacementSizes: Record<string, number>
 ): ClassifiedOrder {
   const matchedLevel =
     obs.price !== null ? matchLevelIndex(obs.price, p.levels, p.spacing) : -1;
@@ -726,7 +792,10 @@ function classifyObservation(
   const owned = !prefix || (obs.clientOrderId !== "" && obs.clientOrderId.startsWith(prefix));
   const marketOk = obs.market === p.market;
   const side = isSide(obs.side) ? obs.side : null;
-  const sizeOk = obs.size !== null && Math.abs(obs.size - p.sizeBase) <= sizeTol;
+  const replacementQty = parsed?.replacementToken ? replacementSizes[obs.clientOrderId] : undefined;
+  const sizeOk = parsed?.replacementToken
+    ? obs.size !== null && replacementQty != null && Math.abs(obs.size - replacementQty) <= 1e-8
+    : obs.size !== null && Math.abs(obs.size - p.sizeBase) <= sizeTol;
   const priceOk = matchedLevel >= 0;
   const slot: PlannerLogicalSlot | null =
     priceOk && side
@@ -735,6 +804,7 @@ function classifyObservation(
           anchorEpoch: currentEpoch,
           side,
           levelIndex: matchedLevel,
+          ...(parsed?.replacementToken ? { replacementToken: parsed.replacementToken } : {}),
         }
       : null;
 
@@ -787,12 +857,14 @@ function classifyObservation(
     };
   }
 
-  const expected =
-    side && priceOk
+  const expected = parsed?.replacementToken
+    ? obs.clientOrderId
+    : side && priceOk
       ? expectedOwnedClientOrderId(prefix, currentEpoch, side, matchedLevel)
       : "";
   const identityOk = !prefix || (expected !== "" && obs.clientOrderId === expected);
-  if (marketOk && side && priceOk && sizeOk && identityOk) {
+  const replacementLevelOk = !parsed?.replacementToken || matchedLevel === parsed.levelIndex;
+  if (marketOk && side && priceOk && sizeOk && identityOk && replacementLevelOk) {
     return {
       obs,
       class: "VALID_OWNED_CURRENT",

@@ -55,6 +55,17 @@ import {
   planFromFillsAndSeed,
   type BuiltGrid,
 } from "./grid.js";
+import {
+  applyReplacementDispositions,
+  authoritativeMetrics,
+  ingestAuthoritativeDrain,
+  markObligationsSubmitting,
+  plannerFilledFromLedger,
+  plannerObligationsFromLedger,
+  replacementSizeByClientOrderId,
+  resolveStrategyLedgerPath,
+  strategyLedgerIdentity,
+} from "./strategyExecutionLedger.js";
 
 export { applyPlannerIntentGate };
 import { loadVenueSessionCounters } from "./ledger.js";
@@ -343,6 +354,8 @@ type VenueRuntime = {
   active: Map<string, Tracked>;
   completedRungs: number;
   gridProfit: number;
+  estimatedCompletedRungs: number;
+  estimatedGridProfit: number;
   built: BuiltGrid | null;
   params: GridParams | null;
   anchorMid: number;
@@ -616,13 +629,111 @@ async function tickOne(
       });
     }
   }
+  let strategyLedgerPath: string | null = null;
+  let strategyIdentity: ReturnType<typeof strategyLedgerIdentity> | null = null;
+  let strategyIngestProven = true;
+  let replacementObligations: ReturnType<typeof plannerObligationsFromLedger> = [];
+  let replacementSizes: ReturnType<typeof replacementSizeByClientOrderId> = {};
+  let forceCancelOnly = false;
+  let authoritativeFilled: ReturnType<typeof plannerFilledFromLedger> = [];
+  let authoritativeCompletedRungs = 0;
   if (typeof rt.ex.drainExecutionJournal === "function") {
     const drain = rt.ex.drainExecutionJournal();
-    const published = publishExecutionJournal(
-      (event, fields) => emitExp(event, { venue: rt.ex.id, symbol: market, ...fields }),
-      drain,
-    );
-    rt.ex.acknowledgeExecutionJournal?.(published);
+    if (cfg.experiment.enabled) {
+      strategyIdentity = strategyLedgerIdentity({
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        venue: rt.ex.id,
+        market,
+        anchorEpoch: rt.anchorEpoch,
+      });
+      strategyLedgerPath = resolveStrategyLedgerPath({
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        venue: rt.ex.id,
+        market,
+        anchorEpoch: rt.anchorEpoch,
+      });
+      const ingested = ingestAuthoritativeDrain({
+        path: strategyLedgerPath,
+        identity: strategyIdentity,
+        drain,
+        ownershipPrefix: experimentOwnershipPrefix,
+        levels: built.levels,
+        spacing: built.spacing,
+        sizeBase: g.sizeBase,
+        mode: g.mode,
+        openOrders: snap.openOrders,
+      });
+      strategyIngestProven = ingested.proven;
+      if (!ingested.proven) {
+        forceCancelOnly = true;
+        experimentSessionAllowsTrading = false;
+        try {
+          markRuntimeSessionReconciliationRequired({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+            reasonCodes: [ingested.diagnosticCode || "STRATEGY_LEDGER_DURABILITY_UNPROVEN"],
+          });
+        } catch { /* leftover OPEN still blocks the next start */ }
+        for (const fault of drain.faults) {
+          emitExp("EXECUTION_RECONCILIATION_REQUIRED", {
+            source: "classic-grid",
+            error_code: fault.code,
+            venue: rt.ex.id,
+            symbol: market,
+          });
+        }
+      } else if (ingested.ledger) {
+        const metrics = authoritativeMetrics(ingested.ledger);
+        rt.completedRungs = metrics.completedRungs;
+        rt.gridProfit = metrics.grossProfitUsd;
+        replacementObligations = plannerObligationsFromLedger(ingested.ledger);
+        replacementSizes = replacementSizeByClientOrderId(ingested.ledger);
+        forceCancelOnly = ingested.ledger.reconciliationRequired;
+        authoritativeFilled = plannerFilledFromLedger(ingested.ledger);
+        authoritativeCompletedRungs = ingested.ledger.authoritativeCompletedRungs;
+        let published: string[] = [];
+        try {
+          published = publishExecutionJournal(
+            (event, fields) => emitExp(event, { venue: rt.ex.id, symbol: market, ...fields }),
+            drain,
+          );
+        } catch {
+          published = [];
+        }
+        const ackKeys = published.filter((key) => ingested.ackEligibleDedupeKeys.includes(key));
+        if (ackKeys.length > 0) {
+          rt.ex.acknowledgeExecutionJournal?.(ackKeys);
+        }
+        if (strategyLedgerPath && strategyIdentity) {
+          const reconciled = applyReplacementDispositions({
+            path: strategyLedgerPath,
+            identity: strategyIdentity,
+            applyResult: { placed: 0, cancelled: 0, failed: 0, errors: [] },
+            placedClientOrderIds: [],
+            openOrders: snap.openOrders,
+          });
+          const liveLedger = reconciled.proven && reconciled.ledger ? reconciled.ledger : ingested.ledger;
+          replacementObligations = plannerObligationsFromLedger(liveLedger);
+          replacementSizes = replacementSizeByClientOrderId(liveLedger);
+          forceCancelOnly = liveLedger.reconciliationRequired || !reconciled.proven;
+          authoritativeFilled = plannerFilledFromLedger(liveLedger);
+          authoritativeCompletedRungs = liveLedger.authoritativeCompletedRungs;
+          const liveMetrics = authoritativeMetrics(liveLedger);
+          rt.completedRungs = liveMetrics.completedRungs;
+          rt.gridProfit = liveMetrics.grossProfitUsd;
+        }
+      }
+    } else {
+      const published = publishExecutionJournal(
+        (event, fields) => emitExp(event, { venue: rt.ex.id, symbol: market, ...fields }),
+        drain,
+      );
+      rt.ex.acknowledgeExecutionJournal?.(published);
+    }
   }
   const plan = applyPlannerIntentGate(
     planFromFillsAndSeed({
@@ -640,6 +751,11 @@ async function tickOne(
       skipBand: g.skipBand,
       ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,
       anchorEpoch: rt.anchorEpoch,
+      replacementObligations,
+      replacementSizes,
+      forceCancelOnly,
+      authoritativeFilled,
+      authoritativeCompletedRungs,
     })
   );
   if (cfg.experiment.enabled) {
@@ -697,8 +813,8 @@ async function tickOne(
             openOrders: snap.openOrders,
           });
         } else {
-          rt.completedRungs += 1;
-          rt.gridProfit += perRung;
+          rt.estimatedCompletedRungs += 1;
+          rt.estimatedGridProfit += perRung;
           void tgClose({
             venue: rt.ex.id,
             kind,
@@ -742,6 +858,33 @@ async function tickOne(
       }
     }
     assertExperimentLeaseCurrent(cfg);
+    const replacementCids = plan.intents
+      .filter((intent): intent is Extract<typeof intent, { type: "place" }> => intent.type === "place")
+      .map((intent) => String(intent.order.clientOrderId || ""))
+      .filter((cid) => cid.includes("-r-"));
+    if (cfg.experiment.enabled && strategyLedgerPath && strategyIdentity && replacementCids.length) {
+      const submitting = markObligationsSubmitting({
+        path: strategyLedgerPath,
+        identity: strategyIdentity,
+        clientOrderIds: replacementCids,
+      });
+      if (!submitting.proven) {
+        plan.intents = plan.intents.filter((intent) => intent.type === "cancel");
+        forceCancelOnly = true;
+        try {
+          markRuntimeSessionReconciliationRequired({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+            reasonCodes: [submitting.diagnosticCode || "STRATEGY_LEDGER_DURABILITY_UNPROVEN"],
+          });
+        } catch { /* fail closed */ }
+      }
+    }
+    if (!strategyIngestProven) {
+      plan.intents = plan.intents.filter((intent) => intent.type === "cancel");
+    }
     const result = await rt.ex.apply(plan.intents);
     if (result.placed) {
       emitExp("ORDER_ACK", {
@@ -767,10 +910,36 @@ async function tickOne(
         error_code: "APPLY_FAILED",
       });
     }
-    if (result.failed || result.errors.length || result.ambiguous) {
-      // Do not advance local intent state after a partial/ambiguous apply. A fresh
-      // exchange read is required before the next planner pass.
-      try { await rt.ex.snapshot(market); } catch { /* next tick remains unseeded */ }
+    let observedOrders = snap.openOrders;
+    if (result.failed || result.errors.length || result.ambiguous || replacementCids.length) {
+      try {
+        observedOrders = (await rt.ex.snapshot(market)).openOrders;
+      } catch { /* next tick remains unseeded */ }
+    }
+    if (cfg.experiment.enabled && strategyLedgerPath && strategyIdentity && replacementCids.length) {
+      const completed = applyReplacementDispositions({
+        path: strategyLedgerPath,
+        identity: strategyIdentity,
+        applyResult: result,
+        placedClientOrderIds: replacementCids,
+        openOrders: observedOrders,
+      });
+      if (!completed.proven) {
+        applyReliable = false;
+        try {
+          markRuntimeSessionReconciliationRequired({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+            reasonCodes: [completed.diagnosticCode || "STRATEGY_LEDGER_DURABILITY_UNPROVEN"],
+          });
+        } catch { /* fail closed */ }
+      } else if (completed.ledger) {
+        const metrics = authoritativeMetrics(completed.ledger);
+        rt.completedRungs = metrics.completedRungs;
+        rt.gridProfit = metrics.grossProfitUsd;
+      }
     }
   }
 
@@ -1030,7 +1199,7 @@ export async function runLoop(opts?: {
     const prev = saved[venue];
     if (prev && (prev.completedRungs > 0 || prev.gridProfit > 0)) {
       console.log(
-        `[${venue}] restore ledger rungs=${prev.completedRungs} profit≈${prev.gridProfit.toFixed(4)}`
+        `[${venue}] restore estimated rungs=${prev.completedRungs} profit≈${prev.gridProfit.toFixed(4)}`
       );
     }
     const ex = createExecutor(venue, cfg.dryRun);
@@ -1056,8 +1225,10 @@ export async function runLoop(opts?: {
       ex,
       seeded: false,
       active: new Map(),
-      completedRungs: prev?.completedRungs || 0,
-      gridProfit: prev?.gridProfit || 0,
+      completedRungs: 0,
+      gridProfit: 0,
+      estimatedCompletedRungs: prev?.completedRungs || 0,
+      estimatedGridProfit: prev?.gridProfit || 0,
       built: null,
       params: null,
       anchorMid: 0,
