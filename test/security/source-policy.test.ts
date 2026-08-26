@@ -536,3 +536,170 @@ obj[k](1);
     assert.deepEqual(scanCanarySourceText(source, POLICY_FILE), []);
   });
 });
+
+const FORBIDDEN_CTOR = ["FORBIDDEN_PRIMITIVE:function-ctor", "FORBIDDEN_PRIMITIVE:Function"];
+const FORBIDDEN_EVAL = ["FORBIDDEN_PRIMITIVE:eval"];
+
+function hasStableCategory(rows: string[], categories: string[]): boolean {
+  return rows.some((row) => categories.some((cat) => row === cat || row.startsWith(`${cat}:`) || row.startsWith(cat)));
+}
+
+function blockedIndirectCallable(source: string, label: string, categories: string[]): string[] {
+  const ast = astFindings(source);
+  const policy = policyFindings(source);
+  assert.ok(
+    hasStableCategory(ast, categories),
+    `${label} analyzeSourceText missing ${categories.join("|")}:\n${ast.join("\n")}`,
+  );
+  assert.ok(
+    hasStableCategory(policy, categories),
+    `${label} analyzeCanarySourcePolicy missing ${categories.join("|")}:\n${policy.join("\n")}`,
+  );
+  return ast;
+}
+
+describe("source-policy indirect dangerous callable forwarding", () => {
+  it("PASS_BLOCKED: Function.call/apply/bind invocation is rejected", () => {
+    blockedIndirectCallable(
+      'Function.call(null, "return process")();\n',
+      "Function.call",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'Function.apply(null, ["return process"])();\n',
+      "Function.apply",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'Function.bind(null)("return process")();\n',
+      "Function.bind",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: eval.call/apply/bind invocation is rejected", () => {
+    blockedIndirectCallable('eval.call(null, "1 + 1");\n', "eval.call", FORBIDDEN_EVAL);
+    blockedIndirectCallable('eval.apply(null, ["1 + 1"]);\n', "eval.apply", FORBIDDEN_EVAL);
+    blockedIndirectCallable('eval.bind(null)("1 + 1");\n', "eval.bind", FORBIDDEN_EVAL);
+  });
+
+  it("PASS_BLOCKED: Reflect.apply of Function/eval is rejected", () => {
+    blockedIndirectCallable(
+      'Reflect.apply(Function, null, ["return process"])();\n',
+      "Reflect.apply(Function)",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'Reflect.apply(eval, null, ["1 + 1"]);\n',
+      "Reflect.apply(eval)",
+      FORBIDDEN_EVAL,
+    );
+  });
+
+  it("PASS_BLOCKED: tagged Function invocation is rejected", () => {
+    blockedIndirectCallable("Function`return process`();\n", "Function_tagged", FORBIDDEN_CTOR);
+  });
+
+  it("PASS_BLOCKED: object/array/destructure container forwarding of Function is rejected", () => {
+    blockedIndirectCallable(
+      'const box = { F: Function };\nbox.F("return process")();\n',
+      "object_container",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const arr = [Function];\narr[0]("return process")();\n',
+      "array_container",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const [F] = [Function];\nF("return process")();\n',
+      "array_destructure",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: conditional/logical forwarding of Function is rejected", () => {
+    blockedIndirectCallable(
+      'const F = condition ? Function : safeFunction;\nF("return process")();\n',
+      "conditional_forward",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const G = condition && Function;\nG?.("return process")();\n',
+      "logical_optional_forward",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: assignment rebinding of Function is rejected", () => {
+    blockedIndirectCallable(
+      'let F;\nF = Function;\nF("return process")();\n',
+      "assignment_rebind",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: constructor-derived call/apply/bind forwarding is rejected", () => {
+    blockedIndirectCallable(
+      '(() => {}).constructor.call(null, "return process")();\n',
+      "constructor.call",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const C = (() => {}).constructor;\nC.apply(null, ["return process"])();\n',
+      "constructor.apply_alias",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const B = (() => {}).constructor.bind(null);\nB("return process")();\n',
+      "constructor.bind_alias",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: multi-hop object forwarding then .call is rejected", () => {
+    blockedIndirectCallable(
+      'const A = Function;\nconst box = { A };\nconst B = box.A;\nB.call(null, "return process")();\n',
+      "multi_hop_call",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_ALLOWED: TypeScript type-only Function references remain accepted", () => {
+    const source = "type Handler = Function;\nconst x: Function = undefined as never;\n";
+    assert.deepEqual(astFindings(source), [], astFindings(source).join("\n"));
+    assert.deepEqual(policyFindings(source), [], policyFindings(source).join("\n"));
+  });
+
+  it("PASS_ALLOWED: locally shadowed Function and eval parameters remain accepted", () => {
+    const source = `function handle(Function: (s: string) => string, x: string): string {
+  return Function(x);
+}
+function run(eval: (s: string) => unknown): unknown {
+  return eval("1");
+}
+handle((s) => s, "ok");
+run((s) => s);
+`;
+    assert.deepEqual(astFindings(source), [], astFindings(source).join("\n"));
+    assert.deepEqual(policyFindings(source), [], policyFindings(source).join("\n"));
+  });
+
+  it("PASS_ALLOWED: Reflect.apply of an ordinary function remains accepted", () => {
+    const source = "const n = Reflect.apply(Math.max, null, [1, 2]);\nvoid n;\n";
+    assert.deepEqual(astFindings(source), [], astFindings(source).join("\n"));
+    assert.deepEqual(policyFindings(source), [], policyFindings(source).join("\n"));
+  });
+
+  it("PASS_ALLOWED: ordinary tagged-template functions remain accepted", () => {
+    const source = `function tag(strings: TemplateStringsArray, ..._expr: unknown[]): string {
+  return strings[0] ?? "";
+}
+const s = tag\`safe\`;
+void s;
+`;
+    assert.deepEqual(astFindings(source), [], astFindings(source).join("\n"));
+    assert.deepEqual(policyFindings(source), [], policyFindings(source).join("\n"));
+    assert.deepEqual(scanCanarySourceText(source, POLICY_FILE), []);
+  });
+});
