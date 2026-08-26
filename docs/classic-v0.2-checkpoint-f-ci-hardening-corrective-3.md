@@ -6,11 +6,12 @@
 **Draft PR:** `#3`
 **Task:** `CLASSIC_CHECKPOINT_F_CURRENT_BYTE_SECURITY_CLOSURE`
 
-This document does **not** declare independent acceptance, Checkpoint F PASS, live authorization, merge, or deploy.
+This document records Corrective 3. Independent review rejected it. It is **not** the current review candidate. See `docs/classic-v0.2-checkpoint-f-ci-hardening-corrective-4.md`.
 
 ```text
 CHECKPOINT_F_IMPLEMENTATION=ACCEPT
-CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REVIEW_CANDIDATE
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REJECT
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_4=REVIEW_CANDIDATE
 CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
 EXTENDED_CANARY_DEPENDENCY_BOUNDARY=REVIEW_CANDIDATE
@@ -117,5 +118,5 @@ CHANGED_FILES=.github/workflows/ci.yml,SECURITY.md,docs/checkpoint-f-validation.
 ## Next action
 
 ```text
-NEXT_ACTION=INDEPENDENT_CURRENT_BYTE_REVIEW
+NEXT_ACTION=SUPERSEDED_BY_CORRECTIVE_4
 ```

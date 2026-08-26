@@ -1,6 +1,6 @@
 # Classic Grid v0.2 — Bounded Implementation Contract
 
-**Status:** CHECKPOINT F IMPLEMENTATION ACCEPTED; CURRENT-BYTE SECURITY CLOSURE CORRECTIVE 3 IS A REVIEW CANDIDATE
+**Status:** CHECKPOINT F IMPLEMENTATION ACCEPTED; ALIAS-TAINT SOURCE-POLICY CORRECTIVE 4 IS A REVIEW CANDIDATE
 **Date:** 2026-08-22
 **Tracking issue:** [#2](../issues/2)
 **Draft PR:** [#3](../pull/3)
@@ -19,7 +19,8 @@ CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
 CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_2=ACCEPT_AT_EXACT_HEAD
-CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REVIEW_CANDIDATE
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REJECT
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_4=REVIEW_CANDIDATE
 CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_E_SELF_DECLARED_PASS=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
@@ -31,13 +32,13 @@ NEXT_CHECKPOINT_AUTHORIZED=NO
 FORCE_PUSH_AUTHORIZED=NO
 ```
 
-Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That implementation remains accepted. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` and rejected Corrective 1. Corrective 2 was accepted at its exact HEAD. Current-byte security-closure Corrective 3 is a review candidate only. Current HEAD is not accepted. This document does not self-declare PASS.
+Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That implementation remains accepted. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8`, rejected Corrective 1, accepted Corrective 2 at its exact HEAD, and rejected Corrective 3. Alias-taint source-policy Corrective 4 is a review candidate only. Current HEAD is not accepted. This document does not self-declare PASS.
 
 Known npm production-tree audit baseline remains **14 high / 0 critical / 22 total**. Existing High findings are not cleared. Dependency remediation is a live-release blocker and is not part of this CI corrective.
 
 ## 1. Decision
 
-The v0.2 Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551` is independently accepted. The branch is **not** live-canary-ready. Current HEAD is not accepted: CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` was rejected, Corrective 1 was rejected, Corrective 2 was accepted at its exact HEAD, and current-byte security-closure Corrective 3 is a review candidate only.
+The v0.2 Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551` is independently accepted. The branch is **not** live-canary-ready. Current HEAD is not accepted: CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` was rejected, Corrective 1 was rejected, Corrective 2 was accepted at its exact HEAD, Corrective 3 was rejected, and alias-taint source-policy Corrective 4 is a review candidate only.
 
 Required execution order:
 
@@ -432,7 +433,7 @@ Open-order disappearance and position delta still do not prove a fill. Position-
 
 Grid gaps may continue to be repaired from authoritative open-order snapshots subject to ownership and notional guards.
 
-Checkpoint F implementation was independently accepted at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. Independent ACCEPT of Checkpoint E Corrective 2 does not authorize live canary, real funds, merge, or deploy. CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` was rejected; the current CI corrective is a review candidate and must not be treated as an implementation regression.
+Checkpoint F implementation was independently accepted at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. Independent ACCEPT of Checkpoint E Corrective 2 does not authorize live canary, real funds, merge, or deploy. CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` was rejected; Corrective 3 was rejected; the current CI corrective is a review candidate and must not be treated as an implementation regression.
 
 ## 21. Telemetry semantics
 

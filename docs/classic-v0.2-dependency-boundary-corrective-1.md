@@ -14,7 +14,7 @@ CHECKPOINT_F_CI_HARDENING_CORRECTIVE_2=ACCEPT_AT_EXACT_HEAD
 GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
 DEPENDENCY_SECURITY_CLEARANCE=NO
 EXTENDED_CANARY_DEPENDENCY_BOUNDARY=HISTORICAL_RECORD
-CURRENT_REVIEW_CANDIDATE=CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3
+CURRENT_REVIEW_CANDIDATE=CHECKPOINT_F_CI_HARDENING_CORRECTIVE_4
 LIVE_RELEASE_BLOCKED=YES
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
@@ -75,4 +75,4 @@ DEPLOYMENT_AUTHORIZED=false
 NEXT_CHECKPOINT_STARTED=NO
 ```
 
-Root/global production audit High findings remain. The Extended canary isolation in this historical Corrective 1 record is **not** the current review candidate. See `docs/classic-v0.2-checkpoint-f-ci-hardening-corrective-3.md`.
+Root/global production audit High findings remain. The Extended canary isolation in this historical Corrective 1 record is **not** the current review candidate. See `docs/classic-v0.2-checkpoint-f-ci-hardening-corrective-4.md`.

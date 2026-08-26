@@ -1,4 +1,4 @@
-# Checkpoint F validation after current-byte security closure (corrective 3)
+# Checkpoint F validation after alias-taint source-policy closure (corrective 4)
 
 **Date:** 2026-08-26
 **Repository:** `danny0971haha/classic-grid`
@@ -14,13 +14,14 @@ CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
 CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_2=ACCEPT_AT_EXACT_HEAD
-CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REVIEW_CANDIDATE
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REJECT
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_4=REVIEW_CANDIDATE
 CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
 DEPENDENCY_REMEDIATION=BLOCKED
 DEPENDENCY_SECURITY_CLEARANCE=NO
 GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
-EXTENDED_CANARY_DEPENDENCY_BOUNDARY=REVIEW_CANDIDATE
+EXTENDED_CANARY_DEPENDENCY_BOUNDARY=ACCEPT
 LIVE_RELEASE_BLOCKED=YES
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
@@ -29,7 +30,7 @@ DEPLOYMENT_AUTHORIZED=NO
 NEXT_CHECKPOINT_AUTHORIZED=NO
 ```
 
-Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That acceptance does not transfer onto later CI/supply-chain HEADs. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` and rejected Corrective 1. Corrective 2 was accepted at its exact HEAD for recursive GitHub Actions trust-boundary closure. **This current-byte security-closure corrective (Corrective 3) is the current review candidate.** It does not self-declare PASS. Checkpoint F strategy, risk, execution, recovery, journal, planner, and exchange-adapter implementation is unchanged and remains accepted at the implementation base above.
+Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That acceptance does not transfer onto later CI/supply-chain HEADs. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8`, rejected Corrective 1, accepted Corrective 2 at its exact HEAD, and rejected Corrective 3 at `9c320a44e40978647d31466e016362a4ad193dfc` for one-hop alias, destructure, and unresolved computed-dispatch source-policy bypasses. **Alias-taint Corrective 4 is the current review candidate.** It does not self-declare PASS. Checkpoint F strategy, risk, execution, recovery, journal, planner, and exchange-adapter implementation is unchanged and remains accepted at the implementation base above.
 
 Schema `classic-v0.2-checkpoint-f/2` is unchanged. `tools/checkpoint-e-evidence.ts` and `tools/checkpoint-f-evidence.ts` were not modified.
 
@@ -45,15 +46,13 @@ Schema `classic-v0.2-checkpoint-f/2` is unchanged. `tools/checkpoint-e-evidence.
 
 ## What this corrective is waiting for
 
-Independent review of:
+Independent current-byte review of Corrective 4 at the exact HEAD recorded in `docs/classic-v0.2-checkpoint-f-ci-hardening-corrective-4.md`:
 
-- Git-index enumeration of every tracked workflow and Action manifest, including `.yaml` and `.github/actions/**`
-- fail-closed handling of symlink, gitlink, non-regular blobs, case collision, path escape, untracked local `uses`, duplicate `action.yml`/`action.yaml`, malformed YAML, duplicate keys, aliases/anchors, unsupported tags, and dynamic `uses`
-- exact identity+SHA allowlist for `actions/checkout`, `actions/setup-node`, and `actions/upload-artifact`
-- recursive local composite Actions and local reusable workflows with cycle detection
-- rejection of Docker Actions and remote reusable workflows
-- `persist-credentials: false` and `fetch-depth: 0` on every checkout
-- independent `npm run verify:action-inventory`
+- one-hop (and supported two-hop) alias taint for dangerous callables in `analyzeCanarySourcePolicy`
+- destructuring of `require` / `eval` from `globalThis` without collapsing to generic `other`
+- `UNRESOLVED_COMPUTED_DISPATCH` on security-sensitive roots when the property cannot be folded
+- exact approved exceptions unchanged (Extended vendor import, `bindLoopRuntime()` fallbacks, static `execFileSync` import)
+- no change to the 100U / 5x / 30U / 150U envelope or Checkpoint E/F evidence schema
 - dependency remediation remaining BLOCKED while any high remains
 
 On `pull_request`, `sourceHeadSha` (PR head) and `testedCheckoutSha` (merge checkout) must remain distinct. `liveExchangeWrite=false`. `productionCredentialUsed=false`.
