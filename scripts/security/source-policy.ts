@@ -35,17 +35,23 @@ type BindingKind =
   | "path-ns"
   | "named-url"
   | "const-string"
+  | "reflect-get"
+  | "global-root"
   | "unresolved"
   | "other";
+
+type LocalFunctionNode = ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
 
 type Binding = {
   kind: BindingKind;
   value?: string;
+  rootName?: string;
   importedName?: string;
   module?: string;
   functionId: number;
   constDecl: boolean;
   init?: ts.Expression;
+  localFunction?: LocalFunctionNode;
 };
 
 type Scope = {
@@ -98,12 +104,32 @@ const DANGEROUS_CALLABLE_KINDS = new Set<BindingKind>([
 
 const SENSITIVE_ROOT_NAMES = new Set(["globalThis", "global", "process", "module", "Module", "Reflect"]);
 
+const DANGEROUS_MEMBER_NAMES = new Set([
+  "Function",
+  "AsyncFunction",
+  "GeneratorFunction",
+  "AsyncGeneratorFunction",
+  "require",
+  "eval",
+  "_load",
+  "createRequire",
+  "getBuiltinModule",
+  "binding",
+  "dlopen",
+  "mainModule",
+  "constructor",
+]);
+
 function isDangerousCallableKind(kind: BindingKind | undefined): kind is BindingKind {
   return kind !== undefined && DANGEROUS_CALLABLE_KINDS.has(kind);
 }
 
 function isTrackedCallableKind(kind: BindingKind | undefined): kind is BindingKind {
-  return isDangerousCallableKind(kind) || kind === "unresolved";
+  return isDangerousCallableKind(kind) || kind === "unresolved" || kind === "reflect-get";
+}
+
+function isPreservedKind(kind: BindingKind | undefined): boolean {
+  return isTrackedCallableKind(kind) || kind === "global-root";
 }
 
 function joinCallableKind(a: BindingKind | undefined, b: BindingKind | undefined): BindingKind | undefined {
@@ -111,6 +137,15 @@ function joinCallableKind(a: BindingKind | undefined, b: BindingKind | undefined
   if (isTrackedCallableKind(a)) return a;
   if (isTrackedCallableKind(b)) return b;
   return undefined;
+}
+
+function joinBindingKind(a: BindingKind, b: BindingKind): BindingKind {
+  if (a === b) return a;
+  const tracked = joinCallableKind(a, b);
+  if (tracked) return tracked;
+  if (a === "global-root") return a;
+  if (b === "global-root") return b;
+  return "other";
 }
 
 const CALL_APPLY_BIND = new Set(["call", "apply", "bind"]);
@@ -405,15 +440,35 @@ function followsAliasInit(expr: ts.Expression, scope: Scope, seen: Set<string>):
 }
 
 function isImportMeta(expr: ts.Expression, scope: Scope): boolean {
-  expr = followsAliasInit(expr, scope, new Set());
-  return ts.isMetaProperty(expr)
-    && expr.keywordToken === ts.SyntaxKind.ImportKeyword
-    && expr.name.text === "meta";
+  return resolvedGlobalRoot(expr, scope) === "import.meta";
+}
+
+function resolvedGlobalRoot(expr: ts.Expression, scope: Scope, seen: Set<string> = new Set()): string | undefined {
+  expr = unwrapExpr(expr);
+  if (ts.isIdentifier(expr)) {
+    if (seen.has(expr.text)) {
+      const b = lookup(scope, expr.text);
+      return b?.kind === "global-root" ? b.rootName : undefined;
+    }
+    seen.add(expr.text);
+    const b = lookup(scope, expr.text);
+    if (b?.kind === "global-root") return b.rootName;
+    if (b?.init) return resolvedGlobalRoot(b.init, scope, seen);
+    if (b) return undefined;
+    if (SENSITIVE_ROOT_NAMES.has(expr.text)) return expr.text;
+    return undefined;
+  }
+  if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.ImportKeyword && expr.name.text === "meta") {
+    return "import.meta";
+  }
+  const followed = followsAliasInit(expr, scope, new Set());
+  if (followed !== expr) return resolvedGlobalRoot(followed, scope, seen);
+  return undefined;
 }
 
 function isNamedRoot(expr: ts.Expression, scope: Scope, names: Set<string>): boolean {
-  expr = followsAliasInit(expr, scope, new Set());
-  return ts.isIdentifier(expr) && names.has(expr.text);
+  const root = resolvedGlobalRoot(expr, scope);
+  return root !== undefined && names.has(root);
 }
 
 function isGlobalThis(expr: ts.Expression, scope?: Scope): boolean {
@@ -496,25 +551,28 @@ function containerPropertyKind(
   obj: ts.Expression,
   name: string | undefined,
   scope: Scope,
+  seen: Set<ts.Node> = new Set(),
 ): BindingKind | undefined {
   const followed = ts.isIdentifier(obj)
     ? followsAliasInit(obj, scope, new Set())
     : unwrapExpr(obj);
+  if (seen.has(followed)) return undefined;
+  seen.add(followed);
   if (ts.isObjectLiteralExpression(followed)) {
     if (name !== undefined) {
       const value = objectLiteralValue(followed, name, scope);
-      if (value) return calleeKind(value, scope);
+      if (value) return calleeKind(value, scope, seen);
     }
     if (name === undefined || objectHasSpread(followed)) {
       for (const prop of followed.properties) {
-        if (ts.isSpreadAssignment(prop) && isTrackedCallableKind(calleeKind(prop.expression, scope))) {
+        if (ts.isSpreadAssignment(prop) && isTrackedCallableKind(calleeKind(prop.expression, scope, seen))) {
           return "unresolved";
         }
-        if (ts.isShorthandPropertyAssignment(prop) && isTrackedCallableKind(calleeKind(prop.name, scope))) {
-          return name === undefined ? calleeKind(prop.name, scope) : "unresolved";
+        if (ts.isShorthandPropertyAssignment(prop) && isTrackedCallableKind(calleeKind(prop.name, scope, seen))) {
+          return name === undefined ? calleeKind(prop.name, scope, seen) : "unresolved";
         }
-        if (ts.isPropertyAssignment(prop) && isTrackedCallableKind(calleeKind(prop.initializer, scope))) {
-          return name === undefined ? calleeKind(prop.initializer, scope) : "unresolved";
+        if (ts.isPropertyAssignment(prop) && isTrackedCallableKind(calleeKind(prop.initializer, scope, seen))) {
+          return name === undefined ? calleeKind(prop.initializer, scope, seen) : "unresolved";
         }
       }
     }
@@ -523,14 +581,14 @@ function containerPropertyKind(
   if (ts.isArrayLiteralExpression(followed)) {
     if (name !== undefined && /^\d+$/.test(name)) {
       const el = arrayElementAt(followed, Number(name));
-      if (el) return calleeKind(el, scope);
+      if (el) return calleeKind(el, scope, seen);
       const raw = followed.elements[Number(name)];
       if (raw && ts.isSpreadElement(raw)) return "unresolved";
     }
     for (const el of followed.elements) {
       if (ts.isOmittedExpression(el)) continue;
       const inner = ts.isSpreadElement(el) ? el.expression : el;
-      if (isTrackedCallableKind(calleeKind(inner, scope))) {
+      if (isTrackedCallableKind(calleeKind(inner, scope, seen))) {
         return name === undefined ? "unresolved" : name && /^\d+$/.test(name) ? undefined : "unresolved";
       }
     }
@@ -549,13 +607,43 @@ function isReflectApplyCallee(expr: ts.Expression, scope: Scope): boolean {
   return false;
 }
 
+function isReflectGetCallee(expr: ts.Expression, scope: Scope): boolean {
+  expr = unwrapExpr(expr);
+  if (ts.isIdentifier(expr) && lookup(scope, expr.text)?.kind === "reflect-get") return true;
+  expr = followsAliasInit(expr, scope, new Set());
+  if (ts.isIdentifier(expr)) {
+    return lookup(scope, expr.text)?.kind === "reflect-get";
+  }
+  if (ts.isPropertyAccessExpression(expr) && expr.name.text === "get") {
+    return isReflectObject(expr.expression, scope);
+  }
+  if (ts.isElementAccessExpression(expr)) {
+    return accessPropertyName(expr, scope) === "get" && isReflectObject(expr.expression, scope);
+  }
+  return false;
+}
+
+function reflectGetResultKind(call: ts.CallExpression, scope: Scope): BindingKind | undefined {
+  const target = call.arguments[0];
+  const keyArg = call.arguments[1];
+  if (!target || ts.isSpreadElement(target)) return "unresolved";
+  if (keyArg && ts.isSpreadElement(keyArg)) {
+    return isSensitiveDispatchRoot(target, scope) ? "unresolved" : undefined;
+  }
+  const key = keyArg ? foldedString(keyArg, scope) : undefined;
+  const member = memberKind(target, key, scope) ?? containerPropertyKind(target, key, scope);
+  if (member) return member;
+  if (isSensitiveDispatchRoot(target, scope) && key === undefined) return "unresolved";
+  return undefined;
+}
+
 function isValueIdentifier(node: ts.Identifier): boolean {
   if (isTypeContext(node)) return false;
   const p = node.parent;
   if (!p) return false;
   if (ts.isPropertyAccessExpression(p) && p.name === node) return false;
   if (ts.isPropertyAssignment(p) && p.name === node) return false;
-  if (ts.isBindingElement(p) && p.name === node) return false;
+  if (ts.isBindingElement(p) && (p.name === node || p.propertyName === node)) return false;
   if (ts.isParameter(p) && p.name === node) return false;
   if (ts.isVariableDeclaration(p) && p.name === node) return false;
   if (
@@ -601,6 +689,7 @@ function memberKind(obj: ts.Expression, name: string | undefined, scope: Scope):
   if (name === "createRequire" && isModuleObject(obj, scope)) return "createRequire";
   if (name === "resolve" && isImportMeta(obj, scope)) return "import-meta-resolve";
   if (name === "construct" && isReflectObject(obj, scope)) return "reflect-construct";
+  if (name === "get" && isReflectObject(obj, scope)) return "reflect-get";
   if (name === "getBuiltinModule" && isProcessObject(obj, scope)) return "getBuiltin";
   if (name === "binding" && isProcessObject(obj, scope)) return "process-binding";
   if (name === "dlopen" && isProcessObject(obj, scope)) return "process-dlopen";
@@ -626,13 +715,15 @@ function destructuredPropertyName(el: ts.BindingElement, scope: Scope): string |
   return undefined;
 }
 
-function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | undefined {
+function calleeKind(expr: ts.Expression, scope: Scope, seen: Set<ts.Node> = new Set()): BindingKind | undefined {
   expr = unwrapExpr(expr);
+  if (seen.has(expr)) return undefined;
+  seen.add(expr);
   if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
-    return calleeKind(expr.right, scope);
+    return calleeKind(expr.right, scope, seen);
   }
   if (ts.isConditionalExpression(expr)) {
-    return joinCallableKind(calleeKind(expr.whenTrue, scope), calleeKind(expr.whenFalse, scope));
+    return joinCallableKind(calleeKind(expr.whenTrue, scope, seen), calleeKind(expr.whenFalse, scope, seen));
   }
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
@@ -641,7 +732,7 @@ function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | undefined 
       || op === ts.SyntaxKind.BarBarToken
       || op === ts.SyntaxKind.QuestionQuestionToken
     ) {
-      return joinCallableKind(calleeKind(expr.left, scope), calleeKind(expr.right, scope));
+      return joinCallableKind(calleeKind(expr.left, scope, seen), calleeKind(expr.right, scope, seen));
     }
   }
   if (ts.isIdentifier(expr)) {
@@ -656,24 +747,27 @@ function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | undefined 
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
     const name = accessPropertyName(expr, scope);
     if (name && CALL_APPLY_BIND.has(name)) {
-      const recv = calleeKind(expr.expression, scope);
+      const recv = calleeKind(expr.expression, scope, seen);
       if (isTrackedCallableKind(recv)) return recv;
     }
     const member = memberKind(expr.expression, name, scope);
     if (member) return member;
-    return containerPropertyKind(expr.expression, name, scope);
+    return containerPropertyKind(expr.expression, name, scope, seen);
   }
   if (ts.isCallExpression(expr)) {
     if (isReflectApplyCallee(expr.expression, scope)) {
       const target = expr.arguments[0];
-      return target ? calleeKind(target, scope) : "unresolved";
+      return target ? calleeKind(target, scope, seen) : "unresolved";
     }
-    const inner = calleeKind(expr.expression, scope);
+    const inner = calleeKind(expr.expression, scope, seen);
+    if (isReflectGetCallee(expr.expression, scope)) {
+      return reflectGetResultKind(expr, scope);
+    }
     if (inner === "createRequire") return "require";
     if (isTrackedCallableKind(inner)) return inner;
   }
   if (ts.isTaggedTemplateExpression(expr)) {
-    return calleeKind(expr.tag, scope);
+    return calleeKind(expr.tag, scope, seen);
   }
   return undefined;
 }
@@ -757,72 +851,231 @@ function bindImportDecl(
   return spec;
 }
 
+function flattenOrigin(expr: ts.Expression, scope: Scope): ts.Expression[] {
+  expr = unwrapExpr(expr);
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    return flattenOrigin(expr.right, scope);
+  }
+  if (ts.isConditionalExpression(expr)) {
+    return [...flattenOrigin(expr.whenTrue, scope), ...flattenOrigin(expr.whenFalse, scope)];
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.AmpersandAmpersandToken
+      || op === ts.SyntaxKind.BarBarToken
+      || op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return [...flattenOrigin(expr.left, scope), ...flattenOrigin(expr.right, scope)];
+    }
+  }
+  void scope;
+  return [expr];
+}
+
+function flattenOriginList(inits: Array<ts.Expression | undefined>, scope: Scope): Array<ts.Expression | undefined> {
+  const out: Array<ts.Expression | undefined> = [];
+  for (const init of inits) {
+    if (!init) out.push(undefined);
+    else out.push(...flattenOrigin(init, scope));
+  }
+  return out.length ? out : [undefined];
+}
+
+function localFunctionOf(expr: ts.Expression, scope: Scope): LocalFunctionNode | undefined {
+  expr = followsAliasInit(unwrapExpr(expr), scope, new Set());
+  if (ts.isFunctionExpression(expr) || ts.isArrowFunction(expr) || ts.isFunctionDeclaration(expr)) return expr;
+  if (ts.isIdentifier(expr)) return lookup(scope, expr.text)?.localFunction;
+  return undefined;
+}
+
+function isUnprovenPatternSource(expr: ts.Expression, scope: Scope, seen: Set<string> = new Set()): boolean {
+  expr = unwrapExpr(expr);
+  if (isSensitiveDispatchRoot(expr, scope)) return false;
+  if (ts.isObjectLiteralExpression(expr) || ts.isArrayLiteralExpression(expr)) return false;
+  if (ts.isIdentifier(expr)) {
+    if (seen.has(expr.text)) return true;
+    seen.add(expr.text);
+    const b = lookup(scope, expr.text);
+    if (!b) return !SENSITIVE_ROOT_NAMES.has(expr.text);
+    if (b.kind === "global-root" || isTrackedCallableKind(b.kind)) return false;
+    if (b.init) return isUnprovenPatternSource(b.init, scope, seen);
+    return true;
+  }
+  return true;
+}
+
+function propertyValueExpr(obj: ts.Expression, name: string | undefined, scope: Scope): ts.Expression | undefined {
+  if (name === undefined) return undefined;
+  const followed = ts.isIdentifier(obj) ? followsAliasInit(obj, scope, new Set()) : unwrapExpr(obj);
+  if (ts.isObjectLiteralExpression(followed)) return objectLiteralValue(followed, name, scope);
+  return undefined;
+}
+
+function patternMemberKind(
+  origin: ts.Expression | undefined,
+  propName: string | undefined,
+  scope: Scope,
+): BindingKind | undefined {
+  if (!origin) {
+    if (propName === undefined || DANGEROUS_MEMBER_NAMES.has(propName)) return "unresolved";
+    return undefined;
+  }
+  const member = memberKind(origin, propName, scope) ?? containerPropertyKind(origin, propName, scope);
+  if (member) return member;
+  if (isSensitiveDispatchRoot(origin, scope) && propName === undefined) return "unresolved";
+  if (isUnprovenPatternSource(origin, scope) && (propName === undefined || DANGEROUS_MEMBER_NAMES.has(propName))) {
+    return "unresolved";
+  }
+  return undefined;
+}
+
+function emitBoundKind(file: string, findings: SourcePolicyFinding[], kind: BindingKind, detail: string): void {
+  if (kind === "unresolved") findings.push(finding(file, "UNRESOLVED_COMPUTED_DISPATCH", detail));
+  else if (isDangerousCallableKind(kind)) findings.push(finding(file, "FORBIDDEN_PRIMITIVE", String(kind)));
+}
+
+function applyIdentifierBinding(
+  name: string,
+  inits: Array<ts.Expression | undefined>,
+  scope: Scope,
+  constDecl: boolean,
+  file: string,
+  findings: SourcePolicyFinding[],
+  assign: boolean,
+): void {
+  const origins = flattenOriginList(inits, scope);
+  let kind: BindingKind = "other";
+  let rootName: string | undefined;
+  let value: string | undefined;
+  let init: ts.Expression | undefined;
+  let localFunction: LocalFunctionNode | undefined;
+  for (const origin of origins) {
+    if (!origin) continue;
+    if (!init) init = origin;
+    const next = expressionBindingKind(origin, scope, file, findings);
+    kind = joinBindingKind(kind, next);
+    if (next === "global-root") {
+      const rn = resolvedGlobalRoot(origin, scope);
+      if (rootName && rn && rootName !== rn) kind = "unresolved";
+      else rootName = rn ?? rootName;
+    }
+    const folded = foldedString(origin, scope);
+    if (folded !== undefined) value = folded;
+    const lf = localFunctionOf(origin, scope);
+    if (lf) localFunction = lf;
+  }
+  const existing = assign ? lookup(scope, name) : undefined;
+  const next: BindingKind = isTrackedCallableKind(kind)
+    ? kind
+    : existing && isDangerousCallableKind(existing.kind)
+      ? "unresolved"
+      : kind;
+  const keepKind = isPreservedKind(next);
+  const storedKind = value !== undefined && constDecl && !keepKind && !assign ? "const-string" : next;
+  if (existing) {
+    existing.kind = storedKind;
+    existing.init = init ?? existing.init;
+    existing.value = value ?? existing.value;
+    existing.rootName = storedKind === "global-root" ? rootName : undefined;
+    existing.constDecl = false;
+    if (localFunction) existing.localFunction = localFunction;
+    return;
+  }
+  setBinding(scope, name, {
+    kind: storedKind,
+    value,
+    rootName: storedKind === "global-root" ? rootName : undefined,
+    functionId: enclosingFunction(scope).functionId,
+    constDecl,
+    init,
+    localFunction,
+  });
+}
+
+function bindRestFromOrigins(
+  name: ts.BindingName,
+  inits: Array<ts.Expression | undefined>,
+  scope: Scope,
+  constDecl: boolean,
+  file: string,
+  findings: SourcePolicyFinding[],
+): void {
+  const origins = flattenOriginList(inits, scope);
+  let kind: BindingKind = "other";
+  let rootName: string | undefined;
+  let init: ts.Expression | undefined;
+  for (const origin of origins) {
+    if (!origin) continue;
+    if (!init) init = origin;
+    if (isSensitiveDispatchRoot(origin, scope)) {
+      const rn = resolvedGlobalRoot(origin, scope);
+      if (rn) {
+        if (rootName && rootName !== rn) kind = "unresolved";
+        else {
+          kind = joinBindingKind(kind, "global-root");
+          rootName = rn;
+        }
+      } else {
+        kind = joinBindingKind(kind, "unresolved");
+      }
+    }
+  }
+  if (ts.isIdentifier(name)) {
+    setBinding(scope, name.text, {
+      kind,
+      rootName: kind === "global-root" ? rootName : undefined,
+      functionId: enclosingFunction(scope).functionId,
+      constDecl,
+      init,
+    });
+  } else {
+    bindPattern(name, inits, scope, constDecl, file, findings);
+  }
+}
+
 function bindPattern(
   name: ts.BindingName,
-  init: ts.Expression | undefined,
+  inits: Array<ts.Expression | undefined>,
   scope: Scope,
   constDecl: boolean,
   file: string,
   findings: SourcePolicyFinding[],
 ): void {
   if (ts.isIdentifier(name)) {
-    const kind = init ? expressionBindingKind(init, scope, file, findings) : "other";
-    const value = init ? foldedString(init, scope) : undefined;
-    const keepKind = isDangerousCallableKind(kind) || kind === "unresolved";
-    setBinding(scope, name.text, {
-      kind: value !== undefined && constDecl && !keepKind ? "const-string" : kind,
-      value,
-      functionId: enclosingFunction(scope).functionId,
-      constDecl,
-      init,
-    });
+    applyIdentifierBinding(name.text, inits, scope, constDecl, file, findings, false);
     return;
   }
+  const origins = flattenOriginList(inits, scope);
   if (ts.isObjectBindingPattern(name)) {
     for (const el of name.elements) {
       if (!ts.isIdentifier(el.name) && !ts.isObjectBindingPattern(el.name) && !ts.isArrayBindingPattern(el.name)) {
         continue;
       }
+      const elInits = el.initializer ? [...origins, el.initializer] : origins;
       if (el.dotDotDotToken) {
-        if (init && isSensitiveDispatchRoot(init, scope)) {
-          findings.push(finding(file, "UNRESOLVED_COMPUTED_DISPATCH", "destructure-rest"));
-          if (ts.isIdentifier(el.name)) {
-            setBinding(scope, el.name.text, {
-              kind: "unresolved",
-              functionId: enclosingFunction(scope).functionId,
-              constDecl,
-            });
-          }
-        } else if (ts.isIdentifier(el.name)) {
-          bindPattern(el.name, undefined, scope, constDecl, file, findings);
-        }
+        bindRestFromOrigins(el.name, elInits, scope, constDecl, file, findings);
         continue;
       }
       const propName = destructuredPropertyName(el, scope);
-      if (init) {
-        const kind = memberKind(init, propName, scope) ?? containerPropertyKind(init, propName, scope);
-        if (kind === "unresolved" || isDangerousCallableKind(kind)) {
-          findings.push(
-            finding(
-              file,
-              kind === "unresolved" ? "UNRESOLVED_COMPUTED_DISPATCH" : "FORBIDDEN_PRIMITIVE",
-              kind === "unresolved" ? `destructure:${el.getText()}` : String(kind),
-            ),
-          );
-          if (ts.isIdentifier(el.name)) {
-            setBinding(scope, el.name.text, {
-              kind,
-              functionId: enclosingFunction(scope).functionId,
-              constDecl,
-            });
-          } else {
-            bindPattern(el.name, undefined, scope, constDecl, file, findings);
-          }
-          continue;
-        }
+      let kind: BindingKind = "other";
+      const nested: Array<ts.Expression | undefined> = [];
+      for (const origin of elInits) {
+        const mk = patternMemberKind(origin, propName, scope);
+        if (mk) kind = joinBindingKind(kind, mk);
+        nested.push(origin ? propertyValueExpr(origin, propName, scope) : undefined);
       }
-      const imported = propName
-        ?? (ts.isIdentifier(el.name) ? el.name.text : undefined);
+      if (isPreservedKind(kind) && ts.isIdentifier(el.name)) {
+        emitBoundKind(file, findings, kind, kind === "unresolved" ? `destructure:${el.getText()}` : String(kind));
+        setBinding(scope, el.name.text, {
+          kind,
+          functionId: enclosingFunction(scope).functionId,
+          constDecl,
+          init: nested.find((row) => row) ?? origins.find((row) => row),
+        });
+        continue;
+      }
+      const imported = propName ?? (ts.isIdentifier(el.name) ? el.name.text : undefined);
       if (imported === "createRequire") {
         findings.push(finding(file, "FORBIDDEN_PRIMITIVE", "createRequire"));
         if (ts.isIdentifier(el.name)) {
@@ -834,72 +1087,53 @@ function bindPattern(
           continue;
         }
       }
-      bindPattern(el.name, undefined, scope, constDecl, file, findings);
+      bindPattern(el.name, nested.some((row) => row) ? nested : elInits.map(() => undefined), scope, constDecl, file, findings);
     }
   }
   if (ts.isArrayBindingPattern(name)) {
-    const followed = init ? followsAliasInit(unwrapExpr(init), scope, new Set()) : undefined;
     for (let i = 0; i < name.elements.length; i++) {
       const el = name.elements[i];
       if (ts.isOmittedExpression(el)) continue;
       if (el.dotDotDotToken) {
-        const kind = init ? expressionBindingKind(init, scope, file, findings) : "other";
-        if (isTrackedCallableKind(kind)) {
-          findings.push(finding(file, kind === "unresolved" ? "UNRESOLVED_COMPUTED_DISPATCH" : "FORBIDDEN_PRIMITIVE", String(kind)));
-          if (ts.isIdentifier(el.name)) {
-            setBinding(scope, el.name.text, {
-              kind,
-              functionId: enclosingFunction(scope).functionId,
-              constDecl,
-            });
-          } else {
-            bindPattern(el.name, undefined, scope, constDecl, file, findings);
-          }
-        } else if (ts.isIdentifier(el.name)) {
-          bindPattern(el.name, undefined, scope, constDecl, file, findings);
-        }
+        bindRestFromOrigins(el.name, origins, scope, constDecl, file, findings);
         continue;
       }
-      let elInit: ts.Expression | undefined;
-      if (followed && ts.isArrayLiteralExpression(followed)) {
-        elInit = arrayElementAt(followed, i);
-        const raw = followed.elements[i];
-        if (raw && ts.isSpreadElement(raw)) {
-          findings.push(finding(file, "UNRESOLVED_COMPUTED_DISPATCH", `destructure:${el.getText()}`));
-          if (ts.isIdentifier(el.name)) {
-            setBinding(scope, el.name.text, {
-              kind: "unresolved",
-              functionId: enclosingFunction(scope).functionId,
-              constDecl,
-            });
-          } else {
-            bindPattern(el.name, undefined, scope, constDecl, file, findings);
-          }
+      const nested: Array<ts.Expression | undefined> = [];
+      let kind: BindingKind = "other";
+      for (const origin of origins) {
+        if (!origin) {
+          nested.push(undefined);
           continue;
         }
-      } else if (init) {
-        const kind = expressionBindingKind(init, scope, file, findings);
-        if (isTrackedCallableKind(kind)) {
-          findings.push(
-            finding(
-              file,
-              kind === "unresolved" ? "UNRESOLVED_COMPUTED_DISPATCH" : "FORBIDDEN_PRIMITIVE",
-              String(kind),
-            ),
-          );
-          if (ts.isIdentifier(el.name)) {
-            setBinding(scope, el.name.text, {
-              kind,
-              functionId: enclosingFunction(scope).functionId,
-              constDecl,
-            });
-          } else {
-            bindPattern(el.name, undefined, scope, constDecl, file, findings);
+        const followed = followsAliasInit(unwrapExpr(origin), scope, new Set());
+        if (ts.isArrayLiteralExpression(followed)) {
+          const raw = followed.elements[i];
+          if (raw && ts.isSpreadElement(raw)) {
+            kind = joinBindingKind(kind, "unresolved");
+            nested.push(undefined);
+            continue;
           }
-          continue;
+          nested.push(arrayElementAt(followed, i));
+          const elKind = nested[nested.length - 1]
+            ? expressionBindingKind(nested[nested.length - 1]!, scope, file, findings)
+            : "other";
+          if (isPreservedKind(elKind)) kind = joinBindingKind(kind, elKind);
+        } else {
+          const originKind = expressionBindingKind(origin, scope, file, findings);
+          if (isTrackedCallableKind(originKind)) kind = joinBindingKind(kind, originKind);
+          nested.push(undefined);
         }
       }
-      bindPattern(el.name, elInit, scope, constDecl, file, findings);
+      if (isPreservedKind(kind) && ts.isIdentifier(el.name)) {
+        emitBoundKind(file, findings, kind, String(kind));
+        setBinding(scope, el.name.text, {
+          kind,
+          functionId: enclosingFunction(scope).functionId,
+          constDecl,
+        });
+        continue;
+      }
+      bindPattern(el.name, nested, scope, constDecl, file, findings);
     }
   }
 }
@@ -912,6 +1146,8 @@ function expressionBindingKind(
 ): BindingKind {
   const kind = calleeKind(expr, scope);
   if (kind) return kind;
+  const root = resolvedGlobalRoot(expr, scope);
+  if (root) return "global-root";
   expr = unwrapExpr(expr);
   if (ts.isIdentifier(expr)) {
     const b = lookup(scope, expr.text);
@@ -941,9 +1177,117 @@ type WalkCtx = {
   literalDynamic: string[];
   runLoopCalls: Array<{ bindings: string[]; node: ts.CallExpression }>;
   functionSeq: number;
+  phase: "collect" | "analyze";
+  functionArgs: WeakMap<ts.Node, ts.Expression[][]>;
 };
 
+function hoistFunctionDeclarations(container: ts.Node, scope: Scope): void {
+  const stmts = ts.isSourceFile(container) || ts.isBlock(container) || ts.isModuleBlock(container)
+    ? container.statements
+    : undefined;
+  if (!stmts) return;
+  for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name) {
+      setBinding(scope, stmt.name.text, {
+        kind: "other",
+        localFunction: stmt,
+        functionId: enclosingFunction(scope).functionId,
+        constDecl: true,
+      });
+    }
+  }
+}
+
+function collectThrows(block: ts.Block): ts.Expression[] {
+  const out: ts.Expression[] = [];
+  const visit = (n: ts.Node): void => {
+    if (
+      ts.isFunctionDeclaration(n)
+      || ts.isFunctionExpression(n)
+      || ts.isArrowFunction(n)
+      || ts.isMethodDeclaration(n)
+      || ts.isConstructorDeclaration(n)
+    ) {
+      return;
+    }
+    if (ts.isTryStatement(n)) {
+      if (!n.catchClause) visit(n.tryBlock);
+      return;
+    }
+    if (ts.isThrowStatement(n) && n.expression) out.push(n.expression);
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(block, visit);
+  return out;
+}
+
+function iterableElementOrigins(expr: ts.Expression, scope: Scope): Array<ts.Expression | undefined> {
+  const followed = followsAliasInit(unwrapExpr(expr), scope, new Set());
+  if (ts.isArrayLiteralExpression(followed)) {
+    return followed.elements.map((el) => {
+      if (ts.isOmittedExpression(el) || ts.isSpreadElement(el)) return undefined;
+      return el;
+    });
+  }
+  return [expr];
+}
+
+function recordFunctionArgs(call: ts.CallExpression, scope: Scope, ctx: WalkCtx): void {
+  const fn = localFunctionOf(call.expression, scope);
+  if (!fn) return;
+  const lists = ctx.functionArgs.get(fn) ?? [];
+  lists.push([...call.arguments]);
+  ctx.functionArgs.set(fn, lists);
+}
+
+function bindFunctionLike(
+  node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction | ts.MethodDeclaration | ts.ConstructorDeclaration,
+  outer: Scope,
+  ctx: WalkCtx,
+): void {
+  ctx.functionSeq += 1;
+  const child: Scope = {
+    parent: outer,
+    kind: "function",
+    functionId: ctx.functionSeq,
+    functionName: functionNameOf(node),
+    bindings: new Map(),
+  };
+  if (ts.isFunctionDeclaration(node) && node.name) {
+    setBinding(outer, node.name.text, {
+      kind: "other",
+      localFunction: node,
+      functionId: enclosingFunction(outer).functionId,
+      constDecl: true,
+    });
+  }
+  if (ts.isFunctionExpression(node) && node.name) {
+    setBinding(child, node.name.text, {
+      kind: "other",
+      localFunction: node,
+      functionId: child.functionId,
+      constDecl: true,
+    });
+  }
+  const argLists = ctx.functionArgs.get(node) ?? [];
+  node.parameters.forEach((param, i) => {
+    const origins: Array<ts.Expression | undefined> = [];
+    if (param.initializer) origins.push(param.initializer);
+    if (argLists.length === 0) origins.push(undefined);
+    for (const args of argLists) {
+      const arg = args[i];
+      if (arg && ts.isSpreadElement(arg)) origins.push(undefined);
+      else origins.push(arg);
+    }
+    bindPattern(param.name, origins, child, false, ctx.file, ctx.findings);
+  });
+  ts.forEachChild(node, (n) => walk(n, child, ctx));
+}
+
 function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
+  if (ts.isSourceFile(node)) {
+    hoistFunctionDeclarations(node, scope);
+  }
   if (ts.isImportDeclaration(node)) {
     const spec = bindImportDecl(
       node,
@@ -983,18 +1327,7 @@ function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
     return;
   }
   if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isMethodDeclaration(node) || ts.isConstructorDeclaration(node)) {
-    ctx.functionSeq += 1;
-    const child: Scope = {
-      parent: scope,
-      kind: "function",
-      functionId: ctx.functionSeq,
-      functionName: functionNameOf(node),
-      bindings: new Map(),
-    };
-    for (const param of node.parameters) {
-      bindPattern(param.name, param.initializer, child, false, ctx.file, ctx.findings);
-    }
-    ts.forEachChild(node, (n) => walk(n, child, ctx));
+    bindFunctionLike(node, scope, ctx);
     return;
   }
   if (ts.isBlock(node) || ts.isModuleBlock(node) || ts.isCaseBlock(node)) {
@@ -1005,19 +1338,77 @@ function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
       functionName: enclosingFunction(scope).functionName,
       bindings: new Map(),
     };
+    if (!ts.isCaseBlock(node)) hoistFunctionDeclarations(node, child);
     ts.forEachChild(node, (n) => walk(n, child, ctx));
+    return;
+  }
+  if (ts.isTryStatement(node)) {
+    walk(node.tryBlock, scope, ctx);
+    if (node.catchClause) {
+      const catchScope: Scope = {
+        parent: scope,
+        kind: "block",
+        functionId: enclosingFunction(scope).functionId,
+        functionName: enclosingFunction(scope).functionName,
+        bindings: new Map(),
+      };
+      const thrown = collectThrows(node.tryBlock);
+      if (node.catchClause.variableDeclaration) {
+        bindPattern(
+          node.catchClause.variableDeclaration.name,
+          thrown.length ? thrown : [undefined],
+          catchScope,
+          false,
+          ctx.file,
+          ctx.findings,
+        );
+      }
+      walk(node.catchClause.block, catchScope, ctx);
+    }
+    if (node.finallyBlock) walk(node.finallyBlock, scope, ctx);
+    return;
+  }
+  if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    walk(node.expression, scope, ctx);
+    const loopScope: Scope = {
+      parent: scope,
+      kind: "block",
+      functionId: enclosingFunction(scope).functionId,
+      functionName: enclosingFunction(scope).functionName,
+      bindings: new Map(),
+    };
+    const origins = ts.isForOfStatement(node) ? iterableElementOrigins(node.expression, scope) : [undefined];
+    if (ts.isVariableDeclarationList(node.initializer)) {
+      const constDecl = (node.initializer.flags & ts.NodeFlags.Const) !== 0;
+      for (const decl of node.initializer.declarations) {
+        bindPattern(
+          decl.name,
+          decl.initializer ? [decl.initializer, ...origins] : origins,
+          loopScope,
+          constDecl,
+          ctx.file,
+          ctx.findings,
+        );
+      }
+    } else {
+      bindAssignmentTarget(node.initializer, origins, loopScope, ctx);
+    }
+    walk(node.statement, loopScope, ctx);
     return;
   }
   if (ts.isVariableStatement(node)) {
     const constDecl = (node.declarationList.flags & ts.NodeFlags.Const) !== 0;
     for (const decl of node.declarationList.declarations) {
-      bindPattern(decl.name, decl.initializer, scope, constDecl, ctx.file, ctx.findings);
+      bindPattern(decl.name, decl.initializer ? [decl.initializer] : [], scope, constDecl, ctx.file, ctx.findings);
     }
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
     assignBinding(node.left, node.right, scope, ctx);
   }
-  if (ts.isCallExpression(node)) classifyCall(node, scope, ctx);
+  if (ts.isCallExpression(node)) {
+    if (ctx.phase === "collect") recordFunctionArgs(node, scope, ctx);
+    else classifyCall(node, scope, ctx);
+  }
   if (ts.isNewExpression(node)) classifyNew(node, scope, ctx);
   if (ts.isTaggedTemplateExpression(node) && !isTypeContext(node)) {
     const kind = calleeKind(node.tag, scope);
@@ -1048,30 +1439,104 @@ function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
   ts.forEachChild(node, (child) => walk(child, scope, ctx));
 }
 
+function assignmentPropertyKey(prop: ts.PropertyAssignment | ts.ShorthandPropertyAssignment, scope: Scope): string | undefined {
+  if (ts.isShorthandPropertyAssignment(prop)) return prop.name.text;
+  return propertyAssignmentKey(prop, scope);
+}
+
+function assignmentTargetOf(prop: ts.PropertyAssignment | ts.ShorthandPropertyAssignment): ts.Expression {
+  if (ts.isShorthandPropertyAssignment(prop)) return prop.name;
+  const init = prop.initializer;
+  if (ts.isBinaryExpression(init) && init.operatorToken.kind === ts.SyntaxKind.EqualsToken) return init.left;
+  return init;
+}
+
+function bindAssignmentTarget(
+  left: ts.Expression,
+  sources: Array<ts.Expression | undefined>,
+  scope: Scope,
+  ctx: WalkCtx,
+): void {
+  left = unwrapExpr(left);
+  if (ts.isParenthesizedExpression(left)) {
+    bindAssignmentTarget(left.expression, sources, scope, ctx);
+    return;
+  }
+  if (ts.isIdentifier(left)) {
+    applyIdentifierBinding(left.text, sources, scope, false, ctx.file, ctx.findings, true);
+    return;
+  }
+  const origins = flattenOriginList(sources, scope);
+  if (ts.isObjectLiteralExpression(left)) {
+    for (const prop of left.properties) {
+      if (ts.isSpreadAssignment(prop)) {
+        if (ts.isIdentifier(prop.expression)) {
+          bindRestFromOrigins(prop.expression, origins, scope, false, ctx.file, ctx.findings);
+        } else {
+          bindAssignmentTarget(prop.expression, origins, scope, ctx);
+        }
+        continue;
+      }
+      if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) continue;
+      const propName = assignmentPropertyKey(prop, scope);
+      const target = assignmentTargetOf(prop);
+      let kind: BindingKind = "other";
+      const nested: Array<ts.Expression | undefined> = [];
+      for (const origin of origins) {
+        const mk = patternMemberKind(origin, propName, scope);
+        if (mk) kind = joinBindingKind(kind, mk);
+        nested.push(origin ? propertyValueExpr(origin, propName, scope) : undefined);
+      }
+      const targetId = unwrapExpr(target);
+      if (ts.isIdentifier(targetId) && isPreservedKind(kind)) {
+        emitBoundKind(ctx.file, ctx.findings, kind, kind === "unresolved" ? `assign:${prop.getText()}` : String(kind));
+        const existing = lookup(scope, targetId.text);
+        if (existing) {
+          existing.kind = kind;
+          existing.constDecl = false;
+          existing.init = nested.find((row) => row);
+        } else {
+          setBinding(scope, targetId.text, {
+            kind,
+            functionId: enclosingFunction(scope).functionId,
+            constDecl: false,
+            init: nested.find((row) => row),
+          });
+        }
+        continue;
+      }
+      bindAssignmentTarget(target, nested.some((row) => row) ? nested : origins.map(() => undefined), scope, ctx);
+    }
+    return;
+  }
+  if (ts.isArrayLiteralExpression(left)) {
+    for (let i = 0; i < left.elements.length; i++) {
+      const el = left.elements[i];
+      if (ts.isOmittedExpression(el) || ts.isSpreadElement(el)) {
+        if (ts.isSpreadElement(el)) bindAssignmentTarget(el.expression, origins, scope, ctx);
+        continue;
+      }
+      const nested: Array<ts.Expression | undefined> = [];
+      for (const origin of origins) {
+        if (!origin) {
+          nested.push(undefined);
+          continue;
+        }
+        const followed = followsAliasInit(unwrapExpr(origin), scope, new Set());
+        nested.push(ts.isArrayLiteralExpression(followed) ? arrayElementAt(followed, i) : undefined);
+      }
+      bindAssignmentTarget(el, nested, scope, ctx);
+    }
+  }
+}
+
 function assignBinding(left: ts.Expression, right: ts.Expression, scope: Scope, ctx: WalkCtx): void {
   left = unwrapExpr(left);
-  if (!ts.isIdentifier(left)) return;
-  const kind = expressionBindingKind(right, scope, ctx.file, ctx.findings);
-  const existing = lookup(scope, left.text);
-  const next: BindingKind = isTrackedCallableKind(kind)
-    ? kind
-    : existing && isDangerousCallableKind(existing.kind)
-      ? "unresolved"
-      : kind;
-  if (existing) {
-    existing.kind = next;
-    existing.init = right;
-    existing.value = foldedString(right, scope);
-    existing.constDecl = false;
-  } else {
-    setBinding(scope, left.text, {
-      kind: next,
-      functionId: enclosingFunction(scope).functionId,
-      constDecl: false,
-      init: right,
-      value: foldedString(right, scope),
-    });
+  if (ts.isIdentifier(left)) {
+    applyIdentifierBinding(left.text, [right], scope, false, ctx.file, ctx.findings, true);
+    return;
   }
+  bindAssignmentTarget(left, [right], scope, ctx);
 }
 
 function functionNameOf(
@@ -1171,6 +1636,17 @@ function classifyCall(node: ts.CallExpression, scope: Scope, ctx: WalkCtx): void
     }
     return;
   }
+  if (isReflectGetCallee(node.expression, scope)) {
+    const resultKind = reflectGetResultKind(node, scope);
+    if (resultKind === "unresolved") {
+      ctx.findings.push(
+        finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", `Reflect.get(${node.arguments.map((arg) => arg.getText(ctx.sourceFile)).join(",")})`),
+      );
+    } else if (isDangerousCallableKind(resultKind)) {
+      ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(resultKind)));
+    }
+    return;
+  }
   const kind = calleeKind(node.expression, scope);
   if (kind === "unresolved") {
     ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.expression.getText(ctx.sourceFile)));
@@ -1227,17 +1703,13 @@ export function analyzeSourceText(p: {
       usedFallback: [],
     };
   }
-  const moduleScope: Scope = {
-    kind: "module",
-    functionId: 0,
-    bindings: new Map(),
-  };
-  const ctx: WalkCtx = {
+  const functionArgs = new WeakMap<ts.Node, ts.Expression[][]>();
+  const makeCtx = (phase: "collect" | "analyze", bucket: SourcePolicyFinding[]): WalkCtx => ({
     file: p.file,
     sourceFile,
     manifest: p.manifest,
     repoRoot: p.repoRoot,
-    findings,
+    findings: bucket,
     usedVendor: new Set(),
     usedFallback: new Set(),
     usedStatic: new Set(),
@@ -1245,8 +1717,12 @@ export function analyzeSourceText(p: {
     literalDynamic: [],
     runLoopCalls: [],
     functionSeq: 0,
-  };
-  walk(sourceFile, moduleScope, ctx);
+    phase,
+    functionArgs,
+  });
+  walk(sourceFile, { kind: "module", functionId: 0, bindings: new Map() }, makeCtx("collect", []));
+  const ctx = makeCtx("analyze", findings);
+  walk(sourceFile, { kind: "module", functionId: 0, bindings: new Map() }, ctx);
   return {
     findings,
     localSpecs: ctx.localSpecs,
