@@ -202,6 +202,23 @@ describe("extended canary boundary adversarial checks", () => {
     assert.equal(isForbiddenModuleSpecifier("viem"), true);
   });
 
+  it("PASS_BLOCKED: non-literal require concat, template, and comment forms of viem are rejected", () => {
+    assert.ok(scanCanarySourceText('require("vi" + "em")', "src/loop.ts").some((hit) => hit.includes("viem")));
+    assert.ok(scanCanarySourceText("require(`viem`)", "src/loop.ts").some((hit) => hit.includes("viem")));
+    assert.ok(scanCanarySourceText('require(/*x*/ "viem")', "src/loop.ts").some((hit) => hit.includes("viem")));
+    assert.ok(
+      scanCanarySourceText('require.resolve("vi" + "em")', "src/loop.ts").some((hit) => hit.includes("viem")),
+    );
+  });
+
+  it("PASS_BLOCKED: aliased createRequire import is rejected", () => {
+    const hits = scanCanarySourceText(
+      'import { createRequire as cr } from "node:module"; cr(import.meta.url)("viem");',
+      "src/cli/run-extended-canary.ts",
+    );
+    assert.ok(hits.includes("createRequire"));
+  });
+
   it("PASS_BLOCKED: path tricks that previously bypassed the matcher now resolve to viem", () => {
     const payloads = [
       "node_modules/viem",
@@ -281,5 +298,35 @@ describe("extended canary boundary adversarial checks", () => {
     assert.ok(scanCanarySourceText("(0, Function)('return 1')", "src/loop.ts").includes("Function"));
     assert.ok(scanCanarySourceText("globalThis.eval('1')", "src/loop.ts").includes("eval"));
     assert.ok(scanCanarySourceText("globalThis['eval']('1')", "src/loop.ts").includes("eval"));
+  });
+
+  it("PASS_BLOCKED: executable Function() without new and globalThis.Function forms are rejected", () => {
+    assert.ok(scanCanarySourceText("Function('return 1')", "src/loop.ts").includes("Function"));
+    assert.ok(scanCanarySourceText("globalThis.Function('return 1')", "src/loop.ts").includes("Function"));
+    assert.ok(scanCanarySourceText("globalThis['Function']('return 1')", "src/loop.ts").includes("Function"));
+    assert.ok(scanCanarySourceText("const F = Function; F('return 1')", "src/loop.ts").includes("Function"));
+    assert.ok(scanCanarySourceText("const e = eval; e('1')", "src/loop.ts").includes("eval"));
+  });
+
+  it("PASS_ALLOWED: TypeScript Function type annotations are not treated as constructor calls", () => {
+    const hits = scanCanarySourceText(
+      "type Handler = Function;\nconst x: Function = undefined as never;",
+      "src/types.ts",
+    );
+    assert.deepEqual(hits, []);
+  });
+
+  it("PASS_BLOCKED: canary source may not import tls, dgram, or https", () => {
+    assert.ok(scanCanarySourceText('import tls from "node:tls";', "src/loop.ts").some((hit) => hit.includes("tls")));
+    assert.ok(scanCanarySourceText('import dgram from "node:dgram";', "src/loop.ts").some((hit) => hit.includes("dgram")));
+    assert.ok(scanCanarySourceText('import https from "node:https";', "src/loop.ts").some((hit) => hit.includes("https")));
+    assert.ok(scanCanarySourceText('await import("node:tls");', "src/loop.ts").some((hit) => hit.includes("tls")));
+    assert.ok(scanCanarySourceText('require("dgram");', "src/loop.ts").some((hit) => hit.includes("dgram")));
+    assert.ok(scanCanarySourceText('require("https");', "src/loop.ts").some((hit) => hit.includes("https")));
+  });
+
+  it("PASS_ALLOWED: node:http and node:net remain allowed in canary source text", () => {
+    assert.deepEqual(scanCanarySourceText('import http from "node:http";', "src/dashboard.ts"), []);
+    assert.deepEqual(scanCanarySourceText('import net from "node:net";', "src/runtimeLease.ts"), []);
   });
 });

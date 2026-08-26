@@ -166,41 +166,116 @@ function specifierLooksLikeForbiddenSource(specifier: string): boolean {
   return false;
 }
 
+function stripJsComments(inner: string): string {
+  return inner.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ").trim();
+}
+
+function joinStringLiteralConcat(expr: string): string | undefined {
+  const parts = expr.split("+").map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return undefined;
+  const out: string[] = [];
+  for (const part of parts) {
+    const matched = /^["']([^"']*)["']$/.exec(part) ?? /^`([^`$]*)`$/.exec(part);
+    if (!matched) return undefined;
+    out.push(matched[1] ?? "");
+  }
+  return out.join("");
+}
+
+function literalSpecifierFromExpr(expr: string): string | undefined {
+  const stripped = stripJsComments(expr);
+  const simple = /^["']([^"']*)["']$/.exec(stripped) ?? /^`([^`$]*)`$/.exec(stripped);
+  if (simple) return simple[1];
+  return joinStringLiteralConcat(stripped);
+}
+
+function specifierLooksLikeBlockedNetwork(specifier: string): boolean {
+  const normalized = normalizeModuleSpecifier(specifier);
+  for (const candidate of [specifier, normalized]) {
+    if (
+      candidate === "node:tls"
+      || candidate === "tls"
+      || candidate === "node:dgram"
+      || candidate === "dgram"
+      || candidate === "node:https"
+      || candidate === "https"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hitsForLoadedSpecifier(specifier: string): string[] {
+  const out: string[] = [];
+  if (!specifier) return out;
+  if (isForbiddenModuleSpecifier(specifier) || specifierLooksLikeForbiddenSource(specifier)) {
+    out.push(`specifier:${specifier}`);
+  }
+  if (specifierLooksLikeBlockedNetwork(specifier)) {
+    out.push(`network:${specifier}`);
+  }
+  return out;
+}
+
+function scanLoaderArgument(inner: string, rel: string, nonLiteralTag: string): string[] {
+  const specifier = literalSpecifierFromExpr(inner);
+  if (specifier) {
+    if (isAllowedLoopFallback(rel, specifier)) return [];
+    return hitsForLoadedSpecifier(specifier);
+  }
+  if (isAllowedLoopFallback(rel, inner.trim())) return [];
+  const stripped = stripJsComments(inner);
+  const out: string[] = [];
+  for (const base of FORBIDDEN_CANARY_SOURCE_BASENAMES) {
+    if (stripped.includes(base)) out.push(`${nonLiteralTag}:${base}`);
+  }
+  for (const name of FORBIDDEN_CANARY_PACKAGES) {
+    if (stripped.includes(name)) out.push(`${nonLiteralTag}:${name}`);
+  }
+  for (const name of ["node:tls", "node:dgram", "node:https"] as const) {
+    if (stripped.includes(name)) out.push(`${nonLiteralTag}:${name}`);
+  }
+  return out;
+}
+
 export function scanCanarySourceText(source: string, rel = ""): string[] {
   const hits: string[] = [];
   if (
     /\beval\s*\(/.test(source)
     || /\(\s*0\s*,\s*eval\s*\)/.test(source)
     || /globalThis\s*(?:\[\s*["']eval["']\s*\]|\.eval\b)/.test(source)
+    || /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*eval\b/.test(source)
   ) {
     hits.push("eval");
   }
-  if (/\bnew\s+Function\s*\(/.test(source) || /\(\s*0\s*,\s*Function\s*\)/.test(source)) {
+  if (
+    /\bFunction\s*\(/.test(source)
+    || /\(\s*0\s*,\s*Function\s*\)/.test(source)
+    || /globalThis\s*(?:\[\s*["']Function["']\s*\]|\.Function\b)/.test(source)
+    || /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*Function\b/.test(source)
+  ) {
     hits.push("Function");
   }
-  if (/\bmodule\.createRequire\s*\(/.test(source) || /\bcreateRequire\s*\(/.test(source)) {
+  if (/\bcreateRequire\b/.test(source)) {
     hits.push("createRequire");
   }
-  const literalRe =
-    /\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bfrom\s+["']([^"']+)["']|\brequire\s*\(\s*["']([^"']+)["']\s*\)|\brequire\.resolve\s*\(\s*["']([^"']+)["']\s*\)/g;
-  for (const match of source.matchAll(literalRe)) {
-    const specifier = match[1] ?? match[2] ?? match[3] ?? match[4] ?? "";
+  for (const match of source.matchAll(/\bfrom\s+["']([^"']+)["']/g)) {
+    const specifier = match[1] ?? "";
     if (!specifier || isAllowedLoopFallback(rel, specifier)) continue;
-    if (match[2] && isTypeOnlyImportFrom(source, match.index ?? 0)) continue;
-    if (isForbiddenModuleSpecifier(specifier) || specifierLooksLikeForbiddenSource(specifier)) {
-      hits.push(`specifier:${specifier}`);
-    }
+    if (isTypeOnlyImportFrom(source, match.index ?? 0)) continue;
+    hits.push(...hitsForLoadedSpecifier(specifier));
+  }
+  for (const match of source.matchAll(/\bimport\s+["']([^"']+)["']/g)) {
+    const specifier = match[1] ?? "";
+    if (!specifier || isAllowedLoopFallback(rel, specifier)) continue;
+    hits.push(...hitsForLoadedSpecifier(specifier));
   }
   for (const match of source.matchAll(/\bimport\s*\(([^)]*)\)/g)) {
-    const inner = match[1] ?? "";
-    if (/^\s*["'][^"']*["']\s*$/.test(inner)) continue;
-    if (isAllowedLoopFallback(rel, inner.trim())) continue;
-    for (const base of FORBIDDEN_CANARY_SOURCE_BASENAMES) {
-      if (inner.includes(base)) hits.push(`non-literal-import:${base}`);
-    }
-    for (const name of FORBIDDEN_CANARY_PACKAGES) {
-      if (inner.includes(name)) hits.push(`non-literal-import:${name}`);
-    }
+    hits.push(...scanLoaderArgument(match[1] ?? "", rel, "non-literal-import"));
+  }
+  for (const match of source.matchAll(/\brequire(?:\.resolve)?\s*\(([^)]*)\)/g)) {
+    hits.push(...scanLoaderArgument(match[1] ?? "", rel, "non-literal-require"));
   }
   return [...new Set(hits)];
 }
