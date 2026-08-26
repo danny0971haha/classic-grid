@@ -703,3 +703,388 @@ void s;
     assert.deepEqual(scanCanarySourceText(source, POLICY_FILE), []);
   });
 });
+
+const FORBIDDEN_GETBUILTIN = ["FORBIDDEN_PRIMITIVE:getBuiltin"];
+const FORBIDDEN_MODULE_REQUIRE = [
+  "FORBIDDEN_PRIMITIVE:module-require",
+  "FORBIDDEN_SPECIFIER:",
+  "UNRESOLVED_LOADER:",
+];
+const FORBIDDEN_IMPORT_META = ["FORBIDDEN_PRIMITIVE:import-meta-resolve"];
+const UNRESOLVED_CATS = ["UNRESOLVED_COMPUTED_DISPATCH", "UNRESOLVED_LOADER"];
+
+function allowedSource(source: string, label: string): void {
+  assert.deepEqual(astFindings(source), [], `${label} analyzeSourceText:\n${astFindings(source).join("\n")}`);
+  assert.deepEqual(
+    policyFindings(source),
+    [],
+    `${label} analyzeCanarySourcePolicy:\n${policyFindings(source).join("\n")}`,
+  );
+}
+
+describe("source-policy Reflect.get extraction", () => {
+  it("PASS_BLOCKED: Reflect.get of Function/eval is rejected", () => {
+    blockedIndirectCallable(
+      'Reflect.get(globalThis, "Function")("return process")();',
+      "Reflect.get(Function)",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'Reflect["get"](globalThis, "eval")("1 + 1");',
+      "Reflect[get](eval)",
+      FORBIDDEN_EVAL,
+    );
+    blockedIndirectCallable(
+      'const reflectGet = Reflect.get;\nconst F = reflectGet(globalThis, "Function");\nF("return process")();\n',
+      "alias_Reflect.get",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const boundGet = Reflect.get.bind(Reflect);\nconst E = boundGet(globalThis, "eval");\nE("1 + 1");\n',
+      "bound_Reflect.get",
+      FORBIDDEN_EVAL,
+    );
+  });
+
+  it("PASS_BLOCKED: Reflect.get of loader roots is rejected", () => {
+    blockedIndirectCallable(
+      `Reflect.apply(
+  Reflect.get(process, "getBuiltinModule"),
+  process,
+  ["child_process"]
+);
+`,
+      "Reflect.get(getBuiltinModule)",
+      FORBIDDEN_GETBUILTIN,
+    );
+    blockedIndirectCallable(
+      'Reflect.get(module, "require").call(module, "node:child_process");\n',
+      "Reflect.get(module.require)",
+      FORBIDDEN_MODULE_REQUIRE,
+    );
+    blockedIndirectCallable(
+      'const root = globalThis;\nconst key = "Fun" + "ction";\nReflect.get(root, key)("return process")();\n',
+      "Reflect.get_folded_key",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'Reflect.get(import.meta, "resolve")("./dynamic-target");\n',
+      "Reflect.get(import.meta.resolve)",
+      FORBIDDEN_IMPORT_META,
+    );
+  });
+
+  it("PASS_BLOCKED: unknown computed Reflect.get from a sensitive root is fail-closed", () => {
+    blockedIndirectCallable(
+      'Reflect.get(globalThis, unknownKey)("return process")();\n',
+      "Reflect.get_unknown_key",
+      UNRESOLVED_CATS,
+    );
+    blockedIndirectCallable(
+      'const root = process;\nReflect.get(root, dyn)("child_process");\n',
+      "Reflect.get_process_unknown_key",
+      UNRESOLVED_CATS,
+    );
+  });
+
+  it("PASS_BLOCKED: wrappers around Reflect.get target and result keep the kind", () => {
+    blockedIndirectCallable(
+      'const target = globalThis;\nconst got = Reflect.get(target, "Function");\ngot.call(null, "return process")();\n',
+      "Reflect.get_result_call",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const Get = Reflect["get"];\nconst wrapped = condition ? Get : Get;\nwrapped(globalThis, "eval")("1 + 1");\n',
+      "Reflect.get_conditional_alias",
+      FORBIDDEN_EVAL,
+    );
+  });
+});
+
+describe("source-policy catch and for-of pattern extraction", () => {
+  it("PASS_BLOCKED: catch-clause Function/eval/getBuiltin extraction is rejected", () => {
+    blockedIndirectCallable(
+      'try {\n  throw globalThis;\n} catch ({ Function: F }) {\n  F("return process")();\n}\n',
+      "catch_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'try {\n  throw globalThis;\n} catch ({ ["Function"]: F }) {\n  F("return process")();\n}\n',
+      "catch_Function_computed",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'try {\n  throw globalThis;\n} catch ({ eval: E }) {\n  E("1 + 1");\n}\n',
+      "catch_eval",
+      FORBIDDEN_EVAL,
+    );
+    blockedIndirectCallable(
+      'try {\n  throw globalThis;\n} catch ({ ["eval"]: E }) {\n  E("1 + 1");\n}\n',
+      "catch_eval_computed",
+      FORBIDDEN_EVAL,
+    );
+    blockedIndirectCallable(
+      'try {\n  throw process;\n} catch ({ getBuiltinModule: getBuiltin }) {\n  Reflect.apply(getBuiltin, process, ["child_process"]);\n}\n',
+      "catch_getBuiltin",
+      FORBIDDEN_GETBUILTIN,
+    );
+  });
+
+  it("PASS_BLOCKED: nested and rest catch extraction is rejected", () => {
+    blockedIndirectCallable(
+      'try {\n  throw { root: globalThis };\n} catch ({ root: { Function: F } }) {\n  F("return process")();\n}\n',
+      "catch_nested_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'try {\n  throw { root: globalThis };\n} catch ({ root: { ["Function"]: F } }) {\n  F("return process")();\n}\n',
+      "catch_nested_Function_computed",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'try {\n  throw globalThis;\n} catch ({ ...root }) {\n  root.Function("return process")();\n}\n',
+      "catch_rest_Function",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: for-of declaration and assignment extraction is rejected", () => {
+    blockedIndirectCallable(
+      'for (const { Function: F } of [globalThis]) {\n  F("return process")();\n}\n',
+      "for_decl_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'for (const { ["Function"]: F } of [globalThis]) {\n  F("return process")();\n}\n',
+      "for_decl_Function_computed",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'let F;\nfor ({ Function: F } of [globalThis]) {\n  F("return process")();\n  break;\n}\n',
+      "for_assign_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'for (const { getBuiltinModule: getBuiltin } of [process]) {\n  Reflect.apply(getBuiltin, process, ["child_process"]);\n}\n',
+      "for_decl_getBuiltin",
+      FORBIDDEN_GETBUILTIN,
+    );
+    blockedIndirectCallable(
+      'let getBuiltin;\nfor ({ getBuiltinModule: getBuiltin } of [process]) {\n  Reflect.apply(getBuiltin, process, ["child_process"]);\n  break;\n}\n',
+      "for_assign_getBuiltin",
+      FORBIDDEN_GETBUILTIN,
+    );
+  });
+});
+
+describe("source-policy interprocedural parameter destructuring", () => {
+  it("PASS_BLOCKED: local function/arrow/IIFE parameter extraction is rejected", () => {
+    blockedIndirectCallable(
+      'function execute({ Function: F }) {\n  F("return process")();\n}\nexecute(globalThis);\n',
+      "param_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'function execute({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n}\nexecute(globalThis);\n',
+      "param_Function_computed",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const evaluate = ({ eval: E }) => {\n  E("1 + 1");\n};\nevaluate(globalThis);\n',
+      "arrow_param_eval",
+      FORBIDDEN_EVAL,
+    );
+    blockedIndirectCallable(
+      'const evaluate = ({ ["eval"]: E }: { eval: typeof eval }) => {\n  E("1 + 1");\n};\nevaluate(globalThis);\n',
+      "arrow_param_eval_computed",
+      FORBIDDEN_EVAL,
+    );
+    blockedIndirectCallable(
+      'function load({ getBuiltinModule }) {\n  Reflect.apply(getBuiltinModule, process, ["child_process"]);\n}\nload(process);\n',
+      "param_getBuiltin",
+      FORBIDDEN_GETBUILTIN,
+    );
+    blockedIndirectCallable(
+      '(function ({ Function: F }) {\n  F("return process")();\n})(globalThis);\n',
+      "iife_param_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      '(function ({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n})(globalThis);\n',
+      "iife_param_Function_computed",
+      FORBIDDEN_CTOR,
+    );
+  });
+
+  it("PASS_BLOCKED: nested, rest, aliased, and conditional parameter origins are rejected", () => {
+    blockedIndirectCallable(
+      'function nested({ root: { Function: F } }) {\n  F("return process")();\n}\nnested({ root: globalThis });\n',
+      "param_nested_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'function nested({ root: { ["Function"]: F } }: { root: { Function: Function } }) {\n  F("return process")();\n}\nnested({ root: globalThis });\n',
+      "param_nested_Function_computed",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'function rest({ ...root }) {\n  root.Function("return process")();\n}\nrest(globalThis);\n',
+      "param_rest_Function",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'function execute({ Function: F }) {\n  F("return process")();\n}\nconst run = execute;\nrun(globalThis);\n',
+      "param_fn_alias",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'function execute({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n}\nconst run = execute;\nconst call = run;\ncall(globalThis);\n',
+      "param_fn_two_hop_alias",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'const g = globalThis;\nfunction execute({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n}\nexecute(g);\n',
+      "param_aliased_root",
+      FORBIDDEN_CTOR,
+    );
+    blockedIndirectCallable(
+      'function execute({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n}\nexecute(condition ? globalThis : safeRoot);\n',
+      "param_conditional_root",
+      [...FORBIDDEN_CTOR, ...UNRESOLVED_CATS],
+    );
+    blockedIndirectCallable(
+      'function execute({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n}\nexecute(condition && globalThis);\n',
+      "param_logical_root",
+      [...FORBIDDEN_CTOR, ...UNRESOLVED_CATS],
+    );
+    blockedIndirectCallable(
+      'function execute({ ["Function"]: F }: { Function: Function }) {\n  F("return process")();\n}\nexecute(unknownRoot);\n',
+      "param_unproven_root",
+      UNRESOLVED_CATS,
+    );
+  });
+});
+
+describe("source-policy remaining binding positive controls", () => {
+  it("PASS_ALLOWED: Reflect.get on ordinary objects is accepted", () => {
+    allowedSource(
+      'const safeObject = {\n  Function: () => "safe",\n};\nReflect.get(safeObject, "Function")();\n',
+      "safe_Reflect.get_object",
+    );
+    allowedSource("Reflect.get(Math, \"max\");\n", "safe_Reflect.get_Math.max");
+    allowedSource(
+      `const safeFactory = () => "safe";
+const localReflect = {
+  get: (_target: object, _key: string) => safeFactory,
+};
+localReflect.get(globalThis, "Function")();
+`,
+      "localReflect.get",
+    );
+  });
+
+  it("PASS_ALLOWED: safe catch/for/parameter Function bindings remain accepted", () => {
+    allowedSource(
+      `const safeFactory = () => "safe";
+try {
+  throw { Function: safeFactory };
+} catch ({ Function: F }) {
+  F();
+}
+`,
+      "safe_catch_Function",
+    );
+    allowedSource(
+      `const safeFactory = () => "safe";
+for (const { Function: F } of [{ Function: safeFactory }]) {
+  F();
+}
+`,
+      "safe_for_Function",
+    );
+    allowedSource(
+      `const safeFactory = () => "safe";
+function run({ Function: F }: { Function: () => string }) {
+  return F();
+}
+run({ Function: safeFactory });
+`,
+      "safe_param_Function",
+    );
+    allowedSource(
+      `const safeFactory = () => "safe";
+function runOrdinary({ handler }: { handler: () => string }) {
+  return handler();
+}
+runOrdinary({ handler: safeFactory });
+`,
+      "safe_param_handler",
+    );
+  });
+
+  it("PASS_ALLOWED: locally shadowed sensitive roots remain accepted", () => {
+    allowedSource(
+      `function withReflect(Reflect: { get: (t: object, k: string) => () => string }) {
+  return Reflect.get(globalThis, "Function")();
+}
+withReflect({ get: () => () => "safe" });
+`,
+      "shadowed_Reflect",
+    );
+    allowedSource(
+      `function withProcess(process: { getBuiltinModule: (n: string) => unknown }) {
+  return process.getBuiltinModule("child_process");
+}
+withProcess({ getBuiltinModule: () => ({}) });
+`,
+      "shadowed_process",
+    );
+    allowedSource(
+      `function withModule(module: { require: (n: string) => unknown }, Module: { _load: (n: string) => unknown }) {
+  module.require("node:vm");
+  Module._load("node:vm");
+}
+withModule({ require: () => ({}) }, { _load: () => ({}) });
+`,
+      "shadowed_module_Module",
+    );
+    allowedSource(
+      `function withGlobals(globalThis: { Function: () => string }, global: { eval: (s: string) => unknown }) {
+  globalThis.Function();
+  global.eval("1");
+}
+withGlobals({ Function: () => "safe" }, { eval: () => 1 });
+`,
+      "shadowed_globalThis_global",
+    );
+  });
+
+  it("PASS_ALLOWED: ordinary catch/loop/function bindings remain accepted", () => {
+    allowedSource(
+      `try {
+  throw new Error("x");
+} catch (error) {
+  void error;
+}
+for (const item of [1, 2, 3]) {
+  void item;
+}
+function add(a: number, b: number): number {
+  return a + b;
+}
+const fn = add;
+fn(1, 2);
+const { x } = { x: 1 };
+const [y] = [2];
+void x;
+void y;
+`,
+      "ordinary_bindings",
+    );
+    allowedSource("const x = process.env.EXPERIMENT_MODE;\nvoid x;\n", "process.env");
+    allowedSource(
+      "const n = Reflect.apply(Math.max, null, [1, 2]);\nvoid n;\n",
+      "Reflect.apply_Math.max",
+    );
+  });
+});
