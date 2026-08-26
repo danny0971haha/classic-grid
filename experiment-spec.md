@@ -1,7 +1,7 @@
 # Grid Bot A/B Experiment Specification
 
-Version: 0.1.0  
-Date: 2026-08-15  
+Version: 0.1.0
+Date: 2026-08-15
 Bots: `beibei030/classic-grid` and `discountry/ritmex-bot`
 
 ## 1. Purpose

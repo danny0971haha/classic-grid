@@ -60,6 +60,7 @@ export type LiveOrder = DesiredOrder & {
   exchangeOrderId?: string;
   status?: string;
   filledSize?: number;
+  reduceOnly?: boolean;
 };
 
 export type VenueSnapshot = {
@@ -82,6 +83,73 @@ export type Intent =
   | { type: "place"; order: DesiredOrder }
   | { type: "cancel"; orderId: string; market: string };
 
+/** Experiment-owned logical slot. Price alone is never a slot key. */
+export type PlannerLogicalSlot = {
+  market: string;
+  anchorEpoch: number;
+  side: Side;
+  levelIndex: number;
+  /** Present only for obligation-specific replacement identities. */
+  replacementToken?: string;
+};
+
+export type ReplacementObligationLifecycle =
+  | "OBSERVED"
+  | "DURABLY_INGESTED"
+  | "READY"
+  | "SUBMITTING"
+  | "SUBMIT_UNKNOWN"
+  | "CONFIRMED_OPEN"
+  | "TERMINAL_FILLED_OR_REPLACED"
+  | "TERMINAL_EDGE_NOOP"
+  | "RECONCILIATION_REQUIRED";
+
+export type ReplacementApplyDisposition = "CONFIRMED" | "REJECTED" | "UNKNOWN";
+
+/** Planner-facing replacement obligation. Quantity is the proven residual, never sizeBase. */
+export type PlannerReplacementObligation = {
+  obligationId: string;
+  sourceDedupeKey: string;
+  targetSide: Side;
+  targetLevelIndex: number;
+  outstandingQuantity: number;
+  placementQuantity: number;
+  replacementClientOrderId: string;
+  lifecycle: ReplacementObligationLifecycle;
+};
+
+export type PlannerOrderClass =
+  | "VALID_OWNED_CURRENT"
+  | "MALFORMED_OWNED"
+  | "STALE_EPOCH_OWNED"
+  | "UNOWNED"
+  | "AMBIGUOUS"
+  | "CROSS_MARKET_OWNED";
+
+export type PlannerDisposition =
+  | "CLEAR"
+  | "CANCEL_ONLY_RECONCILIATION"
+  | "RISK_INCREASE_BLOCKED";
+
+export type PlannerDiagnosticCode =
+  | "DUPLICATE_OWNED_CANCELLED"
+  | "MALFORMED_OWNED"
+  | "STALE_EPOCH_OWNED"
+  | "UNOWNED_BLOCKS_SLOT"
+  | "AMBIGUOUS_ORDER"
+  | "RECONCILIATION_REQUIRED"
+  | "MISSING_CANCEL_IDENTITY"
+  | "CROSS_MARKET_OWNED_ORDER";
+
+export type PlannerDiagnostic = {
+  code: PlannerDiagnosticCode;
+  class: PlannerOrderClass;
+  slot?: PlannerLogicalSlot;
+  orderId?: string;
+  exchangeOrderId?: string;
+  clientOrderId?: string;
+};
+
 export type ApplyResult = {
   placed: number;
   cancelled: number;
@@ -97,4 +165,58 @@ export type ActiveOrder = {
   side: Side;
   price: number;
   size: number;
+};
+
+/**
+ * Canonical exchange-observed execution. `source` is always `"exchange"`.
+ * Identifiers are copied from the venue; missing IDs are omitted, never guessed.
+ */
+export type ExecutionRecord = {
+  source: "exchange";
+  venue: VenueId;
+  market: string;
+  side: Side;
+  price: number;
+  quantity: number;
+  exchangeTradeId?: string;
+  exchangeOrderId?: string;
+  clientOrderId?: string;
+  cumulativeFilledQuantity?: number;
+  remainingQuantity?: number;
+  exchangeTimestamp?: string;
+  observedAt: string;
+  streamConnectionId: string;
+  streamSequence: number;
+  dedupeKey: string;
+  /** Captured at observation time. `source="exchange"` does not imply authority. */
+  authoritative: boolean;
+};
+
+export type ExecutionFaultCode =
+  | "SEQUENCE_GAP"
+  | "DISCONNECTED"
+  | "MALFORMED_IDENTITY"
+  | "NON_FINITE_FIELDS"
+  | "REPLAY_AMBIGUITY"
+  | "CURSOR_CONFLICT"
+  | "OUT_OF_ORDER"
+  | "CUMULATIVE_REGRESSION"
+  | "CUMULATIVE_EXCEEDS_ORIGINAL"
+  | "JOURNAL_CAPACITY";
+
+export type ExecutionFault = {
+  event: "EXECUTION_RECONCILIATION_REQUIRED";
+  code: ExecutionFaultCode;
+  observedAt: string;
+  streamConnectionId: string;
+  streamSequence?: number;
+};
+
+export type ExecutionJournalDrain = {
+  executions: ExecutionRecord[];
+  /** Explicit FILL set. Publishers must not infer authority from `authority` or `source`. */
+  authoritativeExecutions: ExecutionRecord[];
+  faults: ExecutionFault[];
+  authority: "trusted" | "invalidated";
+  authoritativeCount: number;
 };

@@ -1,9 +1,21 @@
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Intent, VenueSnapshot } from "../types.js";
+import {
+  ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE,
+  boundFlattenQty,
+  classifyExposureReducingSide,
+  createLocalTransportNotSent,
+  isLocalTransportNotSent,
+  normalizeReductionResult,
+  reductionClientOrderId,
+  type AuthoritativeReductionSnapshot,
+  type ReductionRequest,
+  type ReductionResult,
+} from "../experimentReduction.js";
 import { readExperimentLeverage } from "../config.js";
 import { loadEnv } from "../loadEnv.js";
-import { ExtendedAccountStream } from "./extendedAccountStream.js";
+import { ExtendedAccountStream, ExtendedAccountStreamState } from "./extendedAccountStream.js";
 import {
   ExtendedObservationBarrier,
   type ExtendedObservationResult,
@@ -51,7 +63,18 @@ type ExtendedExchange = ExtendedStrictExchangeFacade & {
   }): Promise<{ orderId: string }>;
   cancelOrder(marketId: number, orderId: string): Promise<unknown>;
   cancelAll(marketId: number): Promise<unknown>;
-  closePosition(marketId: number, sizeBase?: number | null): Promise<unknown>;
+  closePosition(
+    marketId: number,
+    sizeBase?: number | null,
+    externalId?: string | null
+  ): Promise<{
+    requestedClientOrderId?: string | null;
+    submittedExternalId?: string;
+    exchangeId?: string;
+    exchangeOrderId?: string;
+    orderId?: string;
+    externalId?: string;
+  } | true>;
   setLeverage(marketId: number, leverage: number): Promise<unknown>;
   getLeverage(marketId: number): Promise<number | null>;
   confirmNoOpenOrders(marketId: number, opts?: { retries?: number; waitMs?: number }): Promise<unknown>;
@@ -60,6 +83,41 @@ type ExtendedExchange = ExtendedStrictExchangeFacade & {
 function marketName(market: string): string {
   const m = market.toUpperCase();
   return m.includes("-") ? m : `${m}-USD`;
+}
+
+export function toAuthoritativeReductionSnapshot(
+  result: Extract<ExtendedObservationResult, { ok: true }>,
+  market: string
+): AuthoritativeReductionSnapshot {
+  const snap = result.snapshot;
+  const generation = snap.generation;
+  const normalizedMarket = marketName(market);
+  const positions = snap.positions.filter((position) => position.market === normalizedMarket);
+  const signedPosition = positions.reduce(
+    (sum, position) => sum + Math.abs(position.size) * (position.side === "SHORT" ? -1 : 1),
+    0
+  );
+  return {
+    observedAt: generation.generatedAt,
+    observationId: generation.observationId,
+    sourceGeneration: generation.sourceGeneration,
+    capturedAtMs: Date.parse(generation.generatedAt),
+    positionQty: signedPosition,
+    openOrders: snap.openOrders
+      .filter((order) => order.market === normalizedMarket)
+      .map((order) => ({
+        id: order.externalId || order.id,
+        market,
+        side: order.side === "SELL" ? "sell" : "buy",
+        price: order.price,
+        size: Math.max(0, order.qty - order.filledQty),
+        level: 0,
+        clientOrderId: order.externalId,
+      })),
+    mid: snap.markPrice.markPrice,
+    freshness: "fresh",
+    leaseGeneration: String(generation.leaseGeneration),
+  };
 }
 
 export class ExtendedExecutor implements VenueExecutor {
@@ -72,6 +130,14 @@ export class ExtendedExecutor implements VenueExecutor {
   private accountStream: ExtendedAccountStream | null = null;
   private observation: ExtendedObservationBarrier | null = null;
   private leaseGeneration = 0;
+  private executionCursorPath?: string;
+  private executionCursorBind?: {
+    path: string;
+    experimentId: string;
+    scopeKey: string;
+    venue: string;
+    market: string;
+  };
   constructor(private dryRun: boolean) {}
 
   setLeaseGeneration(generation: number): void {
@@ -79,6 +145,35 @@ export class ExtendedExecutor implements VenueExecutor {
       throw new Error("EXTENDED_INVALID_LEASE_GENERATION");
     }
     this.leaseGeneration = generation;
+  }
+
+  setExecutionCursorPath(filePath: string): void {
+    this.executionCursorPath = filePath;
+  }
+
+  setExecutionCursorBind(bind: {
+    path: string;
+    experimentId: string;
+    scopeKey: string;
+    venue: string;
+    market: string;
+  }): void {
+    this.executionCursorBind = bind;
+    this.executionCursorPath = bind.path;
+  }
+
+  drainExecutionJournal() {
+    return this.accountStream?.state.drainJournal() ?? {
+      executions: [],
+      authoritativeExecutions: [],
+      faults: [],
+      authority: "trusted" as const,
+      authoritativeCount: 0,
+    };
+  }
+
+  acknowledgeExecutionJournal(publishedDedupeKeys: string[]): void {
+    this.accountStream?.state.acknowledgeJournal(publishedDedupeKeys);
   }
 
   async connect(): Promise<void> {
@@ -113,7 +208,20 @@ export class ExtendedExecutor implements VenueExecutor {
       apiUrl,
     }) as ExtendedExchange;
     await this.ex.init();
-    this.accountStream = new ExtendedAccountStream({ apiUrl, apiKey });
+    this.accountStream = new ExtendedAccountStream(
+      { apiUrl, apiKey },
+      new ExtendedAccountStreamState(Date.now, this.executionCursorPath ? {
+        cursorPath: this.executionCursorPath,
+        cursorIdentity: this.executionCursorBind
+          ? {
+              experimentId: this.executionCursorBind.experimentId,
+              scopeKey: this.executionCursorBind.scopeKey,
+              venue: this.executionCursorBind.venue,
+              market: this.executionCursorBind.market,
+            }
+          : undefined,
+      } : undefined),
+    );
     await this.accountStream.connect();
     this.observation = new ExtendedObservationBarrier(
       new ExtendedStrictApi(this.ex),
@@ -279,6 +387,95 @@ export class ExtendedExecutor implements VenueExecutor {
     }
     const ex = this.ensure();
     await ex.closePosition(this.marketId(market));
+  }
+
+  async authoritativeReductionSnapshot(p: {
+    market: string;
+    mutationAttemptAtMs: number;
+    leaseGeneration: string;
+  }): Promise<AuthoritativeReductionSnapshot> {
+    const result = await this.strictSnapshot(p.market);
+    if (!result.ok) {
+      throw new Error(
+        `EXTENDED_STRICT_SNAPSHOT_${result.reasonCode}:${result.failedSources.join(",")}`
+      );
+    }
+    return toAuthoritativeReductionSnapshot(result, p.market);
+  }
+
+  /**
+   * Sized reduce-only close. Vendor `closePosition(marketId, sizeBase)` is not treated
+   * as an idempotent full-close: quantity, side, lease, and attempt identity are enforced.
+   */
+  async reduceExposure(request: ReductionRequest & { side: "buy" | "sell"; qty: number }): Promise<ReductionResult> {
+    const expectedClientOrderId = reductionClientOrderId(request.incidentId, request.attempt);
+    const requestedClientOrderId = request.clientOrderId;
+    const identity = (reasonCode: string): ReductionResult => ({
+      ...createLocalTransportNotSent("PREFLIGHT"),
+      outcome: "NOT_SENT",
+      reasonCode,
+      requestedClientOrderId: requestedClientOrderId || expectedClientOrderId,
+      clientOrderId: requestedClientOrderId || expectedClientOrderId,
+      physicalAttempt: 0,
+    });
+    if (!requestedClientOrderId) {
+      return identity("MISSING_CLIENT_ORDER_ID");
+    }
+    if (requestedClientOrderId !== expectedClientOrderId) {
+      return identity("CLIENT_ORDER_ID_MISMATCH");
+    }
+    if (request.leaseGeneration !== String(this.leaseGeneration)) {
+      return identity("STALE_LEASE_GENERATION");
+    }
+    if (request.targetAbsPositionQty !== 0) {
+      return identity("UNSUPPORTED_PARTIAL_REDUCTION");
+    }
+    if (!Number.isFinite(request.positionQty)) {
+      return identity("MISSING_POSITION_QTY");
+    }
+    const reducing = classifyExposureReducingSide(request.positionQty);
+    if (reducing !== request.side) {
+      return identity("EXPOSURE_INCREASING_SIDE");
+    }
+    const maxQty = Math.abs(request.positionQty);
+    if (!(request.qty > 0) || request.qty > maxQty + ACTUAL_NOTIONAL_FLAT_QTY_TOLERANCE) {
+      return identity("QTY_EXCEEDS_POSITION");
+    }
+    const qty = boundFlattenQty(request.positionQty, request.qty);
+    if (!(qty > 0) || qty > maxQty) {
+      return identity("EXPOSURE_INCREASING_QTY");
+    }
+    if (this.dryRun) {
+      return identity("DRY_RUN_NO_TRANSPORT");
+    }
+    try {
+      const receipt = await this.ensure().closePosition(
+        this.marketId(request.market),
+        qty,
+        requestedClientOrderId
+      );
+      if (
+        isLocalTransportNotSent(receipt)
+        || (receipt && typeof receipt === "object" && (receipt as { outcome?: unknown }).outcome === "NOT_SENT")
+      ) {
+        return normalizeReductionResult(request, receipt, { venueMutationEntered: true, physicalAttempt: 1 });
+      }
+      const submittedExternalId = receipt && typeof receipt === "object"
+        ? String(receipt.submittedExternalId || receipt.externalId || "")
+        : "";
+      const exchangeOrderId = receipt && typeof receipt === "object"
+        ? String(receipt.exchangeId || receipt.exchangeOrderId || "")
+        : "";
+      return normalizeReductionResult(request, {
+        outcome: "ACK",
+        requestedClientOrderId,
+        submittedExternalId: submittedExternalId || undefined,
+        clientOrderId: requestedClientOrderId,
+        exchangeOrderId: exchangeOrderId || undefined,
+      }, { venueMutationEntered: true, physicalAttempt: 1 });
+    } catch (error) {
+      return normalizeReductionResult(request, error, { venueMutationEntered: true, physicalAttempt: 1 });
+    }
   }
 
   async verifyExperimentPreflight(market: string, leverage: number): Promise<void> {

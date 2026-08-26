@@ -14,6 +14,7 @@ import {
 
 export type ObservationGeneration = {
   observationId: string;
+  sourceGeneration: string;
   accountIdentityHash: string;
   market: string;
   leaseGeneration: number;
@@ -216,11 +217,22 @@ export class ExtendedObservationBarrier {
       }
 
       const generatedAt = new Date(this.now()).toISOString();
+      const sourceGeneration = [
+        observationId,
+        String(options.leaseGeneration),
+        before.connectionId,
+        String(before.seq),
+        String(after.seq),
+        restWindowStartedAt,
+        restWindowCompletedAt,
+        generatedAt,
+      ].join(":");
       return {
         ok: true,
         snapshot: {
           generation: {
             observationId,
+            sourceGeneration,
             accountIdentityHash: hashAccount(strictAccount),
             market,
             leaseGeneration: options.leaseGeneration,

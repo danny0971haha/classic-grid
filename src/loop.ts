@@ -7,25 +7,33 @@ import {
   type RuntimeConfig,
 } from "./config.js";
 import { runExperimentKillSwitch } from "./experimentKillSwitch.js";
+import { createVenueReductionTransport, runActualNotionalHardHalt } from "./experimentReduction.js";
 import {
   acknowledgeHaltIfRequested,
   combineDailyPnl,
   emptyRiskState,
   evaluateExperimentRisk,
   filterRiskIncreasingIntents,
+  isForcedHaltInMemoryOnly,
+  latchForcedHaltInMemory,
   worstCaseGrossNotionalUsd,
   experimentDir,
   loadRiskState,
-  persistRiskState,
+  persistAuthoritativeRiskState,
   type ExperimentRiskState,
 } from "./experimentRisk.js";
 import {
   createExperimentTelemetry,
+  publishExecutionJournal,
+  resolveExecutionCursorPath,
   type ExperimentEventName,
 } from "./experimentTelemetry.js";
 import { loadSoftResumeAnchors, persistSoftResumeAnchor } from "./softResume.js";
 import {
   acquireRuntimeLease,
+  beginRuntimeSession,
+  completeRuntimeSession,
+  markRuntimeSessionReconciliationRequired,
   startRuntimeLeaseHeartbeat,
   type RuntimeLease,
   type RuntimeLeaseHeartbeat,
@@ -39,6 +47,7 @@ import {
 } from "./dashboard.js";
 import { isBotPaused, loadBotPauseState } from "./botControl.js";
 import {
+  applyPlannerIntentGate,
   assertFeeOk,
   assertMarginOk,
   buildGrid,
@@ -46,9 +55,23 @@ import {
   planFromFillsAndSeed,
   type BuiltGrid,
 } from "./grid.js";
+import {
+  applyReplacementDispositions,
+  authoritativeMetrics,
+  ingestAuthoritativeDrain,
+  markObligationsSubmitting,
+  plannerFilledFromLedger,
+  plannerObligationsFromLedger,
+  replacementSizeByClientOrderId,
+  resolveStrategyLedgerPath,
+  strategyLedgerIdentity,
+} from "./strategyExecutionLedger.js";
+
+export { applyPlannerIntentGate };
 import { loadVenueSessionCounters } from "./ledger.js";
-import { getOfficialCache, refreshOfficialStats } from "./officialStats.js";
-import { createExecutor, type VenueExecutor } from "./venues/index.js";
+import type { OfficialBundle } from "./officialStats.js";
+import type { ExecutorFactory } from "./venues/factory.js";
+import type { VenueExecutor } from "./venues/types.js";
 import type { GridParams, Side, VenueId, VenueSnapshot } from "./types.js";
 import {
   classifyTrade,
@@ -59,6 +82,49 @@ import {
   isSoftPlaceError,
   tgOpen,
 } from "./telegram.js";
+
+export type LoopRuntimeBindings = {
+  createExecutor?: ExecutorFactory;
+  refreshOfficialStats?: (opts?: {
+    force?: boolean;
+    minIntervalMs?: number;
+  }) => Promise<OfficialBundle>;
+  getOfficialCache?: () => OfficialBundle | null | undefined;
+};
+
+let boundCreateExecutor: ExecutorFactory | null = null;
+let boundGetOfficialCache: LoopRuntimeBindings["getOfficialCache"] | null = null;
+let boundRefreshOfficialStats: LoopRuntimeBindings["refreshOfficialStats"] | null = null;
+
+async function bindLoopRuntime(bindings?: LoopRuntimeBindings): Promise<void> {
+  boundCreateExecutor =
+    bindings?.createExecutor ?? (await import("./venues/index.js")).createExecutor;
+  if (bindings?.refreshOfficialStats && bindings?.getOfficialCache) {
+    boundRefreshOfficialStats = bindings.refreshOfficialStats;
+    boundGetOfficialCache = bindings.getOfficialCache;
+    return;
+  }
+  const official = await import("./officialStats.js");
+  boundRefreshOfficialStats = bindings?.refreshOfficialStats ?? official.refreshOfficialStats;
+  boundGetOfficialCache = bindings?.getOfficialCache ?? official.getOfficialCache;
+}
+
+function createExecutor(venue: VenueId, dryRun: boolean): VenueExecutor {
+  if (!boundCreateExecutor) throw new Error("EXECUTOR_FACTORY_UNBOUND");
+  return boundCreateExecutor(venue, dryRun);
+}
+
+function getOfficialCache(): OfficialBundle | null | undefined {
+  return boundGetOfficialCache ? boundGetOfficialCache() : undefined;
+}
+
+async function refreshOfficialStats(opts?: {
+  force?: boolean;
+  minIntervalMs?: number;
+}): Promise<OfficialBundle> {
+  if (!boundRefreshOfficialStats) throw new Error("OFFICIAL_STATS_UNBOUND");
+  return boundRefreshOfficialStats(opts);
+}
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.resolve();
@@ -73,9 +139,13 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): void {
-  try { experimentTelemetry?.emit(event, fields as never); }
-  catch { /* telemetry is deliberately outside the trading control path */ }
+function emitExp(event: ExperimentEventName, fields: Record<string, unknown> = {}): boolean {
+  try {
+    if (!experimentTelemetry) return true;
+    return experimentTelemetry.emit(event, fields as never);
+  } catch {
+    return false;
+  }
 }
 
 async function applyExperimentGuards(p: {
@@ -87,6 +157,28 @@ async function applyExperimentGuards(p: {
   const { rt, market, cfg, snap } = p;
   const g = rt.params;
   if (!cfg.experiment.enabled || !g) return "ok";
+  if (!experimentSessionAllowsTrading) {
+    const kill = await runExperimentKillSwitch({
+      ex: {
+        cancelAll: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.cancelAll(killMarket);
+        },
+        closePosition: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.closePosition(killMarket);
+        },
+        snapshot: (killMarket) => rt.ex.snapshot(killMarket),
+      },
+      market,
+      reasons: ["RECONCILIATION_REQUIRED"],
+      experimentId: cfg.experiment.id,
+      scopeKey: experimentScopeKey,
+      onEvent: (event, fields) => emitExp(event, { venue: rt.ex.id, ...fields }),
+    });
+    experimentRiskState = kill.state;
+    return "halt";
+  }
   const off = getOfficialCache()?.venues?.[rt.ex.id];
   const planned = worstCaseGrossNotionalUsd({
     positionQty: snap.position,
@@ -121,17 +213,29 @@ async function applyExperimentGuards(p: {
     experimentRiskState
   );
   experimentRiskState = next;
-  let persistenceFailed = false;
+  let persistenceFailed = isForcedHaltInMemoryOnly(cfg.experiment.id);
+  if (persistenceFailed && !experimentRiskState.halted) {
+    experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "FORCED_HALT_IN_MEMORY_ONLY");
+  }
   try {
-    persistRiskState(cfg.experiment.id, experimentRiskState);
+    if (!persistenceFailed) {
+      persistAuthoritativeRiskState(cfg.experiment.id, experimentRiskState, undefined, {
+        assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      });
+    }
   } catch (error: any) {
     persistenceFailed = true;
-    experimentRiskState = {
-      ...experimentRiskState,
-      halted: true,
-      haltStatus: "HALT_FAILED",
-      haltReasons: Array.from(new Set([...experimentRiskState.haltReasons, "RISK_STATE_PERSIST_FAILED"])),
-    };
+    experimentRiskState = latchForcedHaltInMemory(cfg.experiment.id, experimentRiskState, "RISK_STATE_PERSIST_FAILED");
+    experimentSessionAllowsTrading = false;
+    try {
+      markRuntimeSessionReconciliationRequired({
+        experimentDir: experimentDir(cfg.experiment.id),
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+        reasonCodes: ["RISK_STATE_PERSIST_FAILED"],
+      });
+    } catch { /* leftover OPEN still blocks the next start */ }
     console.error(`[experiment] risk-state persist failed: ${String(error?.message || error).slice(0, 160)}`);
   }
   emitExp("SNAPSHOT", {
@@ -153,6 +257,83 @@ async function applyExperimentGuards(p: {
     risk_flags: decision.reasons,
     restart_count: experimentRestartCount,
   });
+  const actualNotionalIncident =
+    decision.reasons.includes("ACTUAL_NOTIONAL_CAP")
+    || experimentRiskState.haltReasons.includes("ACTUAL_NOTIONAL_CAP");
+  if (actualNotionalIncident) {
+    const haltReasons = persistenceFailed
+      ? Array.from(new Set([...decision.reasons, "RISK_STATE_PERSIST_FAILED", "ACTUAL_NOTIONAL_CAP"]))
+      : Array.from(new Set([...decision.reasons, "ACTUAL_NOTIONAL_CAP"]));
+    console.warn(
+      `[${rt.ex.id}] RISK HALT ${haltReasons.join(",")} — owned cancel → reduce-only flatten`
+    );
+    emitExp("REDUCTION_STARTED", {
+      venue: rt.ex.id,
+      symbol: market,
+      source: "classic-grid",
+      error_code: "ACTUAL_NOTIONAL_CAP",
+    });
+    const kill = await runActualNotionalHardHalt({
+      experimentId: cfg.experiment.id,
+      market,
+      ownershipPrefix: experimentOwnershipPrefix,
+      positionQty: snap.position,
+      openOrders: snap.openOrders,
+      reasons: haltReasons,
+      transport: createVenueReductionTransport({
+        apply: async (intents) => {
+          assertExperimentLeaseCurrent(cfg);
+          return rt.ex.apply(intents);
+        },
+        closePosition: async (killMarket) => {
+          assertExperimentLeaseCurrent(cfg);
+          await rt.ex.closePosition(killMarket);
+        },
+        reduceExposure: rt.ex.reduceExposure
+          ? async (request) => {
+              assertExperimentLeaseCurrent(cfg);
+              return rt.ex.reduceExposure!(request);
+            }
+          : undefined,
+        snapshot: (killMarket) => rt.ex.snapshot(killMarket),
+        observeAuthoritative: rt.ex.authoritativeReductionSnapshot
+          ? (input) => rt.ex.authoritativeReductionSnapshot!(input)
+          : undefined,
+        assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      }),
+      assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+      scopeKey: experimentScopeKey,
+      persistOptions: {
+        assertLeaseCurrent: () => assertExperimentLeaseCurrent(cfg),
+      },
+      state: experimentRiskState,
+    });
+    if (kill.flatten && (kill.flatten.physicalAttempt ?? 0) > 0) {
+      emitExp("REDUCTION_SUBMITTED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "classic-grid",
+        error_code: kill.flatten.reasonCode,
+      });
+    }
+    if (kill.verifiedFlat) {
+      emitExp("REDUCTION_VERIFIED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "classic-grid",
+      });
+    } else {
+      emitExp("REDUCTION_FAILED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "classic-grid",
+        error_code: kill.flatten?.reasonCode || kill.lifecycle,
+      });
+    }
+    experimentRiskState = kill.state;
+    return "halt";
+  }
   if (decision.halt || persistenceFailed) {
     const haltReasons = persistenceFailed
       ? Array.from(new Set([...decision.reasons, "RISK_STATE_PERSIST_FAILED"]))
@@ -200,6 +381,7 @@ let experimentRiskState: ExperimentRiskState = emptyRiskState();
 let experimentRestartCount = 0;
 let experimentScopeKey = "";
 let experimentLease: RuntimeLease | null = null;
+let experimentSessionAllowsTrading = false;
 let experimentOwnershipPrefix = "";
 
 function assertExperimentLeaseCurrent(cfg: RuntimeConfig): void {
@@ -216,6 +398,8 @@ type VenueRuntime = {
   active: Map<string, Tracked>;
   completedRungs: number;
   gridProfit: number;
+  estimatedCompletedRungs: number;
+  estimatedGridProfit: number;
   built: BuiltGrid | null;
   params: GridParams | null;
   anchorMid: number;
@@ -365,6 +549,11 @@ async function tickOne(
   cfg: RuntimeConfig
 ): Promise<void> {
   assertExperimentLeaseCurrent(cfg);
+  if (cfg.experiment.enabled && experimentRiskState.halted && !(rt.params && rt.built)) {
+    const snap = await rt.ex.snapshot(market);
+    await applyExperimentGuards({ rt, market, cfg, snap });
+    return;
+  }
   // Pause suppresses strategy writes, but hard-risk evaluation and kill remain active.
   if (isBotPaused()) {
     if (!rt.params || !rt.built) {
@@ -470,22 +659,149 @@ async function tickOne(
     });
     return;
   }
-  const plan = planFromFillsAndSeed({
-    market,
-    mid,
-    levels: built.levels,
-    spacing: built.spacing,
-    mode: g.mode,
-    sizeBase: g.sizeBase,
-    openOrders: snap.openOrders,
-    prevActive: rt.active,
-    maxWrites: g.maxWritesPerTick,
-    seeded: rt.seeded,
-    maxOpenOrders: g.maxOpenOrders,
-    skipBand: g.skipBand,
-    ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,
-    anchorEpoch: rt.anchorEpoch,
-  });
+  const openIds = new Set(snap.openOrders.map((order) => order.id));
+  for (const [id, prev] of rt.active) {
+    if (!openIds.has(id)) {
+      emitExp("ORDER_DISAPPEARED", {
+        venue: rt.ex.id,
+        symbol: market,
+        source: "inferred",
+        order_id: id,
+        side: prev.side,
+        order_price: prev.price,
+        grid_level: prev.levelIndex,
+      });
+    }
+  }
+  let strategyLedgerPath: string | null = null;
+  let strategyIdentity: ReturnType<typeof strategyLedgerIdentity> | null = null;
+  let strategyIngestProven = true;
+  let replacementObligations: ReturnType<typeof plannerObligationsFromLedger> = [];
+  let replacementSizes: ReturnType<typeof replacementSizeByClientOrderId> = {};
+  let forceCancelOnly = false;
+  let authoritativeFilled: ReturnType<typeof plannerFilledFromLedger> = [];
+  let authoritativeCompletedRungs = 0;
+  if (typeof rt.ex.drainExecutionJournal === "function") {
+    const drain = rt.ex.drainExecutionJournal();
+    if (cfg.experiment.enabled) {
+      strategyIdentity = strategyLedgerIdentity({
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        venue: rt.ex.id,
+        market,
+        anchorEpoch: rt.anchorEpoch,
+      });
+      strategyLedgerPath = resolveStrategyLedgerPath({
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        venue: rt.ex.id,
+        market,
+        anchorEpoch: rt.anchorEpoch,
+      });
+      const ingested = ingestAuthoritativeDrain({
+        path: strategyLedgerPath,
+        identity: strategyIdentity,
+        drain,
+        ownershipPrefix: experimentOwnershipPrefix,
+        levels: built.levels,
+        spacing: built.spacing,
+        sizeBase: g.sizeBase,
+        mode: g.mode,
+        openOrders: snap.openOrders,
+      });
+      strategyIngestProven = ingested.proven;
+      if (!ingested.proven) {
+        forceCancelOnly = true;
+        experimentSessionAllowsTrading = false;
+        try {
+          markRuntimeSessionReconciliationRequired({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+            reasonCodes: [ingested.diagnosticCode || "STRATEGY_LEDGER_DURABILITY_UNPROVEN"],
+          });
+        } catch { /* leftover OPEN still blocks the next start */ }
+        for (const fault of drain.faults) {
+          emitExp("EXECUTION_RECONCILIATION_REQUIRED", {
+            source: "classic-grid",
+            error_code: fault.code,
+            venue: rt.ex.id,
+            symbol: market,
+          });
+        }
+      } else if (ingested.ledger) {
+        const metrics = authoritativeMetrics(ingested.ledger);
+        rt.completedRungs = metrics.completedRungs;
+        rt.gridProfit = metrics.grossProfitUsd;
+        replacementObligations = plannerObligationsFromLedger(ingested.ledger);
+        replacementSizes = replacementSizeByClientOrderId(ingested.ledger);
+        forceCancelOnly = ingested.ledger.reconciliationRequired;
+        authoritativeFilled = plannerFilledFromLedger(ingested.ledger);
+        authoritativeCompletedRungs = ingested.ledger.authoritativeCompletedRungs;
+        let published: string[] = [];
+        try {
+          published = publishExecutionJournal(
+            (event, fields) => emitExp(event, { venue: rt.ex.id, symbol: market, ...fields }),
+            drain,
+          );
+        } catch {
+          published = [];
+        }
+        const ackKeys = published.filter((key) => ingested.ackEligibleDedupeKeys.includes(key));
+        if (ackKeys.length > 0) {
+          rt.ex.acknowledgeExecutionJournal?.(ackKeys);
+        }
+        if (strategyLedgerPath && strategyIdentity) {
+          const reconciled = applyReplacementDispositions({
+            path: strategyLedgerPath,
+            identity: strategyIdentity,
+            applyResult: { placed: 0, cancelled: 0, failed: 0, errors: [] },
+            placedClientOrderIds: [],
+            openOrders: snap.openOrders,
+          });
+          const liveLedger = reconciled.proven && reconciled.ledger ? reconciled.ledger : ingested.ledger;
+          replacementObligations = plannerObligationsFromLedger(liveLedger);
+          replacementSizes = replacementSizeByClientOrderId(liveLedger);
+          forceCancelOnly = liveLedger.reconciliationRequired || !reconciled.proven;
+          authoritativeFilled = plannerFilledFromLedger(liveLedger);
+          authoritativeCompletedRungs = liveLedger.authoritativeCompletedRungs;
+          const liveMetrics = authoritativeMetrics(liveLedger);
+          rt.completedRungs = liveMetrics.completedRungs;
+          rt.gridProfit = liveMetrics.grossProfitUsd;
+        }
+      }
+    } else {
+      const published = publishExecutionJournal(
+        (event, fields) => emitExp(event, { venue: rt.ex.id, symbol: market, ...fields }),
+        drain,
+      );
+      rt.ex.acknowledgeExecutionJournal?.(published);
+    }
+  }
+  const plan = applyPlannerIntentGate(
+    planFromFillsAndSeed({
+      market,
+      mid,
+      levels: built.levels,
+      spacing: built.spacing,
+      mode: g.mode,
+      sizeBase: g.sizeBase,
+      openOrders: snap.openOrders,
+      prevActive: rt.active,
+      maxWrites: g.maxWritesPerTick,
+      seeded: rt.seeded,
+      maxOpenOrders: g.maxOpenOrders,
+      skipBand: g.skipBand,
+      ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,
+      anchorEpoch: rt.anchorEpoch,
+      replacementObligations,
+      replacementSizes,
+      forceCancelOnly,
+      authoritativeFilled,
+      authoritativeCompletedRungs,
+    })
+  );
   if (cfg.experiment.enabled) {
     const worstAfterBatch = worstCaseGrossNotionalUsd({
       positionQty: snap.position,
@@ -512,7 +828,7 @@ async function tickOne(
     plan.intents = filterRiskIncreasingIntents(plan.intents, {
       halt: false,
       reduceOnly: true,
-      reasons: ["ACTUAL_NOTIONAL_CAP"],
+      reasons: ["PLANNED_NOTIONAL_CAP"],
     });
   }
 
@@ -541,8 +857,8 @@ async function tickOne(
             openOrders: snap.openOrders,
           });
         } else {
-          rt.completedRungs += 1;
-          rt.gridProfit += perRung;
+          rt.estimatedCompletedRungs += 1;
+          rt.estimatedGridProfit += perRung;
           void tgClose({
             venue: rt.ex.id,
             kind,
@@ -586,6 +902,33 @@ async function tickOne(
       }
     }
     assertExperimentLeaseCurrent(cfg);
+    const replacementCids = plan.intents
+      .filter((intent): intent is Extract<typeof intent, { type: "place" }> => intent.type === "place")
+      .map((intent) => String(intent.order.clientOrderId || ""))
+      .filter((cid) => cid.includes("-r-"));
+    if (cfg.experiment.enabled && strategyLedgerPath && strategyIdentity && replacementCids.length) {
+      const submitting = markObligationsSubmitting({
+        path: strategyLedgerPath,
+        identity: strategyIdentity,
+        clientOrderIds: replacementCids,
+      });
+      if (!submitting.proven) {
+        plan.intents = plan.intents.filter((intent) => intent.type === "cancel");
+        forceCancelOnly = true;
+        try {
+          markRuntimeSessionReconciliationRequired({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+            reasonCodes: [submitting.diagnosticCode || "STRATEGY_LEDGER_DURABILITY_UNPROVEN"],
+          });
+        } catch { /* fail closed */ }
+      }
+    }
+    if (!strategyIngestProven) {
+      plan.intents = plan.intents.filter((intent) => intent.type === "cancel");
+    }
     const result = await rt.ex.apply(plan.intents);
     if (result.placed) {
       emitExp("ORDER_ACK", {
@@ -611,20 +954,37 @@ async function tickOne(
         error_code: "APPLY_FAILED",
       });
     }
-    if (result.failed || result.errors.length || result.ambiguous) {
-      // Do not advance local intent state after a partial/ambiguous apply. A fresh
-      // exchange read is required before the next planner pass.
-      try { await rt.ex.snapshot(market); } catch { /* next tick remains unseeded */ }
+    let observedOrders = snap.openOrders;
+    if (result.failed || result.errors.length || result.ambiguous || replacementCids.length) {
+      try {
+        observedOrders = (await rt.ex.snapshot(market)).openOrders;
+      } catch { /* next tick remains unseeded */ }
     }
-  }
-  for (const f of plan.filled) {
-    emitExp("FILL", {
-      venue: rt.ex.id,
-      symbol: market,
-      side: f.side,
-      order_price: f.price,
-      grid_level: f.levelIndex,
-    });
+    if (cfg.experiment.enabled && strategyLedgerPath && strategyIdentity && replacementCids.length) {
+      const completed = applyReplacementDispositions({
+        path: strategyLedgerPath,
+        identity: strategyIdentity,
+        applyResult: result,
+        placedClientOrderIds: replacementCids,
+        openOrders: observedOrders,
+      });
+      if (!completed.proven) {
+        applyReliable = false;
+        try {
+          markRuntimeSessionReconciliationRequired({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: experimentLease ? String(experimentLease.generation) : "",
+            reasonCodes: [completed.diagnosticCode || "STRATEGY_LEDGER_DURABILITY_UNPROVEN"],
+          });
+        } catch { /* fail closed */ }
+      } else if (completed.ledger) {
+        const metrics = authoritativeMetrics(completed.ledger);
+        rt.completedRungs = metrics.completedRungs;
+        rt.gridProfit = metrics.grossProfitUsd;
+      }
+    }
   }
 
   if (applyReliable) {
@@ -680,12 +1040,17 @@ export async function runLoop(opts?: {
   once?: boolean;
   /** Offline fault-injection seam. It can only force a fail-closed startup error. */
   lifecycleFaultAt?: RunLoopLifecycleFaultPoint;
+  createExecutor?: ExecutorFactory;
+  refreshOfficialStats?: LoopRuntimeBindings["refreshOfficialStats"];
+  getOfficialCache?: LoopRuntimeBindings["getOfficialCache"];
 }): Promise<void> {
+  await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
   const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.dryRun ? "dry-run" : "")).trim();
   experimentScopeKey = `${accountScope}:${cfg.venues.join("+")}:${cfg.markets.join("+")}`;
   experimentOwnershipPrefix = `cg:${cfg.experiment.id}:`;
+  experimentSessionAllowsTrading = false;
   const abortController = new AbortController();
   let leaseHeartbeat: RuntimeLeaseHeartbeat | null = null;
   let leaseLossError: unknown = null;
@@ -738,17 +1103,38 @@ export async function runLoop(opts?: {
       },
     });
     injectLifecycleFault("BEFORE_RISK_LOAD");
-    experimentRiskState = acknowledgeHaltIfRequested(
-      cfg.experiment.id,
-      loadRiskState(cfg.experiment.id, undefined, experimentScopeKey)
-    );
-    experimentRiskState = {
-      ...experimentRiskState,
+    const session = beginRuntimeSession({
+      experimentDir: experimentDir(cfg.experiment.id),
+      experimentId: cfg.experiment.id,
       scopeKey: experimentScopeKey,
       leaseGeneration: String(experimentLease.generation),
-    };
-    experimentLease.assertCurrent();
-    persistRiskState(cfg.experiment.id, experimentRiskState);
+    });
+    experimentSessionAllowsTrading = session.allowsTrading;
+    if (!session.allowsTrading) {
+      console.error(`[experiment] startup fail-closed: ${session.reasonCode || "RECONCILIATION_REQUIRED"}`);
+      experimentRiskState = latchForcedHaltInMemory(
+        cfg.experiment.id,
+        loadRiskState(cfg.experiment.id, undefined, experimentScopeKey),
+        session.reasonCode || "RECONCILIATION_REQUIRED"
+      );
+    } else {
+      experimentLease.assertCurrent();
+      experimentRiskState = acknowledgeHaltIfRequested(
+        cfg.experiment.id,
+        loadRiskState(cfg.experiment.id, undefined, experimentScopeKey),
+        undefined,
+        {
+          activeLease: {
+            generation: String(experimentLease.generation),
+            scopeKey: experimentScopeKey,
+            assertCurrent: () => experimentLease!.assertCurrent(),
+          },
+          sessionAllowsClear: true,
+          assertLeaseCurrent: () => experimentLease!.assertCurrent(),
+        }
+      );
+      experimentLease.assertCurrent();
+    }
     if (experimentRiskState.halted) {
       console.warn(
         `[experiment] HALTED ${experimentRiskState.haltStatus} reasons=${experimentRiskState.haltReasons.join(",")}; set EXPERIMENT_HALT_ACK=${experimentRiskState.haltId} once to resume`
@@ -861,19 +1247,36 @@ export async function runLoop(opts?: {
     const prev = saved[venue];
     if (prev && (prev.completedRungs > 0 || prev.gridProfit > 0)) {
       console.log(
-        `[${venue}] restore ledger rungs=${prev.completedRungs} profit≈${prev.gridProfit.toFixed(4)}`
+        `[${venue}] restore estimated rungs=${prev.completedRungs} profit≈${prev.gridProfit.toFixed(4)}`
       );
     }
     const ex = createExecutor(venue, cfg.dryRun);
     if (cfg.experiment.enabled && experimentLease) {
       ex.setLeaseGeneration?.(experimentLease.generation);
     }
+    if (cfg.experiment.enabled) {
+      const market = cfg.markets[0] || "BTC";
+      ex.setExecutionCursorBind?.({
+        path: resolveExecutionCursorPath({
+          experimentId: cfg.experiment.id,
+          scopeKey: experimentScopeKey,
+          venue,
+          market,
+        }),
+        experimentId: cfg.experiment.id,
+        scopeKey: experimentScopeKey,
+        venue,
+        market,
+      });
+    }
     runtimes.push({
       ex,
       seeded: false,
       active: new Map(),
-      completedRungs: prev?.completedRungs || 0,
-      gridProfit: prev?.gridProfit || 0,
+      completedRungs: 0,
+      gridProfit: 0,
+      estimatedCompletedRungs: prev?.completedRungs || 0,
+      estimatedGridProfit: prev?.gridProfit || 0,
       built: null,
       params: null,
       anchorMid: 0,
@@ -1040,14 +1443,27 @@ export async function runLoop(opts?: {
     leaseHeartbeat?.stop();
     leaseHeartbeat = null;
     if (experimentLease) {
+      try {
+        if (experimentSessionAllowsTrading && !isForcedHaltInMemoryOnly(cfg.experiment.id)) {
+          experimentLease.assertCurrent();
+          completeRuntimeSession({
+            experimentDir: experimentDir(cfg.experiment.id),
+            experimentId: cfg.experiment.id,
+            scopeKey: experimentScopeKey,
+            leaseGeneration: String(experimentLease.generation),
+          });
+        }
+      } catch { /* unclean OPEN / RECONCILIATION_REQUIRED remains durable */ }
       await experimentLease.release();
       experimentLease = null;
     }
+    experimentSessionAllowsTrading = false;
     abortController.abort();
   }
 }
 
-export async function runStatus(): Promise<void> {
+export async function runStatus(opts?: LoopRuntimeBindings): Promise<void> {
+  await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
   const dry = cfg.dryRun;
   if (dry) {
@@ -1084,7 +1500,8 @@ export async function runStatus(): Promise<void> {
   }
 }
 
-export async function runFlat(): Promise<void> {
+export async function runFlat(opts?: LoopRuntimeBindings): Promise<void> {
+  await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
   assertLiveAllowed(cfg);
   if (cfg.dryRun) {
