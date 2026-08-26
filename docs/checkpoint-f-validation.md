@@ -1,6 +1,6 @@
-# Checkpoint F validation after CI security hardening corrective 2
+# Checkpoint F validation after current-byte security closure (corrective 3)
 
-**Date:** 2026-08-25
+**Date:** 2026-08-26
 **Repository:** `danny0971haha/classic-grid`
 **Branch:** `experiment/classic-v0.2-100u-safety`
 **Draft PR:** `#3`
@@ -14,6 +14,7 @@ CHECKPOINT_F_CI_HARDENING_HEAD=5116b2a02d0369e2122d69747f3cb39ccbb89ab8
 CHECKPOINT_F_CI_HARDENING_HEAD_DISPOSITION=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_1=REJECT
 CHECKPOINT_F_CI_HARDENING_CORRECTIVE_2=ACCEPT_AT_EXACT_HEAD
+CHECKPOINT_F_CI_HARDENING_CORRECTIVE_3=REVIEW_CANDIDATE
 CHECKPOINT_F_CURRENT_HEAD_ACCEPTED=NO
 CHECKPOINT_F_SELF_DECLARED_PASS=NO
 DEPENDENCY_REMEDIATION=BLOCKED
@@ -28,7 +29,7 @@ DEPLOYMENT_AUTHORIZED=NO
 NEXT_CHECKPOINT_AUTHORIZED=NO
 ```
 
-Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That acceptance does not transfer onto later CI/supply-chain HEADs. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` and rejected Corrective 1. This corrective is a review candidate for recursive GitHub Actions trust-boundary closure and a documented dependency-remediation assessment only. Checkpoint F strategy, risk, execution, recovery, journal, planner, and exchange-adapter implementation is unchanged and remains accepted at the implementation base above.
+Independent review accepted Checkpoint F **implementation** at `79c88bd08eaf96d069b7eaf947feb7b70739b551`. That acceptance does not transfer onto later CI/supply-chain HEADs. Independent review rejected CI hardening HEAD `5116b2a02d0369e2122d69747f3cb39ccbb89ab8` and rejected Corrective 1. Corrective 2 was accepted at its exact HEAD for recursive GitHub Actions trust-boundary closure. **This current-byte security-closure corrective (Corrective 3) is the current review candidate.** It does not self-declare PASS. Checkpoint F strategy, risk, execution, recovery, journal, planner, and exchange-adapter implementation is unchanged and remains accepted at the implementation base above.
 
 Schema `classic-v0.2-checkpoint-f/2` is unchanged. `tools/checkpoint-e-evidence.ts` and `tools/checkpoint-f-evidence.ts` were not modified.
 

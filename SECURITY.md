@@ -9,6 +9,7 @@
 - The Extended-only canary artifact is a separate dependency boundary. A zero-High canary lockfile is not global repository clearance.
 
 ```text
+GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
 DEPENDENCY_SECURITY_CLEARANCE=NO
 LIVE_RELEASE_BLOCKED=YES
 LIVE_EXCHANGE_WRITE_AUTHORIZED=NO

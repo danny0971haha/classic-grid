@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/security
-          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts test/security/extended-canary-boundary.test.ts \
+          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts test/security/extended-canary-boundary.test.ts test/security/source-policy.test.ts test/security/canary-manifest-strict.test.ts test/security/canary-artifact-content.test.ts \
             | node --import tsx scripts/security/audit-baseline.ts sanitize-log \
             > artifacts/security/security-checker-tests.log
       - name: Dependency audit policy
@@ -105,7 +105,7 @@ jobs:
           do
             test -s "$f"
           done
-      - name: Production artifact smoke and forbidden source scan
+      - name: Production artifact smoke and exact content-manifest verifier
         run: node --import tsx scripts/security/canary-artifact-smoke.ts
       - name: Whitespace check
         env:

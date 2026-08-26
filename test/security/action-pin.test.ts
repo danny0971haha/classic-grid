@@ -293,7 +293,7 @@ function assertUploadsAfterSecurityGates(workflow: string): void {
   assert.ok(firstUpload >= 0, "expected at least one upload-artifact");
   const requiredBefore = [
     "Extended canary dependency boundary",
-    "Production artifact smoke and forbidden source scan",
+    "Production artifact smoke and exact content-manifest verifier",
     "Whitespace check",
     "Working tree clean",
     "git diff --check",

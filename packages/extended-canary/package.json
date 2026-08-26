@@ -11,8 +11,10 @@
   "engines": {
     "node": ">=20"
   },
-  "files": [
+    "files": [
     "package-lock.json",
+    "file-manifest.json",
+    "content-manifest.json",
     "README.md",
     "src",
     "vendor",

@@ -4,37 +4,35 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  type CanaryFileManifest,
+  parseCanaryManifestFile,
+} from "./canary-manifest-schema.js";
+import { writeContentManifest, verifyExtractedTree, verifyTarballContent } from "./content-manifest.js";
+import {
+  FORBIDDEN_CANARY_PACKAGES,
+  FORBIDDEN_NESTED_WS_PATH,
+  isForbiddenModuleSpecifier,
+  normalizeModuleSpecifier,
+} from "./forbidden-specifiers.js";
+import { assertCanaryModuleGraph, parseModuleGraphLog, type ModuleGraphRecord } from "./module-graph.js";
+import { analyzeCanarySourcePolicy, sourcePolicyHits } from "./source-policy.js";
+
+export {
+  FORBIDDEN_CANARY_PACKAGES,
+  FORBIDDEN_NESTED_WS_PATH,
+  isForbiddenModuleSpecifier,
+  normalizeModuleSpecifier,
+};
+export type { CanaryFileManifest };
 
 export const CANARY_PACKAGE_DIR = "packages/extended-canary";
 export const CANARY_MANIFEST_RELATIVE = `${CANARY_PACKAGE_DIR}/file-manifest.json`;
 export const CANARY_PACKAGE_JSON_RELATIVE = `${CANARY_PACKAGE_DIR}/package.json`;
 export const CANARY_LOCKFILE_RELATIVE = `${CANARY_PACKAGE_DIR}/package-lock.json`;
 export const CANARY_ENTRYPOINT_RELATIVE = "src/cli/run-extended-canary.ts";
-export const FORBIDDEN_CANARY_PACKAGES = [
-  "@n1xyz/nord-ts",
-  "@n1xyz/proton",
-  "@solana/web3.js",
-  "@solana/buffer-layout-utils",
-  "@solana/spl-token",
-  "@nadohq/client",
-  "@nadohq/shared",
-  "@nadohq/engine-client",
-  "@nadohq/indexer-client",
-  "@nadohq/mobile-client",
-  "@nadohq/trigger-client",
-  "axios",
-  "bigint-buffer",
-  "viem",
-] as const;
-export const FORBIDDEN_NESTED_WS_PATH = "node_modules/viem/node_modules/ws";
 export const CANARY_VENUE_UNAVAILABLE = "CANARY_VENUE_UNAVAILABLE";
 const FIXED_MTIME = new Date("2026-01-01T00:00:00.000Z");
-
-export type CanaryFileManifest = {
-  schemaVersion: string;
-  files: string[];
-  forbiddenSourcePaths: string[];
-};
 
 export function repoRootFromHere(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -45,12 +43,7 @@ export function sha256File(filePath: string): string {
 }
 
 export function readCanaryManifest(root = repoRootFromHere()): CanaryFileManifest {
-  const raw = JSON.parse(fs.readFileSync(path.join(root, CANARY_MANIFEST_RELATIVE), "utf8")) as CanaryFileManifest;
-  if (raw.schemaVersion !== "classic-v0.2-extended-canary-file-manifest/1") {
-    throw new Error("CANARY_MANIFEST_SCHEMA");
-  }
-  if (!Array.isArray(raw.files) || raw.files.length < 1) throw new Error("CANARY_MANIFEST_EMPTY");
-  return raw;
+  return parseCanaryManifestFile(root, CANARY_MANIFEST_RELATIVE);
 }
 
 export function forbiddenPackagesPresentInLockfile(lockfileRaw: string): string[] {
@@ -64,58 +57,6 @@ export function forbiddenPackagesPresentInLockfile(lockfileRaw: string): string[
     present.push(FORBIDDEN_NESTED_WS_PATH);
   }
   return [...new Set(present)].sort();
-}
-
-export function normalizeModuleSpecifier(specifier: string): string {
-  let value = specifier.trim();
-  if (/^file:/i.test(value)) {
-    try {
-      value = fileURLToPath(value);
-    } catch {
-      value = value.replace(/^file:\/\//i, "");
-      try {
-        value = decodeURIComponent(value);
-      } catch {
-        /* keep undecodable file URL tail */
-      }
-    }
-  } else {
-    try {
-      value = decodeURIComponent(value);
-    } catch {
-      /* keep original when percent-encoding is malformed */
-    }
-  }
-  value = value.replaceAll("\\", "/").replace(/\/{2,}/g, "/");
-  return path.posix.normalize(value);
-}
-
-function specifierMatchesForbiddenPackage(normalized: string, name: string): boolean {
-  return (
-    normalized === name ||
-    normalized.startsWith(`${name}/`) ||
-    normalized === `node_modules/${name}` ||
-    normalized.startsWith(`node_modules/${name}/`) ||
-    normalized.includes(`/node_modules/${name}/`) ||
-    normalized.endsWith(`/node_modules/${name}`)
-  );
-}
-
-export function isForbiddenModuleSpecifier(specifier: string): boolean {
-  const raw = specifier.replaceAll("\\", "/");
-  const normalized = normalizeModuleSpecifier(specifier);
-  const candidates = new Set([specifier, raw, normalized]);
-  for (const candidate of candidates) {
-    for (const name of FORBIDDEN_CANARY_PACKAGES) {
-      if (specifierMatchesForbiddenPackage(candidate, name) || candidate.startsWith(`${name}/`)) {
-        return true;
-      }
-    }
-    if (candidate.includes("viem/node_modules/ws") || candidate.includes("/viem/node_modules/ws")) {
-      return true;
-    }
-  }
-  return false;
 }
 
 const FORBIDDEN_CANARY_SOURCE_BASENAMES = [
@@ -282,13 +223,12 @@ export function scanCanarySourceText(source: string, rel = ""): string[] {
 
 export function scanCanaryTree(root = repoRootFromHere()): string[] {
   const manifest = readCanaryManifest(root);
-  const hits: string[] = [];
-  for (const rel of manifest.files) {
-    if (!rel.endsWith(".ts") && !rel.endsWith(".js")) continue;
+  const hits = sourcePolicyHits(analyzeCanarySourcePolicy(root, manifest));
+  for (const rel of manifest.runtimeFiles) {
     const text = fs.readFileSync(path.join(root, rel), "utf8");
     for (const hit of scanCanarySourceText(text, rel)) hits.push(`${rel}:${hit}`);
   }
-  return hits;
+  return [...new Set(hits)];
 }
 
 export function assertCanarySourceBoundary(root: string, rel: string): string {
@@ -362,7 +302,9 @@ export type PackedCanary = {
   stagingDir: string;
   tarballPath: string;
   tarballSha256: string;
+  tarballSha256Second: string;
   lockfileSha256: string;
+  contentManifestSha256: string;
   stagedFiles: string[];
 };
 
@@ -376,6 +318,7 @@ export function stageExtendedCanary(root = repoRootFromHere(), stagingDir?: stri
   copyFileFrozen(path.join(root, CANARY_LOCKFILE_RELATIVE), path.join(staging, "package-lock.json"));
   const readme = path.join(root, CANARY_PACKAGE_DIR, "README.md");
   if (fs.existsSync(readme)) copyFileFrozen(readme, path.join(staging, "README.md"));
+  copyFileFrozen(path.join(root, CANARY_MANIFEST_RELATIVE), path.join(staging, "file-manifest.json"));
 
   for (const rel of manifest.files) {
     const src = assertCanarySourceBoundary(root, rel);
@@ -393,47 +336,68 @@ export function stageExtendedCanary(root = repoRootFromHere(), stagingDir?: stri
   return staging;
 }
 
-export function packExtendedCanary(root = repoRootFromHere(), outDir?: string): PackedCanary {
-  const stagingDir = stageExtendedCanary(root);
-  const destDir = outDir ?? path.join(root, "artifacts", "extended-canary");
-  fs.mkdirSync(destDir, { recursive: true });
-  const packed = spawnSync("npm", ["pack", "--json", "--pack-destination", destDir], {
-    cwd: stagingDir,
-    encoding: "utf8",
-    env: { ...process.env, npm_config_update_notifier: "false" },
-  });
-  if (packed.status !== 0) {
-    throw new Error(`CANARY_PACK_FAILED:${packed.stderr || packed.stdout}`);
-  }
-  const rows = JSON.parse(packed.stdout) as Array<{ filename?: string; name?: string }>;
-  const filename = rows[0]?.filename;
-  if (!filename) throw new Error("CANARY_PACK_FILENAME_MISSING");
-  const tarballPath = path.join(destDir, filename);
-  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-canary-packfix-"));
-  const extracted = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], { encoding: "utf8" });
-  if (extracted.status !== 0) throw new Error(`CANARY_PACK_EXTRACT_FAILED:${extracted.stderr}`);
+function tarStagingAsNpmPackage(stagingDir: string, tarballPath: string): void {
+  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-canary-tarwrap-"));
   const packageDir = path.join(extractDir, "package");
-  if (!fs.existsSync(packageDir)) throw new Error("CANARY_PACK_PREFIX_MISSING");
-  fs.copyFileSync(path.join(stagingDir, "package-lock.json"), path.join(packageDir, "package-lock.json"));
-  fs.utimesSync(path.join(packageDir, "package-lock.json"), FIXED_MTIME, FIXED_MTIME);
+  fs.mkdirSync(packageDir, { recursive: true });
+  for (const rel of listStagedFiles(stagingDir)) {
+    copyFileFrozen(path.join(stagingDir, rel), path.join(packageDir, rel));
+  }
   const retar = spawnSync("tar", ["-czf", tarballPath, "-C", extractDir, "package"], {
     encoding: "utf8",
     env: { ...process.env, COPYFILE_DISABLE: "1" },
   });
+  fs.rmSync(extractDir, { recursive: true, force: true });
   if (retar.status !== 0) throw new Error(`CANARY_PACK_RETAR_FAILED:${retar.stderr}`);
+}
+
+function packExtendedCanaryOnce(root: string, destDir: string): PackedCanary {
+  const stagingDir = stageExtendedCanary(root);
+  const written = writeContentManifest(stagingDir);
+  fs.mkdirSync(destDir, { recursive: true });
+  const tarballPath = path.join(destDir, "classic-grid-extended-canary-0.2.0.tgz");
+  tarStagingAsNpmPackage(stagingDir, tarballPath);
   const listed = spawnSync("tar", ["-tzf", tarballPath], { encoding: "utf8" });
   if (listed.status !== 0 || !(listed.stdout || "").includes("package-lock.json")) {
     throw new Error("CANARY_PACK_LOCKFILE_MISSING");
   }
+  if (!(listed.stdout || "").includes("file-manifest.json")) throw new Error("CANARY_PACK_POLICY_MANIFEST_MISSING");
+  if (!(listed.stdout || "").includes("content-manifest.json")) throw new Error("CANARY_PACK_CONTENT_MANIFEST_MISSING");
+  const tgz = fs.readFileSync(tarballPath);
+  const verified = verifyTarballContent(tgz, written.manifest);
+  const extractDir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-canary-extract-verify-"));
+  const extracted = spawnSync("tar", ["-xzf", tarballPath, "-C", extractDir], { encoding: "utf8" });
+  if (extracted.status !== 0) throw new Error(`CANARY_PACK_EXTRACT_FAILED:${extracted.stderr}`);
+  verifyExtractedTree(extractDir, verified.manifest);
   fs.rmSync(extractDir, { recursive: true, force: true });
-  const lockfileSha256 = sha256File(path.join(stagingDir, "package-lock.json"));
   return {
     stagingDir,
     tarballPath,
     tarballSha256: sha256File(tarballPath),
-    lockfileSha256,
+    tarballSha256Second: "",
+    lockfileSha256: sha256File(path.join(stagingDir, "package-lock.json")),
+    contentManifestSha256: verified.manifestSha256,
     stagedFiles: listStagedFiles(stagingDir),
   };
+}
+
+export function packExtendedCanary(root = repoRootFromHere(), outDir?: string): PackedCanary {
+  const destDir = outDir ?? path.join(root, "artifacts", "extended-canary");
+  fs.mkdirSync(destDir, { recursive: true });
+  for (const name of fs.readdirSync(destDir)) {
+    if (name.endsWith(".tgz")) fs.rmSync(path.join(destDir, name));
+  }
+  const first = packExtendedCanaryOnce(root, destDir);
+  const secondDir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-canary-pack-b-"));
+  const second = packExtendedCanaryOnce(root, secondDir);
+  if (first.contentManifestSha256 !== second.contentManifestSha256) {
+    throw new Error(
+      `CONTENT_MANIFEST_NOT_DETERMINISTIC:${first.contentManifestSha256}:${second.contentManifestSha256}`,
+    );
+  }
+  fs.rmSync(secondDir, { recursive: true, force: true });
+  first.tarballSha256Second = second.tarballSha256;
+  return first;
 }
 
 export type CanaryAuditCounts = {
@@ -543,6 +507,8 @@ export type CanaryProbeResult = {
   stdout: string;
   stderr: string;
   loadedModules: string[];
+  moduleGraph: ModuleGraphRecord[];
+  moduleGraphError?: string;
   forbiddenLoaded: string[];
   unexpectedNetwork: string[];
   liveExchangeWrite: boolean;
@@ -615,19 +581,34 @@ export function runCanaryOfflineProbe(p: {
       killSignal: "SIGTERM",
     },
   );
-  const loadedModules = fs.existsSync(loadLog)
-    ? fs.readFileSync(loadLog, "utf8").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-    : [];
+  let moduleGraph: ModuleGraphRecord[] = [];
+  let moduleGraphError: string | undefined;
+  const loadedModules: string[] = [];
+  if (fs.existsSync(loadLog)) {
+    const raw = fs.readFileSync(loadLog, "utf8");
+    try {
+      moduleGraph = parseModuleGraphLog(raw);
+      loadedModules.push(...moduleGraph.map((row) => row.specifier));
+    } catch (err) {
+      moduleGraphError = String(err);
+      loadedModules.push(...raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean));
+    }
+  }
   const unexpectedNetwork = fs.existsSync(netLog)
     ? fs.readFileSync(netLog, "utf8").split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
     : [];
-  const forbiddenLoaded = [...new Set(loadedModules.filter(isForbiddenModuleSpecifier))].sort();
+  const forbiddenLoaded = [...new Set([
+    ...loadedModules.filter(isForbiddenModuleSpecifier),
+    ...moduleGraph.filter((row) => isForbiddenModuleSpecifier(row.resolvedURL) || isForbiddenModuleSpecifier(row.specifier)).map((row) => row.specifier),
+  ])].sort();
   const combined = `${spawned.stdout || ""}\n${spawned.stderr || ""}`;
   return {
     exitCode: spawned.status ?? 1,
     stdout: spawned.stdout || "",
     stderr: spawned.stderr || "",
     loadedModules,
+    moduleGraph,
+    moduleGraphError,
     forbiddenLoaded,
     unexpectedNetwork,
     liveExchangeWrite: /LIVE_EXCHANGE_WRITE=YES/.test(combined) || /placeLimitOrder|eth_sendRawTransaction/.test(combined),
@@ -640,6 +621,7 @@ export type CanaryVerification = {
   codes: string[];
   lockfileSha256: string;
   artifactSha256: string;
+  contentManifestSha256: string;
   audit: CanaryAuditCounts;
   forbiddenInLockfile: string[];
   forbiddenInstalled: string[];
@@ -652,6 +634,7 @@ export type CanaryVerification = {
   probeExitCode: number;
   unavailableVenueExitCode: number;
   unavailableVenueError: string;
+  moduleGraphHits: string[];
 };
 
 export function verifyExtendedCanary(root = repoRootFromHere()): CanaryVerification {
@@ -680,12 +663,23 @@ export function verifyExtendedCanary(root = repoRootFromHere()): CanaryVerificat
   const unavailableText = `${unavailable.stdout}\n${unavailable.stderr}`;
   const codes: string[] = [];
   const sourceHits = scanCanaryTree(root);
+  let moduleGraphHits: string[] = [];
+  if (probe.moduleGraphError) {
+    codes.push("MODULE_GRAPH_MALFORMED");
+  } else {
+    moduleGraphHits = assertCanaryModuleGraph({
+      records: probe.moduleGraph,
+      canaryRoot,
+      repoRoot: root,
+    });
+  }
   if (forbiddenInLockfile.length) codes.push("FORBIDDEN_IN_LOCKFILE");
   if (forbiddenInstalled.length) codes.push("FORBIDDEN_INSTALLED");
   if (probe.forbiddenLoaded.length) codes.push("FORBIDDEN_LOADED");
   if (sourceHits.length) codes.push("FORBIDDEN_SOURCE_SCAN");
   if (probe.unexpectedNetwork.length) codes.push("UNEXPECTED_NETWORK");
   if (secretLikeFiles.length) codes.push("SECRET_LIKE_FILES");
+  if (moduleGraphHits.length) codes.push("ROOT_REPOSITORY_RESOLUTION");
   if (audit.counts.critical !== 0) codes.push("CANARY_AUDIT_CRITICAL");
   if (audit.counts.high !== 0) codes.push("CANARY_AUDIT_HIGH");
   if (probe.exitCode !== 0) codes.push("CANARY_DRY_RUN_FAILED");
@@ -705,6 +699,7 @@ export function verifyExtendedCanary(root = repoRootFromHere()): CanaryVerificat
     codes: codes.length ? codes : ["CHECKS_OK"],
     lockfileSha256,
     artifactSha256: packed.tarballSha256,
+    contentManifestSha256: packed.contentManifestSha256,
     audit: audit.counts,
     forbiddenInLockfile,
     forbiddenInstalled,
@@ -717,5 +712,6 @@ export function verifyExtendedCanary(root = repoRootFromHere()): CanaryVerificat
     probeExitCode: probe.exitCode,
     unavailableVenueExitCode: unavailable.exitCode ?? 1,
     unavailableVenueError: unavailableText.slice(0, 500),
+    moduleGraphHits,
   };
 }

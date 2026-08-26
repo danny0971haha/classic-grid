@@ -134,7 +134,7 @@ describe("extended canary dependency boundary (unit)", () => {
     const security = fs.readFileSync(path.join(ROOT, "SECURITY.md"), "utf8");
     const baseline = fs.readFileSync(path.join(ROOT, "docs/security-audit-baseline.md"), "utf8");
     const corrective = fs.readFileSync(
-      path.join(ROOT, "docs/classic-v0.2-dependency-boundary-corrective-1.md"),
+      path.join(ROOT, "docs/classic-v0.2-checkpoint-f-ci-hardening-corrective-3.md"),
       "utf8",
     );
     for (const text of [security, baseline, corrective]) {
