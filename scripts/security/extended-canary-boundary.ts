@@ -201,6 +201,27 @@ export function scanCanarySourceText(source: string, rel = ""): string[] {
   if (/\bcreateRequire\b/.test(source)) {
     hits.push("createRequire");
   }
+  if (/\bprocess\s*(?:\[\s*["']getBuiltinModule["']\s*\]|\.\s*getBuiltinModule\b)/.test(source)) {
+    hits.push("getBuiltin");
+  }
+  if (/\bModule\s*(?:\[\s*["']_load["']\s*\]|\.\s*_load\b)/.test(source)) {
+    hits.push("module-load");
+  }
+  if (/\bmodule\s*(?:\[\s*["']require["']\s*\]|\.\s*require\b)/.test(source)) {
+    hits.push("module-require");
+  }
+  if (/\bimport\s*\.\s*meta\s*\.\s*resolve\b/.test(source)) {
+    hits.push("import-meta-resolve");
+  }
+  if (/\bReflect\s*\.\s*construct\b/.test(source)) {
+    hits.push("reflect-construct");
+  }
+  if (/\{\s*(?:require|eval)\s*(?::|\})/.test(source)) {
+    hits.push("destructure-loader");
+  }
+  if (/(?:globalThis|global|process|module|Module|Reflect)\s*\[[^\]]+\]\s*\(/.test(source)) {
+    hits.push("computed-dispatch");
+  }
   for (const match of source.matchAll(/\bfrom\s+["']([^"']+)["']/g)) {
     const specifier = match[1] ?? "";
     if (!specifier || isAllowedLoopFallback(rel, specifier)) continue;

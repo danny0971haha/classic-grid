@@ -24,6 +24,14 @@ type BindingKind =
   | "eval"
   | "function-ctor"
   | "createRequire"
+  | "getBuiltin"
+  | "module-load"
+  | "module-require"
+  | "import-meta-resolve"
+  | "reflect-construct"
+  | "process-binding"
+  | "process-dlopen"
+  | "main-module"
   | "path-ns"
   | "named-url"
   | "const-string"
@@ -72,6 +80,27 @@ const FUNCTION_CTOR_NAMES = new Set([
   "GeneratorFunction",
   "AsyncGeneratorFunction",
 ]);
+
+const DANGEROUS_CALLABLE_KINDS = new Set<BindingKind>([
+  "require",
+  "eval",
+  "function-ctor",
+  "createRequire",
+  "getBuiltin",
+  "module-load",
+  "module-require",
+  "import-meta-resolve",
+  "reflect-construct",
+  "process-binding",
+  "process-dlopen",
+  "main-module",
+]);
+
+const SENSITIVE_ROOT_NAMES = new Set(["globalThis", "global", "process", "module", "Module", "Reflect"]);
+
+function isDangerousCallableKind(kind: BindingKind | undefined): kind is BindingKind {
+  return kind !== undefined && DANGEROUS_CALLABLE_KINDS.has(kind);
+}
 
 function finding(file: string, code: string, detail: string): SourcePolicyFinding {
   return { schemaVersion: SOURCE_POLICY_SCHEMA, file, code, detail };
@@ -154,11 +183,6 @@ function foldedString(node: ts.Expression, scope: Scope): string | undefined {
     return out;
   }
   return undefined;
-}
-
-function foldedPropertyName(node: ts.MemberName | ts.Expression, scope: Scope): string | undefined {
-  if (ts.isIdentifier(node) || ts.isPrivateIdentifier(node) || ts.isStringLiteralLike(node)) return node.text;
-  return foldedString(node, scope);
 }
 
 function isImportCall(node: ts.CallExpression): boolean {
@@ -331,64 +355,159 @@ function isApprovedFallbackCall(
   );
 }
 
-function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | "import-meta-resolve" | "module-load" | "module-require" | "getBuiltin" | "process-binding" | "process-dlopen" | "main-module" | "reflect-construct" | undefined {
-  if (ts.isParenthesizedExpression(expr)) return calleeKind(expr.expression, scope);
+function unwrapExpr(expr: ts.Expression): ts.Expression {
+  while (true) {
+    if (ts.isParenthesizedExpression(expr)) {
+      expr = expr.expression;
+      continue;
+    }
+    if (ts.isAwaitExpression(expr)) {
+      expr = expr.expression;
+      continue;
+    }
+    if (ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr) || ts.isNonNullExpression(expr)) {
+      expr = expr.expression;
+      continue;
+    }
+    if (expr.kind === ts.SyntaxKind.TypeAssertionExpression) {
+      expr = (expr as ts.TypeAssertion).expression;
+      continue;
+    }
+    break;
+  }
+  return expr;
+}
+
+function followsAliasInit(expr: ts.Expression, scope: Scope, seen: Set<string>): ts.Expression {
+  expr = unwrapExpr(expr);
+  if (ts.isIdentifier(expr)) {
+    if (seen.has(expr.text)) return expr;
+    const b = lookup(scope, expr.text);
+    if (b?.init) {
+      seen.add(expr.text);
+      return followsAliasInit(b.init, scope, seen);
+    }
+  }
+  return expr;
+}
+
+function isImportMeta(expr: ts.Expression, scope: Scope): boolean {
+  expr = followsAliasInit(expr, scope, new Set());
+  return ts.isMetaProperty(expr)
+    && expr.keywordToken === ts.SyntaxKind.ImportKeyword
+    && expr.name.text === "meta";
+}
+
+function isNamedRoot(expr: ts.Expression, scope: Scope, names: Set<string>): boolean {
+  expr = followsAliasInit(expr, scope, new Set());
+  return ts.isIdentifier(expr) && names.has(expr.text);
+}
+
+function isGlobalThis(expr: ts.Expression, scope?: Scope): boolean {
+  if (!scope) {
+    expr = unwrapExpr(expr);
+    return ts.isIdentifier(expr) && (expr.text === "globalThis" || expr.text === "global");
+  }
+  return isNamedRoot(expr, scope, new Set(["globalThis", "global"]));
+}
+
+function isProcessObject(expr: ts.Expression, scope: Scope): boolean {
+  if (isNamedRoot(expr, scope, new Set(["process"]))) return true;
+  expr = followsAliasInit(expr, scope, new Set());
+  if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
+    const name = ts.isPropertyAccessExpression(expr)
+      ? expr.name.text
+      : foldedString(expr.argumentExpression, scope);
+    if (name === "process" && isGlobalThis(expr.expression, scope)) return true;
+  }
+  return false;
+}
+
+function isModuleObject(expr: ts.Expression, scope: Scope): boolean {
+  return isNamedRoot(expr, scope, new Set(["module"]));
+}
+
+function isModuleCtor(expr: ts.Expression, scope: Scope): boolean {
+  return isNamedRoot(expr, scope, new Set(["Module"]));
+}
+
+function isReflectObject(expr: ts.Expression, scope: Scope): boolean {
+  return isNamedRoot(expr, scope, new Set(["Reflect"]));
+}
+
+function isSensitiveDispatchRoot(expr: ts.Expression, scope: Scope): boolean {
+  if (isImportMeta(expr, scope)) return true;
+  if (isProcessObject(expr, scope)) return true;
+  return isNamedRoot(expr, scope, SENSITIVE_ROOT_NAMES);
+}
+
+function accessPropertyName(
+  expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  scope: Scope,
+): string | undefined {
+  if (ts.isPropertyAccessExpression(expr)) return expr.name.text;
+  return foldedString(expr.argumentExpression, scope);
+}
+
+function memberKind(obj: ts.Expression, name: string | undefined, scope: Scope): BindingKind | undefined {
+  obj = unwrapExpr(obj);
+  if (name === undefined) {
+    return isSensitiveDispatchRoot(obj, scope) ? "unresolved" : undefined;
+  }
+  if (name === "constructor") return "function-ctor";
+  if (FUNCTION_CTOR_NAMES.has(name) && isGlobalThis(obj, scope)) return "function-ctor";
+  if (name === "require" && isModuleObject(obj, scope)) return "module-require";
+  if (name === "require" && isGlobalThis(obj, scope)) return "require";
+  if (name === "eval" && isGlobalThis(obj, scope)) return "eval";
+  if (name === "_load" && isModuleCtor(obj, scope)) return "module-load";
+  if (name === "createRequire" && isModuleObject(obj, scope)) return "createRequire";
+  if (name === "resolve" && isImportMeta(obj, scope)) return "import-meta-resolve";
+  if (name === "construct" && isReflectObject(obj, scope)) return "reflect-construct";
+  if (name === "getBuiltinModule" && isProcessObject(obj, scope)) return "getBuiltin";
+  if (name === "binding" && isProcessObject(obj, scope)) return "process-binding";
+  if (name === "dlopen" && isProcessObject(obj, scope)) return "process-dlopen";
+  if (name === "mainModule" && isProcessObject(obj, scope)) return "main-module";
+  if (ts.isIdentifier(obj)) {
+    const b = lookup(scope, obj.text);
+    if (b?.kind === "require" && name === "resolve") return "require";
+    if (b?.kind === "createRequire") return "createRequire";
+  }
+  return undefined;
+}
+
+function destructuredPropertyName(el: ts.BindingElement, scope: Scope): string | undefined {
+  if (!el.propertyName) {
+    return ts.isIdentifier(el.name) ? el.name.text : undefined;
+  }
+  if (ts.isIdentifier(el.propertyName) || ts.isStringLiteralLike(el.propertyName) || ts.isPrivateIdentifier(el.propertyName)) {
+    return el.propertyName.text;
+  }
+  if (ts.isComputedPropertyName(el.propertyName)) {
+    return foldedString(el.propertyName.expression, scope);
+  }
+  return undefined;
+}
+
+function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | undefined {
+  expr = unwrapExpr(expr);
   if (ts.isIdentifier(expr)) {
     const b = lookup(scope, expr.text);
-    if (b) return b.kind;
+    if (b && (isDangerousCallableKind(b.kind) || b.kind === "unresolved")) return b.kind;
+    if (b) return undefined;
     if (expr.text === "require") return "require";
     if (expr.text === "eval") return "eval";
     if (FUNCTION_CTOR_NAMES.has(expr.text)) return "function-ctor";
     return undefined;
   }
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
-    const name = ts.isPropertyAccessExpression(expr)
-      ? expr.name.text
-      : foldedPropertyName(expr.argumentExpression, scope);
-    const obj = ts.isPropertyAccessExpression(expr) ? expr.expression : expr.expression;
-    if (name === "constructor") return "function-ctor";
-    if (name && FUNCTION_CTOR_NAMES.has(name) && isGlobalThis(obj)) return "function-ctor";
-    if (name === "require" && isGlobalThis(obj)) return "require";
-    if (name === "eval" && isGlobalThis(obj)) return "eval";
-    if (name === "require" && ts.isIdentifier(obj) && obj.text === "module") return "module-require";
-    if (name === "_load" && ts.isIdentifier(obj) && obj.text === "Module") return "module-load";
-    if (name === "resolve" && ts.isMetaProperty(obj)
-      && obj.keywordToken === ts.SyntaxKind.ImportKeyword && obj.name.text === "meta") {
-      return "import-meta-resolve";
-    }
-    if (name === "construct" && ts.isIdentifier(obj) && obj.text === "Reflect") return "reflect-construct";
-    if (name === "getBuiltinModule" && isProcessObject(obj, scope)) return "getBuiltin";
-    if (name === "binding" && isProcessObject(obj, scope)) return "process-binding";
-    if (name === "dlopen" && isProcessObject(obj, scope)) return "process-dlopen";
-    if (name === "mainModule" && isProcessObject(obj, scope)) return "main-module";
-    if (ts.isIdentifier(obj)) {
-      const b = lookup(scope, obj.text);
-      if (b?.kind === "require" && name === "resolve") return "require";
-      if (b?.kind === "createRequire") return "createRequire";
-    }
+    return memberKind(expr.expression, accessPropertyName(expr, scope), scope);
   }
   if (ts.isCallExpression(expr)) {
     const inner = calleeKind(expr.expression, scope);
     if (inner === "createRequire") return "require";
-    if (inner === "function-ctor") return "function-ctor";
+    if (inner === "function-ctor" || inner === "unresolved") return inner;
   }
   return undefined;
-}
-
-function isProcessObject(expr: ts.Expression, scope: Scope): boolean {
-  if (ts.isParenthesizedExpression(expr)) return isProcessObject(expr.expression, scope);
-  if (ts.isIdentifier(expr) && expr.text === "process") return true;
-  if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
-    const name = ts.isPropertyAccessExpression(expr)
-      ? expr.name.text
-      : foldedPropertyName(expr.argumentExpression, scope);
-    if (name === "process" && isGlobalThis(expr.expression)) return true;
-  }
-  return false;
-}
-
-function isGlobalThis(expr: ts.Expression): boolean {
-  return ts.isIdentifier(expr) && (expr.text === "globalThis" || expr.text === "global");
 }
 
 function loaderArgumentIsLiteral(arg: ts.Expression, scope: Scope): string | undefined {
@@ -481,8 +600,9 @@ function bindPattern(
   if (ts.isIdentifier(name)) {
     const kind = init ? expressionBindingKind(init, scope, file, findings) : "other";
     const value = init ? foldedString(init, scope) : undefined;
+    const keepKind = isDangerousCallableKind(kind) || kind === "unresolved";
     setBinding(scope, name.text, {
-      kind: value !== undefined && constDecl ? "const-string" : kind,
+      kind: value !== undefined && constDecl && !keepKind ? "const-string" : kind,
       value,
       functionId: enclosingFunction(scope).functionId,
       constDecl,
@@ -496,12 +616,44 @@ function bindPattern(
         continue;
       }
       if (el.dotDotDotToken) {
-        if (ts.isIdentifier(el.name)) {
+        if (init && isSensitiveDispatchRoot(init, scope)) {
+          findings.push(finding(file, "UNRESOLVED_COMPUTED_DISPATCH", "destructure-rest"));
+          if (ts.isIdentifier(el.name)) {
+            setBinding(scope, el.name.text, {
+              kind: "unresolved",
+              functionId: enclosingFunction(scope).functionId,
+              constDecl,
+            });
+          }
+        } else if (ts.isIdentifier(el.name)) {
           bindPattern(el.name, undefined, scope, constDecl, file, findings);
         }
         continue;
       }
-      const imported = (el.propertyName && ts.isIdentifier(el.propertyName) ? el.propertyName.text : undefined)
+      const propName = destructuredPropertyName(el, scope);
+      if (init) {
+        const kind = memberKind(init, propName, scope);
+        if (kind === "unresolved" || isDangerousCallableKind(kind)) {
+          findings.push(
+            finding(
+              file,
+              kind === "unresolved" ? "UNRESOLVED_COMPUTED_DISPATCH" : "FORBIDDEN_PRIMITIVE",
+              kind === "unresolved" ? `destructure:${el.getText()}` : String(kind),
+            ),
+          );
+          if (ts.isIdentifier(el.name)) {
+            setBinding(scope, el.name.text, {
+              kind,
+              functionId: enclosingFunction(scope).functionId,
+              constDecl,
+            });
+          } else {
+            bindPattern(el.name, undefined, scope, constDecl, file, findings);
+          }
+          continue;
+        }
+      }
+      const imported = propName
         ?? (ts.isIdentifier(el.name) ? el.name.text : undefined);
       if (imported === "createRequire") {
         findings.push(finding(file, "FORBIDDEN_PRIMITIVE", "createRequire"));
@@ -511,6 +663,7 @@ function bindPattern(
             functionId: enclosingFunction(scope).functionId,
             constDecl,
           });
+          continue;
         }
       }
       bindPattern(el.name, undefined, scope, constDecl, file, findings);
@@ -524,17 +677,22 @@ function expressionBindingKind(
   file: string,
   findings: SourcePolicyFinding[],
 ): BindingKind {
-  if (ts.isParenthesizedExpression(expr)) return expressionBindingKind(expr.expression, scope, file, findings);
-  if (ts.isIdentifier(expr)) return lookup(scope, expr.text)?.kind ?? (expr.text === "require" ? "require" : expr.text === "eval" ? "eval" : FUNCTION_CTOR_NAMES.has(expr.text) ? "function-ctor" : "other");
+  expr = unwrapExpr(expr);
+  if (ts.isIdentifier(expr)) {
+    const b = lookup(scope, expr.text);
+    if (b) return b.kind;
+    if (expr.text === "require") return "require";
+    if (expr.text === "eval") return "eval";
+    if (FUNCTION_CTOR_NAMES.has(expr.text)) return "function-ctor";
+    return "other";
+  }
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
     const kind = calleeKind(expr, scope);
-    if (kind === "function-ctor" || kind === "require" || kind === "createRequire") return kind;
-    const name = ts.isPropertyAccessExpression(expr)
-      ? expr.name.text
-      : foldedPropertyName(expr.argumentExpression, scope);
-    if (name && FUNCTION_CTOR_NAMES.has(name) && isGlobalThis(expr.expression)) return "function-ctor";
-    if (name === "require" && isGlobalThis(expr.expression)) return "require";
-    if (name === "eval" && isGlobalThis(expr.expression)) return "eval";
+    if (kind && (isDangerousCallableKind(kind) || kind === "unresolved")) return kind;
+    const name = accessPropertyName(expr, scope);
+    if (name && FUNCTION_CTOR_NAMES.has(name) && isGlobalThis(expr.expression, scope)) return "function-ctor";
+    if (name === "require" && isGlobalThis(expr.expression, scope)) return "require";
+    if (name === "eval" && isGlobalThis(expr.expression, scope)) return "eval";
   }
   if (ts.isCallExpression(expr) && isImportCall(expr)) {
     const spec = expr.arguments[0] ? foldedString(expr.arguments[0], scope) : undefined;
@@ -633,9 +791,16 @@ function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
   if (ts.isCallExpression(node)) classifyCall(node, scope, ctx);
   if (ts.isNewExpression(node)) classifyNew(node, scope, ctx);
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
-    const kind = calleeKind(node, scope);
-    if (kind === "main-module" || kind === "process-binding" || kind === "process-dlopen") {
-      ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(kind)));
+    if (!isTypeContext(node)) {
+      const kind = calleeKind(node, scope);
+      if (kind === "unresolved") {
+        ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.getText(ctx.sourceFile)));
+      } else if (isDangerousCallableKind(kind)) {
+        const name = accessPropertyName(node, scope);
+        if (!(kind === "function-ctor" && name === "constructor")) {
+          ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(kind)));
+        }
+      }
     }
   }
   ts.forEachChild(node, (child) => walk(child, scope, ctx));
@@ -657,6 +822,10 @@ function functionNameOf(
 function classifyNew(node: ts.NewExpression, scope: Scope, ctx: WalkCtx): void {
   if (!node.expression) return;
   const kind = calleeKind(node.expression, scope);
+  if (kind === "unresolved") {
+    ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.expression.getText(ctx.sourceFile)));
+    return;
+  }
   if (kind === "function-ctor") {
     ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", "Function"));
   }
@@ -717,6 +886,10 @@ function classifyCall(node: ts.CallExpression, scope: Scope, ctx: WalkCtx): void
     return;
   }
   const kind = calleeKind(node.expression, scope);
+  if (kind === "unresolved") {
+    ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.expression.getText(ctx.sourceFile)));
+    return;
+  }
   if (kind === "require" || kind === "module-require") {
     const arg = node.arguments[0];
     const spec = arg ? loaderArgumentIsLiteral(arg, scope) : undefined;
