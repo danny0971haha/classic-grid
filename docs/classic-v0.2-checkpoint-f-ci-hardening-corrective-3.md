@@ -31,8 +31,10 @@ gateStatus=NOT_EMITTED
 ```text
 START_HEAD=807930dac585737fa98a9b4cb8233381d64efd81
 START_TREE=c3f7b33073b09f5f76bb4dd3a60104e75acd7f07
-FINAL_HEAD=1e6c80235a851d85487eb07862cea7e621b37bc5
-FINAL_TREE=cc9c7707c5a6d8027bc5bc3f7a2e62f09b3b8823
+IMPLEMENTATION_HEAD=1e6c80235a851d85487eb07862cea7e621b37bc5
+IMPLEMENTATION_TREE=cc9c7707c5a6d8027bc5bc3f7a2e62f09b3b8823
+FINAL_HEAD=f88f1a23f7aec521760be0925a5dba831b5922b4
+FINAL_TREE=421b8fcdaefcf12acd97c11c2ae13df42dce0aa9
 ACCEPTED_IMPLEMENTATION_HEAD=79c88bd08eaf96d069b7eaf947feb7b70739b551
 CHECKPOINT_F_IMPLEMENTATION_BASE=3960e3634b1fc68ab90bd8f73cd6effd925932e2
 ```
@@ -74,6 +76,7 @@ The module-load hook records JSONL `{specifier, parentURL, resolvedURL}` after `
 ```text
 FULL_TEST_TOTAL=543
 SECURITY_TEST_TOTAL=134
+CI_SECURITY_TAP_TOTAL=133
 FULL_SUITE_FAIL=0
 SECURITY_SUITE_FAIL=0
 SKIP=0
@@ -89,18 +92,27 @@ UNEXPECTED_ARTIFACT_FILES=0
 CONTENT_HASH_MISMATCHES=0
 ROOT_GLOBAL_CLEARANCE=NO
 CONTENT_MANIFEST_SHA256=4209dc1d6c6deb32725d56cfa64fb2af8e9147d5efc9d0471ffb5717301e9375
-ARTIFACT_SHA256=recorded-per-pack
-CI_RUN=PENDING_PUSH
-CI_JOB=PENDING_PUSH
-PR_EVENT_SOURCE_HEAD=PENDING_PUSH
-PR_TESTED_CHECKOUT_HEAD=PENDING_PUSH
+ARTIFACT_SHA256=a75a8bcced0f0185c31014dcd6bb1d34a3fceb6b6bbcb60edfdedd4ae5a51c33
+CI_RUN=32949840246
+CI_JOB=98118550070
+PUSH_CI_RUN=32949835688
+PUSH_CI_JOB=98118534738
+PR_EVENT_SOURCE_HEAD=f88f1a23f7aec521760be0925a5dba831b5922b4
+PR_TESTED_CHECKOUT_HEAD=bdaa43710497a971f507d0e2692065b36ee88a18
 ```
 
 Root `npm audit --omit=dev` remains the known High baseline. That is a live-release blocker, not a blocker for this verifier corrective. Matching the committed baseline is not vulnerability remediation. The isolated Extended canary still audits at High=0 / Critical=0.
 
 ## Changed files
 
-Verifier, manifest, tests, CI wiring, and status documentation only. See `git show --stat` on the corrective commit.
+Verifier, manifest, tests, CI wiring, and status documentation only.
+
+```text
+COMMITS=1e6c80235a851d85487eb07862cea7e621b37bc5,f88f1a23f7aec521760be0925a5dba831b5922b4
+CHANGED_FILES=.github/workflows/ci.yml,SECURITY.md,docs/checkpoint-f-validation.md,docs/classic-v0.2-checkpoint-f-ci-hardening-corrective-3.md,docs/classic-v0.2-dependency-boundary-corrective-1.md,docs/classic-v0.2-implementation-contract.md,docs/security-audit-baseline.md,package.json,packages/extended-canary/file-manifest.json,packages/extended-canary/package.json,scripts/security/canary-artifact-smoke.ts,scripts/security/canary-manifest-schema.ts,scripts/security/content-manifest.ts,scripts/security/extended-canary-boundary.ts,scripts/security/forbidden-specifiers.ts,scripts/security/module-graph.ts,scripts/security/module-load-hook.mjs,scripts/security/pack-extended-canary.ts,scripts/security/source-policy.ts,scripts/security/tar-bytes.ts,test/security/action-pin.test.ts,test/security/canary-artifact-content.test.ts,test/security/canary-manifest-strict.test.ts,test/security/extended-canary-boundary.test.ts,test/security/source-policy.test.ts
+```
+
+`npm run test:security` is 134 including `extended-canary-install.test.ts`. The CI TAP security step omits that install test and reports 133. `npm run check` TAP is 543 plus `grid.test.ts`.
 
 ## Next action
 
