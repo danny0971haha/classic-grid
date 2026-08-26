@@ -187,6 +187,7 @@ export function scanCanarySourceText(source: string, rel = ""): string[] {
     || /\(\s*0\s*,\s*eval\s*\)/.test(source)
     || /globalThis\s*(?:\[\s*["']eval["']\s*\]|\.eval\b)/.test(source)
     || /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*eval\b/.test(source)
+    || /\beval\s*\.\s*(?:call|apply|bind)\b/.test(source)
   ) {
     hits.push("eval");
   }
@@ -195,6 +196,9 @@ export function scanCanarySourceText(source: string, rel = ""): string[] {
     || /\(\s*0\s*,\s*Function\s*\)/.test(source)
     || /globalThis\s*(?:\[\s*["']Function["']\s*\]|\.Function\b)/.test(source)
     || /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*Function\b/.test(source)
+    || /\bFunction\s*\.\s*(?:call|apply|bind)\b/.test(source)
+    || /\bFunction\s*`/.test(source)
+    || /\.constructor\s*\.\s*(?:call|apply|bind)\b/.test(source)
   ) {
     hits.push("Function");
   }

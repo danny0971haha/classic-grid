@@ -102,6 +102,19 @@ function isDangerousCallableKind(kind: BindingKind | undefined): kind is Binding
   return kind !== undefined && DANGEROUS_CALLABLE_KINDS.has(kind);
 }
 
+function isTrackedCallableKind(kind: BindingKind | undefined): kind is BindingKind {
+  return isDangerousCallableKind(kind) || kind === "unresolved";
+}
+
+function joinCallableKind(a: BindingKind | undefined, b: BindingKind | undefined): BindingKind | undefined {
+  if (isTrackedCallableKind(a) && isTrackedCallableKind(b)) return a === b ? a : "unresolved";
+  if (isTrackedCallableKind(a)) return a;
+  if (isTrackedCallableKind(b)) return b;
+  return undefined;
+}
+
+const CALL_APPLY_BIND = new Set(["call", "apply", "bind"]);
+
 function finding(file: string, code: string, detail: string): SourcePolicyFinding {
   return { schemaVersion: SOURCE_POLICY_SCHEMA, file, code, detail };
 }
@@ -446,7 +459,132 @@ function accessPropertyName(
   scope: Scope,
 ): string | undefined {
   if (ts.isPropertyAccessExpression(expr)) return expr.name.text;
-  return foldedString(expr.argumentExpression, scope);
+  const arg = expr.argumentExpression;
+  if (ts.isNumericLiteral(arg)) return arg.text;
+  return foldedString(arg, scope);
+}
+
+function propertyAssignmentKey(prop: ts.PropertyAssignment, scope: Scope): string | undefined {
+  const name = prop.name;
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name) || ts.isPrivateIdentifier(name)) {
+    return name.text;
+  }
+  if (ts.isComputedPropertyName(name)) return foldedString(name.expression, scope);
+  return undefined;
+}
+
+function objectLiteralValue(obj: ts.ObjectLiteralExpression, name: string, scope: Scope): ts.Expression | undefined {
+  for (const prop of obj.properties) {
+    if (ts.isShorthandPropertyAssignment(prop) && prop.name.text === name) return prop.name;
+    if (ts.isPropertyAssignment(prop) && propertyAssignmentKey(prop, scope) === name) return prop.initializer;
+  }
+  return undefined;
+}
+
+function objectHasSpread(obj: ts.ObjectLiteralExpression): boolean {
+  return obj.properties.some((prop) => ts.isSpreadAssignment(prop));
+}
+
+function arrayElementAt(arr: ts.ArrayLiteralExpression, index: number): ts.Expression | undefined {
+  const el = arr.elements[index];
+  if (!el || ts.isOmittedExpression(el)) return undefined;
+  if (ts.isSpreadElement(el)) return undefined;
+  return el;
+}
+
+function containerPropertyKind(
+  obj: ts.Expression,
+  name: string | undefined,
+  scope: Scope,
+): BindingKind | undefined {
+  const followed = ts.isIdentifier(obj)
+    ? followsAliasInit(obj, scope, new Set())
+    : unwrapExpr(obj);
+  if (ts.isObjectLiteralExpression(followed)) {
+    if (name !== undefined) {
+      const value = objectLiteralValue(followed, name, scope);
+      if (value) return calleeKind(value, scope);
+    }
+    if (name === undefined || objectHasSpread(followed)) {
+      for (const prop of followed.properties) {
+        if (ts.isSpreadAssignment(prop) && isTrackedCallableKind(calleeKind(prop.expression, scope))) {
+          return "unresolved";
+        }
+        if (ts.isShorthandPropertyAssignment(prop) && isTrackedCallableKind(calleeKind(prop.name, scope))) {
+          return name === undefined ? calleeKind(prop.name, scope) : "unresolved";
+        }
+        if (ts.isPropertyAssignment(prop) && isTrackedCallableKind(calleeKind(prop.initializer, scope))) {
+          return name === undefined ? calleeKind(prop.initializer, scope) : "unresolved";
+        }
+      }
+    }
+    return undefined;
+  }
+  if (ts.isArrayLiteralExpression(followed)) {
+    if (name !== undefined && /^\d+$/.test(name)) {
+      const el = arrayElementAt(followed, Number(name));
+      if (el) return calleeKind(el, scope);
+      const raw = followed.elements[Number(name)];
+      if (raw && ts.isSpreadElement(raw)) return "unresolved";
+    }
+    for (const el of followed.elements) {
+      if (ts.isOmittedExpression(el)) continue;
+      const inner = ts.isSpreadElement(el) ? el.expression : el;
+      if (isTrackedCallableKind(calleeKind(inner, scope))) {
+        return name === undefined ? "unresolved" : name && /^\d+$/.test(name) ? undefined : "unresolved";
+      }
+    }
+  }
+  return undefined;
+}
+
+function isReflectApplyCallee(expr: ts.Expression, scope: Scope): boolean {
+  expr = followsAliasInit(unwrapExpr(expr), scope, new Set());
+  if (ts.isPropertyAccessExpression(expr) && expr.name.text === "apply") {
+    return isReflectObject(expr.expression, scope);
+  }
+  if (ts.isElementAccessExpression(expr)) {
+    return accessPropertyName(expr, scope) === "apply" && isReflectObject(expr.expression, scope);
+  }
+  return false;
+}
+
+function isValueIdentifier(node: ts.Identifier): boolean {
+  if (isTypeContext(node)) return false;
+  const p = node.parent;
+  if (!p) return false;
+  if (ts.isPropertyAccessExpression(p) && p.name === node) return false;
+  if (ts.isPropertyAssignment(p) && p.name === node) return false;
+  if (ts.isBindingElement(p) && p.name === node) return false;
+  if (ts.isParameter(p) && p.name === node) return false;
+  if (ts.isVariableDeclaration(p) && p.name === node) return false;
+  if (
+    (ts.isFunctionDeclaration(p)
+      || ts.isFunctionExpression(p)
+      || ts.isClassDeclaration(p)
+      || ts.isClassExpression(p)
+      || ts.isMethodDeclaration(p)
+      || ts.isMethodSignature(p)
+      || ts.isGetAccessorDeclaration(p)
+      || ts.isSetAccessorDeclaration(p)
+      || ts.isPropertyDeclaration(p)
+      || ts.isPropertySignature(p))
+    && p.name === node
+  ) {
+    return false;
+  }
+  if (ts.isEnumMember(p) && p.name === node) return false;
+  if (ts.isImportSpecifier(p) || ts.isExportSpecifier(p) || ts.isNamespaceImport(p) || ts.isNamespaceExport(p)) {
+    return false;
+  }
+  if (ts.isImportClause(p) && p.name === node) return false;
+  if (ts.isBreakOrContinueStatement(p)) return false;
+  if (ts.isLabeledStatement(p) && p.label === node) return false;
+  if (ts.isQualifiedName(p) || ts.isMetaProperty(p)) return false;
+  if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken && p.left === node) {
+    return false;
+  }
+  return true;
 }
 
 function memberKind(obj: ts.Expression, name: string | undefined, scope: Scope): BindingKind | undefined {
@@ -490,9 +628,25 @@ function destructuredPropertyName(el: ts.BindingElement, scope: Scope): string |
 
 function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | undefined {
   expr = unwrapExpr(expr);
+  if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    return calleeKind(expr.right, scope);
+  }
+  if (ts.isConditionalExpression(expr)) {
+    return joinCallableKind(calleeKind(expr.whenTrue, scope), calleeKind(expr.whenFalse, scope));
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    if (
+      op === ts.SyntaxKind.AmpersandAmpersandToken
+      || op === ts.SyntaxKind.BarBarToken
+      || op === ts.SyntaxKind.QuestionQuestionToken
+    ) {
+      return joinCallableKind(calleeKind(expr.left, scope), calleeKind(expr.right, scope));
+    }
+  }
   if (ts.isIdentifier(expr)) {
     const b = lookup(scope, expr.text);
-    if (b && (isDangerousCallableKind(b.kind) || b.kind === "unresolved")) return b.kind;
+    if (b && isTrackedCallableKind(b.kind)) return b.kind;
     if (b) return undefined;
     if (expr.text === "require") return "require";
     if (expr.text === "eval") return "eval";
@@ -500,12 +654,26 @@ function calleeKind(expr: ts.Expression, scope: Scope): BindingKind | undefined 
     return undefined;
   }
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
-    return memberKind(expr.expression, accessPropertyName(expr, scope), scope);
+    const name = accessPropertyName(expr, scope);
+    if (name && CALL_APPLY_BIND.has(name)) {
+      const recv = calleeKind(expr.expression, scope);
+      if (isTrackedCallableKind(recv)) return recv;
+    }
+    const member = memberKind(expr.expression, name, scope);
+    if (member) return member;
+    return containerPropertyKind(expr.expression, name, scope);
   }
   if (ts.isCallExpression(expr)) {
+    if (isReflectApplyCallee(expr.expression, scope)) {
+      const target = expr.arguments[0];
+      return target ? calleeKind(target, scope) : "unresolved";
+    }
     const inner = calleeKind(expr.expression, scope);
     if (inner === "createRequire") return "require";
-    if (inner === "function-ctor" || inner === "unresolved") return inner;
+    if (isTrackedCallableKind(inner)) return inner;
+  }
+  if (ts.isTaggedTemplateExpression(expr)) {
+    return calleeKind(expr.tag, scope);
   }
   return undefined;
 }
@@ -632,7 +800,7 @@ function bindPattern(
       }
       const propName = destructuredPropertyName(el, scope);
       if (init) {
-        const kind = memberKind(init, propName, scope);
+        const kind = memberKind(init, propName, scope) ?? containerPropertyKind(init, propName, scope);
         if (kind === "unresolved" || isDangerousCallableKind(kind)) {
           findings.push(
             finding(
@@ -669,6 +837,71 @@ function bindPattern(
       bindPattern(el.name, undefined, scope, constDecl, file, findings);
     }
   }
+  if (ts.isArrayBindingPattern(name)) {
+    const followed = init ? followsAliasInit(unwrapExpr(init), scope, new Set()) : undefined;
+    for (let i = 0; i < name.elements.length; i++) {
+      const el = name.elements[i];
+      if (ts.isOmittedExpression(el)) continue;
+      if (el.dotDotDotToken) {
+        const kind = init ? expressionBindingKind(init, scope, file, findings) : "other";
+        if (isTrackedCallableKind(kind)) {
+          findings.push(finding(file, kind === "unresolved" ? "UNRESOLVED_COMPUTED_DISPATCH" : "FORBIDDEN_PRIMITIVE", String(kind)));
+          if (ts.isIdentifier(el.name)) {
+            setBinding(scope, el.name.text, {
+              kind,
+              functionId: enclosingFunction(scope).functionId,
+              constDecl,
+            });
+          } else {
+            bindPattern(el.name, undefined, scope, constDecl, file, findings);
+          }
+        } else if (ts.isIdentifier(el.name)) {
+          bindPattern(el.name, undefined, scope, constDecl, file, findings);
+        }
+        continue;
+      }
+      let elInit: ts.Expression | undefined;
+      if (followed && ts.isArrayLiteralExpression(followed)) {
+        elInit = arrayElementAt(followed, i);
+        const raw = followed.elements[i];
+        if (raw && ts.isSpreadElement(raw)) {
+          findings.push(finding(file, "UNRESOLVED_COMPUTED_DISPATCH", `destructure:${el.getText()}`));
+          if (ts.isIdentifier(el.name)) {
+            setBinding(scope, el.name.text, {
+              kind: "unresolved",
+              functionId: enclosingFunction(scope).functionId,
+              constDecl,
+            });
+          } else {
+            bindPattern(el.name, undefined, scope, constDecl, file, findings);
+          }
+          continue;
+        }
+      } else if (init) {
+        const kind = expressionBindingKind(init, scope, file, findings);
+        if (isTrackedCallableKind(kind)) {
+          findings.push(
+            finding(
+              file,
+              kind === "unresolved" ? "UNRESOLVED_COMPUTED_DISPATCH" : "FORBIDDEN_PRIMITIVE",
+              String(kind),
+            ),
+          );
+          if (ts.isIdentifier(el.name)) {
+            setBinding(scope, el.name.text, {
+              kind,
+              functionId: enclosingFunction(scope).functionId,
+              constDecl,
+            });
+          } else {
+            bindPattern(el.name, undefined, scope, constDecl, file, findings);
+          }
+          continue;
+        }
+      }
+      bindPattern(el.name, elInit, scope, constDecl, file, findings);
+    }
+  }
 }
 
 function expressionBindingKind(
@@ -677,22 +910,12 @@ function expressionBindingKind(
   file: string,
   findings: SourcePolicyFinding[],
 ): BindingKind {
+  const kind = calleeKind(expr, scope);
+  if (kind) return kind;
   expr = unwrapExpr(expr);
   if (ts.isIdentifier(expr)) {
     const b = lookup(scope, expr.text);
     if (b) return b.kind;
-    if (expr.text === "require") return "require";
-    if (expr.text === "eval") return "eval";
-    if (FUNCTION_CTOR_NAMES.has(expr.text)) return "function-ctor";
-    return "other";
-  }
-  if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
-    const kind = calleeKind(expr, scope);
-    if (kind && (isDangerousCallableKind(kind) || kind === "unresolved")) return kind;
-    const name = accessPropertyName(expr, scope);
-    if (name && FUNCTION_CTOR_NAMES.has(name) && isGlobalThis(expr.expression, scope)) return "function-ctor";
-    if (name === "require" && isGlobalThis(expr.expression, scope)) return "require";
-    if (name === "eval" && isGlobalThis(expr.expression, scope)) return "eval";
   }
   if (ts.isCallExpression(expr) && isImportCall(expr)) {
     const spec = expr.arguments[0] ? foldedString(expr.arguments[0], scope) : undefined;
@@ -768,6 +991,9 @@ function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
       functionName: functionNameOf(node),
       bindings: new Map(),
     };
+    for (const param of node.parameters) {
+      bindPattern(param.name, param.initializer, child, false, ctx.file, ctx.findings);
+    }
     ts.forEachChild(node, (n) => walk(n, child, ctx));
     return;
   }
@@ -788,22 +1014,64 @@ function walk(node: ts.Node, scope: Scope, ctx: WalkCtx): void {
       bindPattern(decl.name, decl.initializer, scope, constDecl, ctx.file, ctx.findings);
     }
   }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    assignBinding(node.left, node.right, scope, ctx);
+  }
   if (ts.isCallExpression(node)) classifyCall(node, scope, ctx);
   if (ts.isNewExpression(node)) classifyNew(node, scope, ctx);
+  if (ts.isTaggedTemplateExpression(node) && !isTypeContext(node)) {
+    const kind = calleeKind(node.tag, scope);
+    if (kind === "unresolved") {
+      ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.tag.getText(ctx.sourceFile)));
+    } else if (isDangerousCallableKind(kind)) {
+      ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(kind)));
+    }
+  }
+  if (ts.isIdentifier(node) && isValueIdentifier(node)) {
+    const kind = calleeKind(node, scope);
+    if (kind === "unresolved") {
+      ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.text));
+    } else if (isDangerousCallableKind(kind)) {
+      ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(kind)));
+    }
+  }
   if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
     if (!isTypeContext(node)) {
       const kind = calleeKind(node, scope);
       if (kind === "unresolved") {
         ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", node.getText(ctx.sourceFile)));
       } else if (isDangerousCallableKind(kind)) {
-        const name = accessPropertyName(node, scope);
-        if (!(kind === "function-ctor" && name === "constructor")) {
-          ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(kind)));
-        }
+        ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(kind)));
       }
     }
   }
   ts.forEachChild(node, (child) => walk(child, scope, ctx));
+}
+
+function assignBinding(left: ts.Expression, right: ts.Expression, scope: Scope, ctx: WalkCtx): void {
+  left = unwrapExpr(left);
+  if (!ts.isIdentifier(left)) return;
+  const kind = expressionBindingKind(right, scope, ctx.file, ctx.findings);
+  const existing = lookup(scope, left.text);
+  const next: BindingKind = isTrackedCallableKind(kind)
+    ? kind
+    : existing && isDangerousCallableKind(existing.kind)
+      ? "unresolved"
+      : kind;
+  if (existing) {
+    existing.kind = next;
+    existing.init = right;
+    existing.value = foldedString(right, scope);
+    existing.constDecl = false;
+  } else {
+    setBinding(scope, left.text, {
+      kind: next,
+      functionId: enclosingFunction(scope).functionId,
+      constDecl: false,
+      init: right,
+      value: foldedString(right, scope),
+    });
+  }
 }
 
 function functionNameOf(
@@ -883,6 +1151,24 @@ function classifyCall(node: ts.CallExpression, scope: Scope, ctx: WalkCtx): void
     }
     if (isLocalSpecifier(spec)) ctx.localSpecs.push(spec);
     else ctx.literalDynamic.push(spec);
+    return;
+  }
+  if (isReflectApplyCallee(node.expression, scope)) {
+    const target = node.arguments[0];
+    if (!target) {
+      ctx.findings.push(finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", "Reflect.apply"));
+      return;
+    }
+    const targetKind = calleeKind(target, scope);
+    if (targetKind === "unresolved") {
+      ctx.findings.push(
+        finding(ctx.file, "UNRESOLVED_COMPUTED_DISPATCH", `Reflect.apply(${target.getText(ctx.sourceFile)})`),
+      );
+      return;
+    }
+    if (isDangerousCallableKind(targetKind)) {
+      ctx.findings.push(finding(ctx.file, "FORBIDDEN_PRIMITIVE", String(targetKind)));
+    }
     return;
   }
   const kind = calleeKind(node.expression, scope);
