@@ -1,0 +1,154 @@
+name: Classic v0.2 release boundary cloud review
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - review/classic-v0.2-release-boundary-cloud-gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classic-v02-release-boundary-cloud-review-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FROZEN_SHA: 990a790706e17b52e04d0d1957505cdad5d45862
+
+jobs:
+  independent-release-boundary-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout review controller
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Verify controller scope and create frozen worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g npm@10.9.8
+          test "$(node --version)" = "v22.23.2"
+          test "$(npm --version)" = "10.9.8"
+          git cat-file -e "${FROZEN_SHA}^{commit}"
+          git merge-base --is-ancestor "$FROZEN_SHA" HEAD
+          git diff --check "$FROZEN_SHA" HEAD
+          changed="$(git diff --name-only "$FROZEN_SHA" HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = ".github/workflows/classic-v02-release-boundary-cloud-review.yml"
+          candidate="$RUNNER_TEMP/classic-release-boundary-candidate"
+          git worktree add --detach "$candidate" "$FROZEN_SHA"
+          test "$(git -C "$candidate" rev-parse HEAD)" = "$FROZEN_SHA"
+          echo "candidate_tree=$(git -C "$candidate" rev-parse 'HEAD^{tree}')"
+          echo "CANDIDATE_DIR=$candidate" >> "$GITHUB_ENV"
+
+      - name: Install frozen repository
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm ci
+
+      - name: Reconfirm accepted security and action boundary
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: |
+          npm run test:security
+          npm run verify:action-inventory
+
+      - name: Rebuild and verify isolated Extended canary
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: |
+          npm run pack:extended-canary
+          npm run verify:extended-canary
+
+      - name: Audit isolated production lockfile at high severity
+        working-directory: ${{ env.CANDIDATE_DIR }}/packages/extended-canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm audit --omit=dev --json > "$RUNNER_TEMP/extended-canary-audit.json" || audit_rc=$?
+          audit_rc=${audit_rc:-0}
+          node - "$RUNNER_TEMP/extended-canary-audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const p = process.argv[2];
+          const audit = JSON.parse(fs.readFileSync(p, 'utf8'));
+          const v = audit?.metadata?.vulnerabilities;
+          if (!v || !Number.isInteger(v.high) || !Number.isInteger(v.critical)) {
+            throw new Error('AUDIT_METADATA_MISSING');
+          }
+          console.log(`CANARY_AUDIT_HIGH=${v.high}`);
+          console.log(`CANARY_AUDIT_CRITICAL=${v.critical}`);
+          if (v.high !== 0 || v.critical !== 0) process.exit(1);
+          NODE
+          if [ "$audit_rc" -ne 0 ]; then
+            node - "$RUNNER_TEMP/extended-canary-audit.json" <<'NODE'
+            const fs = require('node:fs');
+            const a = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+            const v = a?.metadata?.vulnerabilities ?? {};
+            if ((v.high ?? 0) > 0 || (v.critical ?? 0) > 0) process.exit(1);
+            NODE
+          fi
+
+      - name: Prove forbidden legacy production packages are absent from canary lockfile
+        working-directory: ${{ env.CANDIDATE_DIR }}/packages/extended-canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+          const names = Object.keys(lock.packages || {});
+          const forbidden = [
+            '@n1xyz/',
+            '@nadohq/',
+            '@solana/',
+            'node_modules/viem',
+            'node_modules/axios',
+            'node_modules/bigint-buffer'
+          ];
+          const hits = names.filter((p) => forbidden.some((x) => p.includes(x)));
+          if (hits.length) {
+            console.error('FORBIDDEN_CANARY_LOCKFILE_PATHS');
+            console.error(hits.join('\n'));
+            process.exit(1);
+          }
+          console.log('FORBIDDEN_CANARY_LOCKFILE_PATHS=0');
+          NODE
+
+      - name: Preserve root dependency truth without granting global clearance
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --json > "$RUNNER_TEMP/root-audit.json" || true
+          node - "$RUNNER_TEMP/root-audit.json" <<'NODE'
+          const fs = require('node:fs');
+          const a = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const v = a?.metadata?.vulnerabilities;
+          if (!v) throw new Error('ROOT_AUDIT_METADATA_MISSING');
+          console.log(`ROOT_AUDIT_HIGH=${v.high}`);
+          console.log(`ROOT_AUDIT_CRITICAL=${v.critical}`);
+          if (v.critical !== 0) process.exit(1);
+          if (v.high !== 14) process.exit(1);
+          NODE
+          npm run audit:security-baseline
+
+      - name: Frozen candidate and controller must remain clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C "$CANDIDATE_DIR" rev-parse HEAD)" = "$FROZEN_SHA"
+          git -C "$CANDIDATE_DIR" diff --exit-code
+          test -z "$(git -C "$CANDIDATE_DIR" status --porcelain)"
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+          changed="$(git diff --name-only "$FROZEN_SHA" HEAD)"
+          test "$changed" = ".github/workflows/classic-v02-release-boundary-cloud-review.yml"
