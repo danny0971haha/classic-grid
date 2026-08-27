@@ -13,12 +13,15 @@ concurrency:
   group: classic-v02-corrective6-cloud-review-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CORRECTIVE6_SHA: 990a790706e17b52e04d0d1957505cdad5d45862
+
 jobs:
   independent-cloud-review:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - name: Checkout exact cloud-review branch
+      - name: Checkout cloud-review controller
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
@@ -30,64 +33,84 @@ jobs:
           node-version: 22.23.2
           cache: npm
 
-      - name: Pin npm and record immutable identity
+      - name: Verify controller scope and create frozen candidate worktree
         shell: bash
         run: |
           set -euo pipefail
           npm install -g npm@10.9.8
           test "$(node --version)" = "v22.23.2"
           test "$(npm --version)" = "10.9.8"
+
           echo "review_head=$(git rev-parse HEAD)"
           echo "review_tree=$(git rev-parse 'HEAD^{tree}')"
-          echo "review_parent=$(git rev-parse HEAD^)"
-          test "$(git rev-parse HEAD^)" = "990a790706e17b52e04d0d1957505cdad5d45862"
+          git cat-file -e "${CORRECTIVE6_SHA}^{commit}"
+          git merge-base --is-ancestor "$CORRECTIVE6_SHA" HEAD
+          git diff --check "$CORRECTIVE6_SHA" HEAD
 
-      - name: Install from lockfile
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Corrective 6 security matrix
-        run: npm run test:security
-
-      - name: Checkpoint E regression
-        run: npm run test:checkpoint-e
-
-      - name: Checkpoint E corrective regression
-        run: npm run test:checkpoint-e-corrective
-
-      - name: Checkpoint F regression
-        run: npm run test:checkpoint-f
-
-      - name: Full repository checks
-        run: npm run check
-
-      - name: Build
-        run: npm run build
-
-      - name: Action inventory
-        run: npm run verify:action-inventory
-
-      - name: Isolated Extended canary verification
-        run: npm run verify:extended-canary
-
-      - name: Dependency baseline audit
-        run: npm run audit:security-baseline
-
-      - name: Ensure review patch is governance-only
-        shell: bash
-        run: |
-          set -euo pipefail
-          BASE=990a790706e17b52e04d0d1957505cdad5d45862
-          git diff --check "$BASE" HEAD
-          changed="$(git diff --name-only "$BASE" HEAD)"
+          changed="$(git diff --name-only "$CORRECTIVE6_SHA" HEAD)"
           printf '%s\n' "$changed"
           test "$changed" = ".github/workflows/classic-v02-corrective6-cloud-review.yml"
 
-      - name: Working tree must remain clean
+          candidate="$RUNNER_TEMP/classic-corrective6-candidate"
+          git worktree add --detach "$candidate" "$CORRECTIVE6_SHA"
+          test "$(git -C "$candidate" rev-parse HEAD)" = "$CORRECTIVE6_SHA"
+          echo "candidate_tree=$(git -C "$candidate" rev-parse 'HEAD^{tree}')"
+          echo "CANDIDATE_DIR=$candidate" >> "$GITHUB_ENV"
+
+      - name: Install frozen candidate from lockfile
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm ci
+
+      - name: Typecheck frozen candidate
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run typecheck
+
+      - name: Corrective 6 security matrix on frozen candidate
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run test:security
+
+      - name: Checkpoint E regression
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run test:checkpoint-e
+
+      - name: Checkpoint E corrective regression
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run test:checkpoint-e-corrective
+
+      - name: Checkpoint F regression
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run test:checkpoint-f
+
+      - name: Full repository checks
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run check
+
+      - name: Build
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run build
+
+      - name: Action inventory of frozen candidate
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run verify:action-inventory
+
+      - name: Isolated Extended canary verification
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run verify:extended-canary
+
+      - name: Dependency baseline audit
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm run audit:security-baseline
+
+      - name: Frozen candidate and controller must remain clean
         shell: bash
         run: |
           set -euo pipefail
+          test "$(git -C "$CANDIDATE_DIR" rev-parse HEAD)" = "$CORRECTIVE6_SHA"
+          git -C "$CANDIDATE_DIR" diff --exit-code
+          test -z "$(git -C "$CANDIDATE_DIR" status --porcelain)"
+
           git diff --exit-code
           test -z "$(git status --porcelain)"
+
+          changed="$(git diff --name-only "$CORRECTIVE6_SHA" HEAD)"
+          test "$changed" = ".github/workflows/classic-v02-corrective6-cloud-review.yml"
