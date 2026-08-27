@@ -1,0 +1,93 @@
+name: Classic v0.2 Corrective 6 cloud review
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - review/classic-v0.2-corrective6-cloud-gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classic-v02-corrective6-cloud-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  independent-cloud-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact cloud-review branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Pin npm and record immutable identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g npm@10.9.8
+          test "$(node --version)" = "v22.23.2"
+          test "$(npm --version)" = "10.9.8"
+          echo "review_head=$(git rev-parse HEAD)"
+          echo "review_tree=$(git rev-parse 'HEAD^{tree}')"
+          echo "review_parent=$(git rev-parse HEAD^)"
+          test "$(git rev-parse HEAD^)" = "990a790706e17b52e04d0d1957505cdad5d45862"
+
+      - name: Install from lockfile
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Corrective 6 security matrix
+        run: npm run test:security
+
+      - name: Checkpoint E regression
+        run: npm run test:checkpoint-e
+
+      - name: Checkpoint E corrective regression
+        run: npm run test:checkpoint-e-corrective
+
+      - name: Checkpoint F regression
+        run: npm run test:checkpoint-f
+
+      - name: Full repository checks
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+
+      - name: Action inventory
+        run: npm run verify:action-inventory
+
+      - name: Isolated Extended canary verification
+        run: npm run verify:extended-canary
+
+      - name: Dependency baseline audit
+        run: npm run audit:security-baseline
+
+      - name: Ensure review patch is governance-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=990a790706e17b52e04d0d1957505cdad5d45862
+          git diff --check "$BASE" HEAD
+          changed="$(git diff --name-only "$BASE" HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = ".github/workflows/classic-v02-corrective6-cloud-review.yml"
+
+      - name: Working tree must remain clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
