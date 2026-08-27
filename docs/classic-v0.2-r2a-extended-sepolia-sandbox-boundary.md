@@ -40,9 +40,12 @@ FROZEN_R1_TREE=c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
 SOURCE_BRANCH=experiment/classic-v0.2-r2-extended-sepolia
 IMPLEMENTATION_HEAD=a7f90d2e0de06dc00d276a568bb61557e7761046
 IMPLEMENTATION_TREE=46caf75a80048d18a56e46737f273e8ae0bb272a
+RESULT_HEAD=b50cd4c2dc1d7e9cfc01d46a38165021187519e7
+RESULT_TREE=871f7866c88a6400b4c06ac0b56ecb207ba039c5
+FULL_DIFF_SHA256=2dc50fcd508b82d6569a7c83e3094370892849a2d575c52e5acc88a20320f3e5
 ```
 
-`IMPLEMENTATION_HEAD` is the product-code commit. The identity-bind commit that contains this filled packet is the branch tip reviewers should check out (`git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push). Frozen origin R1 must remain:
+`IMPLEMENTATION_HEAD` is the product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. A follow-up packet-fill commit on this branch may sit on top of `RESULT_HEAD`; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
 
 ```text
 git rev-parse origin/experiment/classic-v0.2-100u-safety
@@ -185,7 +188,7 @@ Implementation diff SHA-256 (excluding this evidence file):
 | path | before (frozen R1) | after |
 | --- | --- | --- |
 | `.env.example` | `9e6f256a746e969836e5d687b6e06cbf17462343` | `742ff3c18ed156bb2556f9836142abacba6f3f73` |
-| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | (absent) | (identity-bind blob; `git hash-object` after that commit) |
+| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | (absent) | `b2936daaf3a01b3b57a555b82a9366e726d4415b` at identity-bind; later packet-fill blob supersedes |
 | `package.json` | `ae63c398940b297790cdb386f859d5a4e4441f2d` | `6884451e20d569ef8df74a19f94e4224d9f8f7df` |
 | `packages/extended-canary/file-manifest.json` | `6a92dd24fa0ac49ccd6285035402e3b44aa83f9f` | `cf1f1024e9b4f49f03bf45081f67068f1e24e9fe` |
 | `src/config.ts` | `264804315837bf5e87f3f045397db6487eaf5900` | `3bf0e78de3001a6bffcbfb0aafe1fdb7f5478cde` |
@@ -321,7 +324,7 @@ No commit, amend, rebase, merge, reset, or force-push was performed on `experime
 
 ```text
 a7f90d2e0de06dc00d276a568bb61557e7761046 feat(r2a): add Extended Sepolia sandbox execution boundary
-<identity-bind commit on this branch> docs(r2a): bind R2-A candidate identity
+b50cd4c2dc1d7e9cfc01d46a38165021187519e7 docs(r2a): bind R2-A candidate identity
 ```
 
-`git log --oneline 990a790706e17b52e04d0d1957505cdad5d45862..HEAD` on the pushed branch lists both. The identity-bind commit does not change product bytes; it only fills this packet.
+`git log --oneline 990a790706e17b52e04d0d1957505cdad5d45862..HEAD` on the pushed branch also includes the packet-fill commit below this line. The identity-bind and packet-fill commits do not change product bytes.
