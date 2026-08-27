@@ -1,0 +1,145 @@
+name: Classic v0.2 final canary R1 qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - review/classic-v0.2-final-canary-r1-gate
+
+permissions:
+  contents: read
+
+concurrency:
+  group: classic-v02-final-canary-r1-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FROZEN_SHA: 990a790706e17b52e04d0d1957505cdad5d45862
+  FROZEN_TREE: c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
+  EXPECTED_CANARY_LOCK_SHA256: f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99
+  EXPECTED_CONTENT_MANIFEST_SHA256: 4209dc1d6c6deb32725d56cfa64fb2af8e9147d5efc9d0471ffb5717301e9375
+
+jobs:
+  r1-offline-qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout review controller
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up pinned Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.23.2
+          cache: npm
+
+      - name: Bind controller to exact frozen candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install -g npm@10.9.8
+          test "$(node --version)" = "v22.23.2"
+          test "$(npm --version)" = "10.9.8"
+          git cat-file -e "${FROZEN_SHA}^{commit}"
+          test "$(git rev-parse "${FROZEN_SHA}^{tree}")" = "$FROZEN_TREE"
+          git merge-base --is-ancestor "$FROZEN_SHA" HEAD
+          git diff --check "$FROZEN_SHA" HEAD
+          changed="$(git diff --name-only "$FROZEN_SHA" HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = ".github/workflows/classic-v02-final-canary-r1-gate.yml"
+          candidate="$RUNNER_TEMP/classic-r1-frozen-candidate"
+          git worktree add --detach "$candidate" "$FROZEN_SHA"
+          test "$(git -C "$candidate" rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(git -C "$candidate" rev-parse 'HEAD^{tree}')" = "$FROZEN_TREE"
+          echo "CANDIDATE_DIR=$candidate" >> "$GITHUB_ENV"
+
+      - name: Install exact frozen candidate
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: npm ci
+
+      - name: Reconfirm full accepted regression envelope
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: |
+          npm run check
+          npm run test:security
+          npm run test:checkpoint-e
+          npm run test:checkpoint-e-corrective
+          npm run test:checkpoint-f
+          npm run verify:action-inventory
+
+      - name: Exercise halt resume persistence and lease paths explicitly
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        run: |
+          node --import tsx --test \
+            test/experiment-killswitch.test.ts \
+            test/experiment-resume.test.ts \
+            test/experiment-storage.test.ts \
+            test/runtime-lease.test.ts \
+            test/experiment-ack-authority.test.ts
+
+      - name: Pack canary and bind stable release identities
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/security/pack-extended-canary.ts > "$RUNNER_TEMP/r1-pack.json"
+          cat "$RUNNER_TEMP/r1-pack.json"
+          node -e 'const fs=require("node:fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(x.lockfileSha256!==process.env.EXPECTED_CANARY_LOCK_SHA256)throw new Error("CANARY_LOCK_IDENTITY_MISMATCH");if(x.contentManifestSha256!==process.env.EXPECTED_CONTENT_MANIFEST_SHA256)throw new Error("CONTENT_MANIFEST_IDENTITY_MISMATCH");if(!/^[0-9a-f]{64}$/.test(x.sha256||""))throw new Error("PACK_SHA256_MISSING");console.log("R1_RELEASE_IDENTITY_BOUND=YES");' "$RUNNER_TEMP/r1-pack.json"
+
+      - name: Verify offline canary behavior and no live authority
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --import tsx scripts/security/verify-extended-canary.ts > "$RUNNER_TEMP/r1-verify.json"
+          cat "$RUNNER_TEMP/r1-verify.json"
+          node -e 'const fs=require("node:fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(x.ok!==true)throw new Error("CANARY_VERIFY_NOT_OK");if(x.lockfileSha256!==process.env.EXPECTED_CANARY_LOCK_SHA256)throw new Error("VERIFY_LOCK_IDENTITY_MISMATCH");if(x.contentManifestSha256!==process.env.EXPECTED_CONTENT_MANIFEST_SHA256)throw new Error("VERIFY_CONTENT_IDENTITY_MISMATCH");if(x.audit?.high!==0||x.audit?.critical!==0)throw new Error("CANARY_AUDIT_NOT_CLEAN");if(x.liveExchangeWrite!==false)throw new Error("LIVE_EXCHANGE_WRITE_OBSERVED");if(x.productionCredentialUsed!==false)throw new Error("PRODUCTION_CREDENTIAL_USED");if(x.probeExitCode!==0)throw new Error("OFFLINE_PROBE_FAILED");if((x.unexpectedNetwork||[]).length!==0)throw new Error("UNEXPECTED_NETWORK");if((x.secretLikeFiles||[]).length!==0)throw new Error("SECRET_LIKE_FILES");if((x.forbiddenInLockfile||[]).length||(x.forbiddenInstalled||[]).length||(x.forbiddenLoaded||[]).length||(x.moduleGraphHits||[]).length)throw new Error("LEGACY_DEPENDENCY_BOUNDARY_BREACH");console.log("R1_OFFLINE_CANARY_QUALIFIED=YES");' "$RUNNER_TEMP/r1-verify.json"
+
+      - name: Independently audit isolated production dependencies
+        working-directory: ${{ env.CANDIDATE_DIR }}/packages/extended-canary
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          audit_rc=0
+          npm audit --omit=dev --json > "$RUNNER_TEMP/r1-canary-audit.json" || audit_rc=$?
+          node -e 'const fs=require("node:fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const v=x?.metadata?.vulnerabilities;if(!v||v.high!==0||v.critical!==0||v.total!==0)throw new Error("R1_CANARY_AUDIT_NOT_ZERO");console.log("R1_CANARY_AUDIT_HIGH=0");console.log("R1_CANARY_AUDIT_CRITICAL=0");console.log("R1_CANARY_AUDIT_TOTAL=0");' "$RUNNER_TEMP/r1-canary-audit.json"
+          test "$audit_rc" -eq 0
+
+      - name: Preserve root dependency truth and deny global clearance
+        working-directory: ${{ env.CANDIDATE_DIR }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --omit=dev --json > "$RUNNER_TEMP/r1-root-audit.json" || true
+          node -e 'const fs=require("node:fs");const x=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const v=x?.metadata?.vulnerabilities;if(!v)throw new Error("ROOT_AUDIT_METADATA_MISSING");if(v.high!==14||v.critical!==0)throw new Error("ROOT_DEPENDENCY_TRUTH_CHANGED");console.log("ROOT_AUDIT_HIGH=14");console.log("ROOT_AUDIT_CRITICAL=0");console.log("GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO");' "$RUNNER_TEMP/r1-root-audit.json"
+          npm run audit:security-baseline
+
+      - name: Assert R1-only authorization boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "R0_ENGINEERING_CANDIDATE=PASS"
+          echo "R1_OFFLINE_DRY_RUN_QUALIFIED=YES"
+          echo "R2_SANDBOX_TESTNET_QUALIFIED=NO"
+          echo "R3_BOUNDED_LIVE_CANARY_ELIGIBLE=NO"
+          echo "LIVE_EXCHANGE_WRITE_AUTHORIZED=NO"
+          echo "REAL_FUND_TESTING_AUTHORIZED=NO"
+          echo "DEPLOYMENT_AUTHORIZED=NO"
+          echo "MERGE_AUTHORIZED=NO"
+
+      - name: Frozen candidate and disposable controller remain clean
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C "$CANDIDATE_DIR" rev-parse HEAD)" = "$FROZEN_SHA"
+          test "$(git -C "$CANDIDATE_DIR" rev-parse 'HEAD^{tree}')" = "$FROZEN_TREE"
+          git -C "$CANDIDATE_DIR" diff --exit-code
+          test -z "$(git -C "$CANDIDATE_DIR" status --porcelain)"
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
+          changed="$(git diff --name-only "$FROZEN_SHA" HEAD)"
+          test "$changed" = ".github/workflows/classic-v02-final-canary-r1-gate.yml"
