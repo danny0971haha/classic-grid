@@ -74,28 +74,30 @@ jobs:
         run: |
           set -euo pipefail
           npm ci
+          audit_rc=0
           npm audit --omit=dev --json > "$RUNNER_TEMP/extended-canary-audit.json" || audit_rc=$?
-          audit_rc=${audit_rc:-0}
-          node - "$RUNNER_TEMP/extended-canary-audit.json" <<'NODE'
+          node - "$RUNNER_TEMP/extended-canary-audit.json" "$audit_rc" <<'NODE'
           const fs = require('node:fs');
           const p = process.argv[2];
+          const auditRc = Number(process.argv[3]);
           const audit = JSON.parse(fs.readFileSync(p, 'utf8'));
           const v = audit?.metadata?.vulnerabilities;
-          if (!v || !Number.isInteger(v.high) || !Number.isInteger(v.critical)) {
+          if (!v || !Number.isInteger(v.info) || !Number.isInteger(v.low) ||
+              !Number.isInteger(v.moderate) || !Number.isInteger(v.high) ||
+              !Number.isInteger(v.critical) || !Number.isInteger(v.total)) {
             throw new Error('AUDIT_METADATA_MISSING');
           }
+          console.log(`CANARY_AUDIT_INFO=${v.info}`);
+          console.log(`CANARY_AUDIT_LOW=${v.low}`);
+          console.log(`CANARY_AUDIT_MODERATE=${v.moderate}`);
           console.log(`CANARY_AUDIT_HIGH=${v.high}`);
           console.log(`CANARY_AUDIT_CRITICAL=${v.critical}`);
+          console.log(`CANARY_AUDIT_TOTAL=${v.total}`);
           if (v.high !== 0 || v.critical !== 0) process.exit(1);
+          if (auditRc !== 0 && v.total === 0) {
+            throw new Error(`AUDIT_EXIT_UNEXPECTED:${auditRc}`);
+          }
           NODE
-          if [ "$audit_rc" -ne 0 ]; then
-            node - "$RUNNER_TEMP/extended-canary-audit.json" <<'NODE'
-            const fs = require('node:fs');
-            const a = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-            const v = a?.metadata?.vulnerabilities ?? {};
-            if ((v.high ?? 0) > 0 || (v.critical ?? 0) > 0) process.exit(1);
-            NODE
-          fi
 
       - name: Prove forbidden legacy production packages are absent from canary lockfile
         working-directory: ${{ env.CANDIDATE_DIR }}/packages/extended-canary
