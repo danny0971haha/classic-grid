@@ -8,6 +8,8 @@ export function createExchange(cfg) {
   return new ExtendedExchange({
     apiKey: cfg.apiKey, vault: cfg.vault,
     privateKey: cfg.starkPrivateKey, publicKey: cfg.starkPublicKey || null,
-    apiUrl: cfg.apiUrl, network: cfg.network, feeRate: cfg.feeRate,
+    apiUrl: cfg.apiUrl, network: cfg.network, chainId: cfg.chainId,
+    signingDomain: cfg.signingDomain, websocketBase: cfg.websocketBase,
+    feeRate: cfg.feeRate,
   });
 }

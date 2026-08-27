@@ -17,9 +17,47 @@ import {
   publicKeyFromPrivate,
 } from './starkcrypto.js';
 
-const DOMAINS = {
-  mainnet: { name: 'Perpetuals', version: 'v0', chainId: 'SN_MAIN', revision: 1 },
-};
+export const TESTNET_NETWORK_WRITE_AUTHORIZED = false;
+export const EXTENDED_VENDOR_NETWORK_PROFILES = Object.freeze({
+  mainnet: Object.freeze({
+    network: 'mainnet',
+    restOrigin: 'https://api.starknet.extended.exchange',
+    restApiPrefix: '/api/v1',
+    websocketBase: 'wss://api.starknet.extended.exchange/stream.extended.exchange/v1',
+    signingDomain: 'extended.exchange',
+    chainId: 'SN_MAIN',
+    snip12Name: 'Perpetuals',
+    snip12Version: 'v0',
+    snip12Revision: 1,
+  }),
+  sepolia: Object.freeze({
+    network: 'sepolia',
+    restOrigin: 'https://api.starknet.sepolia.extended.exchange',
+    restApiPrefix: '/api/v1',
+    websocketBase: 'wss://starknet.sepolia.extended.exchange/stream.extended.exchange/v1',
+    signingDomain: 'starknet.sepolia.extended.exchange',
+    chainId: 'SN_SEPOLIA',
+    snip12Name: 'Perpetuals',
+    snip12Version: 'v0',
+    snip12Revision: 1,
+  }),
+});
+
+function resolveVendorProfile(opts) {
+  const profile = EXTENDED_VENDOR_NETWORK_PROFILES[opts?.network];
+  if (!profile) throw new Error('EXTENDED_NETWORK_PROFILE_REQUIRED');
+  const apiUrl = String(opts.apiUrl || '').replace(/\/$/, '');
+  if (
+    apiUrl !== profile.restOrigin ||
+    opts.chainId !== profile.chainId ||
+    opts.signingDomain !== profile.signingDomain ||
+    (opts.websocketBase != null && opts.websocketBase !== profile.websocketBase)
+  ) {
+    throw new Error('EXTENDED_PROFILE_MIXED');
+  }
+  return profile;
+}
+
 const INTERVALS = { 60: 'PT1M', 300: 'PT5M', 900: 'PT15M', 1800: 'PT30M', 3600: 'PT1H', 7200: 'PT2H', 14400: 'PT4H', 86400: 'P1D' };
 const ORDER_EXPIRY_DAYS = 28;          // resting grid orders live this long
 const SETTLEMENT_BUFFER_DAYS = 14;     // same buffer as the official SDK
@@ -28,16 +66,24 @@ const USER_AGENT = 'ExtendedGridBot/1.0';
 export class ExtendedExchange extends EventEmitter {
   constructor(opts = {}) {
     super();
+    const profile = resolveVendorProfile(opts);
     this.mode = 'live';
     this.apiKey = opts.apiKey;
     this.vault = Number(opts.vault);
     this.privateKey = BigInt(opts.privateKey);
     this.publicKey = opts.publicKey ? BigInt(opts.publicKey) : null;
-    this.apiUrl = (opts.apiUrl || '').replace(/\/$/, '');
-    this.network = 'mainnet';
+    this.apiUrl = profile.restOrigin;
+    this.network = profile.network;
+    this.signingDomain = profile.signingDomain;
+    this.websocketBase = profile.websocketBase;
     this.feeRate = opts.feeRate || '0.0005'; // max fee signed into orders (taker is 0.00025)
     this.pollMs = opts.pollMs ?? 10_000;
-    this.domain = DOMAINS.mainnet;
+    this.domain = {
+      name: profile.snip12Name,
+      version: profile.snip12Version,
+      chainId: profile.chainId,
+      revision: profile.snip12Revision,
+    };
     this.markets = new Map();   // marketId -> market
     this.balance = null;
     this.equity = null;
@@ -73,6 +119,9 @@ export class ExtendedExchange extends EventEmitter {
   async init() {
     if (!this.apiKey || !this.vault || !this.privateKey) {
       throw new Error('LIVE 模式需要 EXTENDED_API_KEY / EXTENDED_VAULT / EXTENDED_STARK_PRIVATE_KEY（在 app.extended.exchange 的 API Management 页面获取）。');
+    }
+    if (this.network === 'sepolia' && !TESTNET_NETWORK_WRITE_AUTHORIZED) {
+      throw new Error('TESTNET_NETWORK_WRITE_UNAUTHORIZED');
     }
     // Refuse to trade if the signing implementation doesn't reproduce the
     // official SDK test vector (protects against env/runtime quirks).
@@ -131,6 +180,9 @@ export class ExtendedExchange extends EventEmitter {
   }
 
   async _reqOnce(method, path, body, { full = false } = {}) {
+    if (this.network === 'sepolia' && !TESTNET_NETWORK_WRITE_AUTHORIZED) {
+      throw new Error('TESTNET_NETWORK_WRITE_UNAUTHORIZED');
+    }
     const useProxy = /^(1|true|yes)$/i.test(String(process.env.EXTENDED_USE_PROXY || ''));
     const proxyUrl = useProxy ? (process.env.EXTENDED_PROXY || '').trim() : '';
     const init = {

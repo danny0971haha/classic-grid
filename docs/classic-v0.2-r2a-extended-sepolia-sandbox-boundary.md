@@ -1,0 +1,326 @@
+# Classic v0.2 R2-A — Extended Sepolia sandbox boundary
+
+**Status:** R2A_IMPLEMENTATION=REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Date:** 2026-08-28
+**Repository:** `danny0971haha/classic-grid`
+**Branch:** `experiment/classic-v0.2-r2-extended-sepolia`
+**Base:** `experiment/classic-v0.2-100u-safety`
+**Task:** `CLASSIC_V02_R2A_EXTENDED_SEPOLIA_SANDBOX_BOUNDARY`
+
+This document does **not** declare R2 PASS. CI success is evidence only and is not R2 qualification. The implementation agent must not self-declare PASS.
+
+```text
+TASK=CLASSIC_V02_R2A_EXTENDED_SEPOLIA_SANDBOX_BOUNDARY
+R1_BASE_PRESERVED=YES
+R2A_IMPLEMENTATION=REVIEW_CANDIDATE
+R2_SANDBOX_TESTNET_QUALIFIED=NO
+R3_BOUNDED_LIVE_CANARY_ELIGIBLE=NO
+TESTNET_NETWORK_WRITE_EXECUTED=NO
+MAINNET_NETWORK_WRITE_EXECUTED=NO
+PRODUCTION_CREDENTIAL_USED=NO
+TESTNET_CREDENTIAL_USED=NO
+REAL_FUNDS_USED=NO
+GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
+LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
+REAL_FUND_TESTING_AUTHORIZED=NO
+DEPLOYMENT_AUTHORIZED=NO
+MERGE_AUTHORIZED=NO
+SELF_DECLARED_PASS=NO
+NEXT_ACTION=INDEPENDENT_R2A_CURRENT_BYTE_REVIEW
+TESTNET_NETWORK_WRITE_AUTHORIZED=NO
+MAINNET_NETWORK_WRITE_AUTHORIZED=NO
+```
+
+## Binding
+
+```text
+FROZEN_R1_BRANCH=experiment/classic-v0.2-100u-safety
+FROZEN_R1_HEAD=990a790706e17b52e04d0d1957505cdad5d45862
+FROZEN_R1_TREE=c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
+SOURCE_BRANCH=experiment/classic-v0.2-r2-extended-sepolia
+```
+
+Result HEAD and tree are bound after the delivery commits on this branch. After those commits:
+
+```text
+git rev-parse HEAD
+git rev-parse HEAD^{tree}
+git rev-parse origin/experiment/classic-v0.2-100u-safety
+```
+
+must still show the frozen R1 identity above. The bind commit records:
+
+```text
+RESULT_HEAD=<filled after delivery commit>
+RESULT_TREE=<filled after delivery commit>
+```
+
+Local toolchain during implementation: Node v22.23.2 / npm 10.9.8.
+
+## Goal
+
+Smallest fail-closed offline boundary required before a credentialed Extended Sepolia review.
+
+1. Separate sandbox/testnet authority from live/mainnet authority.
+2. Make the Extended network profile explicit and atomic.
+3. Remove the vendor's unconditional mainnet signing assignment.
+4. Prevent endpoint, signing-domain, chain-ID, credential, state, and execution-authority mixing.
+5. Preserve accepted R1 trading, risk, storage, lease, ACK, planner, provenance, kill-switch, and dependency-boundary semantics.
+6. Do not contact Extended, load real credentials, place/sign/cancel orders, or authorize R2/R3/live/deploy/merge.
+
+## Execution-target contract
+
+Exact values only. Ambiguous truthy sandbox confirmations are rejected.
+
+```text
+EXECUTION_MODE=dry-run|sandbox|live
+EXTENDED_NETWORK=mainnet|sepolia
+SANDBOX_CONFIRM=EXTENDED_SEPOLIA_TEST_ONLY
+LIVE_CONFIRM=YES   # existing live acknowledgement; not valid for sandbox
+```
+
+Absent new settings preserve historical behavior:
+
+- missing `EXECUTION_MODE` + default/`DRY_RUN=1` → dry-run
+- missing `EXECUTION_MODE` + `DRY_RUN=0` → live path via existing `assertLiveAllowed`
+- `DRY_RUN=0` is never converted into sandbox
+- sandbox is never inferred from `EXTENDED_API_URL`
+
+Sandbox double opt-in:
+
+```text
+EXECUTION_MODE=sandbox
+EXTENDED_NETWORK=sepolia
+SANDBOX_CONFIRM=EXTENDED_SEPOLIA_TEST_ONLY
+DRY_RUN=0
+```
+
+Live and sandbox confirmations cannot be present together. v0.2 live remains `EXPERIMENT_V02_LIVE_FORBIDDEN`. Sandbox does not reuse `LIVE_CONFIRM`. Live does not reuse `SANDBOX_CONFIRM`.
+
+R2-A write gate: even after sandbox config parses, `assertSandboxWriteAllowed()` throws `TESTNET_NETWORK_WRITE_UNAUTHORIZED`. Vendor `init`/`_reqOnce` also hard-disable Sepolia.
+
+## Atomic Extended profiles
+
+| field | mainnet | sepolia |
+| --- | --- | --- |
+| network | mainnet | sepolia |
+| REST origin | `https://api.starknet.extended.exchange` | `https://api.starknet.sepolia.extended.exchange` |
+| REST prefix | `/api/v1` | `/api/v1` |
+| WebSocket base | `wss://api.starknet.extended.exchange/stream.extended.exchange/v1` | `wss://starknet.sepolia.extended.exchange/stream.extended.exchange/v1` |
+| signing domain | `extended.exchange` | `starknet.sepolia.extended.exchange` |
+| chain ID | `SN_MAIN` | `SN_SEPOLIA` |
+
+REST, WebSocket, signing domain, and chain ID are one frozen tuple. Mixed tuples fail before connect or signing. URLs are parsed and compared by exact protocol, hostname, port, and pathname. Hostname substring matching is not used.
+
+Effective REST URL for `/info/markets` on Sepolia:
+
+```text
+https://api.starknet.sepolia.extended.exchange/api/v1/info/markets
+```
+
+Origins with a non-root pathname, or resources that already include `/api/v1`, fail with `EXTENDED_REST_PREFIX_DOUBLE`.
+
+SNIP-12 `name` remains `Perpetuals` (official SDK vector / existing hash). Profile `chainId` selects `SN_MAIN` vs `SN_SEPOLIA`. Profile `signingDomain` is the host identity used for qualification.
+
+## Credentials
+
+Sandbox reads only:
+
+```text
+EXTENDED_TESTNET_API_KEY
+EXTENDED_TESTNET_STARK_PRIVATE_KEY
+EXTENDED_TESTNET_STARK_PUBLIC_KEY
+EXTENDED_TESTNET_VAULT_ID
+```
+
+Sandbox rejects any present mainnet credential name (`EXTENDED_API_KEY`, `EXTENDED_STARK_PRIVATE_KEY`, `EXTENDED_STARK_PUBLIC_KEY`, `EXTENDED_VAULT`, `EXTENDED_VAULT_ID`) and mixed sets. Live rejects present testnet credential names. This packet uses placeholder names only. No `.env` file was created. No real key was requested or loaded.
+
+## State isolation
+
+Network identity is bound into scope keys as `#extended-net-mainnet` or `#extended-net-sepolia` when sandbox is selected or `EXTENDED_NETWORK` is explicit. Historical dry-run scope keys remain unbound. Legacy state without a network token fails closed in sandbox (`EXTENDED_NETWORK_IDENTITY_MISSING`). Mainnet vs Sepolia bound keys differ. Client-order ownership prefix includes the network token when one is bound.
+
+## Changed files
+
+Additional source paths beyond the expected list, with justification:
+
+- `src/extendedNetwork.ts` — single module for profiles, execution-target parse, credential separation, URL exactness, and write gate.
+- `src/loop.ts` — must apply the execution gate and bind network into lease/risk/cursor/ownership identities before connect.
+- `src/officialStats.ts` — `createExchange` now requires an atomic profile; sandbox must not construct a mainnet transport.
+- `src/experimentTelemetry.ts` — `ExperimentMode` includes `sandbox`.
+- `test/helpers/env.ts` — restore new env names so tests cannot leak placeholder secrets.
+- `test/helpers/offlineNetworkGuard.ts` — accidental fetch/DNS to Extended hosts fails the unit test.
+- `test/helpers/reduction.ts` — existing offline vendor fixture must construct an atomic mainnet profile, then sink `apiUrl` to `http://127.0.0.1:1`.
+- `packages/extended-canary/file-manifest.json` — exact add of `src/extendedNetwork.ts` (required by local import closure).
+- `package.json` — add the new test file to `npm test` only.
+- `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` — this packet.
+
+`package-lock.json` and production dependency versions were not changed. Root audit baseline was not relaxed. GitHub Actions trust policy was not changed. Source-policy exceptions were not broadened.
+
+### numstat vs frozen R1
+
+```text
+15	0	.env.example
+326	0	docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md
+1	1	package.json
+1	0	packages/extended-canary/file-manifest.json
+33	4	src/config.ts
+1	1	src/experimentTelemetry.ts
+413	0	src/extendedNetwork.ts
+28	6	src/loop.ts
+19	4	src/officialStats.ts
+15	5	src/venues/extended.ts
+4	2	src/venues/extendedAccountStream.ts
+544	0	test/experiment-v02-r2a-sandbox-boundary.test.ts
+32	12	test/helpers/env.ts
+48	0	test/helpers/offlineNetworkGuard.ts
+8	1	test/helpers/reduction.ts
+58	6	vendor/extended/exchange/extended.js
+3	1	vendor/extended/exchange/index.js
+```
+
+Implementation diff SHA-256 (excluding this evidence file):
+
+```text
+107e18b2596beca621ba2ecae7676d87f768b9a470ccdda13d14a4466ee45909
+```
+
+### per-file blob SHA (git hash-object)
+
+| path | before (frozen R1) | after |
+| --- | --- | --- |
+| `.env.example` | `9e6f256a746e969836e5d687b6e06cbf17462343` | `742ff3c18ed156bb2556f9836142abacba6f3f73` |
+| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | (absent) | (bound after the identity commit) |
+| `package.json` | `ae63c398940b297790cdb386f859d5a4e4441f2d` | `6884451e20d569ef8df74a19f94e4224d9f8f7df` |
+| `packages/extended-canary/file-manifest.json` | `6a92dd24fa0ac49ccd6285035402e3b44aa83f9f` | `cf1f1024e9b4f49f03bf45081f67068f1e24e9fe` |
+| `src/config.ts` | `264804315837bf5e87f3f045397db6487eaf5900` | `3bf0e78de3001a6bffcbfb0aafe1fdb7f5478cde` |
+| `src/experimentTelemetry.ts` | `8f47d8faa31e3bee2773d34dc9cbc19e54da6b6f` | `caef518d3962ae6ebad873fa9a36e2b9e44455c8` |
+| `src/extendedNetwork.ts` | (absent) | `dfce8a64712f64497f2a52fd0846f629996ec848` |
+| `src/loop.ts` | `b8cb9eed9b4d5d6428d90f8d7ecefe7be85e2188` | `429adf11865e899c5e0c02c281b89de78ffd7d22` |
+| `src/officialStats.ts` | `0dfc16ba9186ce9740c743833d22caca6072f0d5` | `006e47f237c3a35be3128d0e9db57d0349282d26` |
+| `src/venues/extended.ts` | `cc3ccedd64f0bd94868f229b9aec90f8ea468794` | `2b5bb0c1771ca658b0197ad95ae371a3519b9ce3` |
+| `src/venues/extendedAccountStream.ts` | `95f649553d42df492f67649f90c9a097f8da3811` | `807d0a4e205657c8a96e921952fc139f555336bc` |
+| `test/experiment-v02-r2a-sandbox-boundary.test.ts` | (absent) | `6aeeeb473a15385fe62dfb6f8972d26437574bdb` |
+| `test/helpers/env.ts` | `018a34314c54b15c89340f56df5cfed273f3439b` | `62fd27710b3318e44c53a2d4c30606a2505ee7b9` |
+| `test/helpers/offlineNetworkGuard.ts` | (absent) | `e056672591e84a9b15be0d073707772d29e5d46e` |
+| `test/helpers/reduction.ts` | `58be1917f18e15767a85d2f1e3ac37c492a299fb` | `60913912dfd6f2358f2bdcbe06f12a5ee53f638d` |
+| `vendor/extended/exchange/extended.js` | `8dda1f29cb7be0986955296e3e47de6b9be80750` | `812d777ebf61a67332fd797dc992868773286fc6` |
+| `vendor/extended/exchange/index.js` | `de4bc830f2f7ae0e109d31fabfc80329421d8c98` | `1f25a52d541bc8a1a1ce7898c737797257a9cc49` |
+
+## Red-first matrix
+
+Tests were added against the unmodified frozen R1 APIs first. A probe on exact HEAD `990a790706e17b52e04d0d1957505cdad5d45862` showed the negative cases were accepted (NO_THROW) except the existing v0.2 live forbid.
+
+| id | case | frozen R1 | after implementation |
+| --- | --- | --- | --- |
+| N1 | sandbox missing explicit network | NO_THROW / accepted | `EXTENDED_NETWORK_REQUIRED` |
+| N2 | sandbox mainnet REST origin | NO_THROW / accepted | `EXTENDED_SANDBOX_MAINNET_REST` |
+| N3 | sandbox mainnet WebSocket origin | derived from REST | `EXTENDED_SANDBOX_MAINNET_WS` |
+| N4 | sandbox SN_MAIN | hardcoded `this.network = 'mainnet'` | `EXTENDED_SANDBOX_SN_MAIN` |
+| N5 | sandbox mainnet signing domain | `this.domain = DOMAINS.mainnet` | `EXTENDED_SANDBOX_MAINNET_SIGNING_DOMAIN` |
+| N6 | sandbox custom endpoint override | NO_THROW / accepted | `EXTENDED_SANDBOX_CUSTOM_ENDPOINT_FORBIDDEN` |
+| N7 | sandbox proxy enabled | NO_THROW / accepted | `EXTENDED_SANDBOX_PROXY_FORBIDDEN` |
+| N8 | sandbox mainnet credential fallback | connector used `EXTENDED_API_KEY` only | `EXTENDED_SANDBOX_MAINNET_CREDENTIAL_FORBIDDEN` |
+| N9 | mixed mainnet and testnet credentials | NO_THROW / accepted | `EXTENDED_SANDBOX_CREDENTIAL_MIXED` |
+| N10 | live mode with Sepolia profile | NO_THROW / accepted | `EXTENDED_LIVE_SEPOLIA_FORBIDDEN` |
+| N11 | live and sandbox confirmations together | NO_THROW / accepted | `EXECUTION_CONFIRMATION_CONFLICT` |
+| N12 | v0.2 live remains forbidden | already THREW `EXPERIMENT_V02_LIVE_FORBIDDEN` | unchanged |
+| N13 | state/cursor/lease network mismatch | unbound scope keys | `EXTENDED_NETWORK_STATE_MISMATCH` |
+| N14 | legacy state without network identity | unbound | `EXTENDED_NETWORK_IDENTITY_MISSING` |
+| N15 | attempted real fetch from a unit test | no guard | `TEST_NETWORK_GUARD_FETCH` |
+| N16 | attempted real WebSocket from a unit test | no guard | `TEST_NETWORK_GUARD_DNS` |
+| N17 | secret values absent from diagnostics | n/a | placeholders absent |
+| N18 | effective URL cannot double-append `/api/v1` | n/a | `EXTENDED_REST_PREFIX_DOUBLE` |
+
+False-positive / positive controls (green after implementation):
+
+| id | control | result |
+| --- | --- | --- |
+| P1 | historical dry-run remains allowed | pass |
+| P2 | explicit Sepolia profile parses offline in sandbox | pass; writes still unauthorized |
+| P3 | explicit mainnet profile parses in authorized v0.1 live context | pass |
+| P4 | official Sepolia REST/WS/domain/chain-ID tuple | pass |
+| P5 | mainnet vs Sepolia state identities differ | pass |
+| P6 | ordinary non-secret diagnostics remain usable | pass |
+| N12 | v0.2 live forbid (pre-existing) | pass |
+| — | do not infer sandbox from Sepolia API URL in dry-run | pass |
+| — | do not convert `DRY_RUN=0` into sandbox | pass |
+
+R2-A tests added: `test/experiment-v02-r2a-sandbox-boundary.test.ts` (29 cases, 29 pass).
+
+## Final test totals
+
+Toolchain: Node v22.23.2 / npm 10.9.8. Commands from a clean `npm ci`.
+
+```text
+npm run typecheck          # pass
+npm run test:security      # tests 178 pass 178 fail 0
+npm run check              # pass; TAP tests 616 pass 616 fail 0 (plus grid.test.ts OK)
+npm run build              # pass (tsc --noEmit)
+npm run verify:action-inventory  # ok true, codes PASS
+npm run pack:extended-canary
+npm run verify:extended-canary   # ok true, CHECKS_OK
+npm run audit:security-baseline  # ok true, high 14, critical 0, existingHighAreNotCleared true
+git diff --check           # clean
+```
+
+`npm run check` TAP summary: `# tests 616` `# pass 616` `# fail 0`. `grid.test.ts OK` is additional and is not included in that TAP count.
+
+## Security / canary
+
+```text
+ROOT_AUDIT_HIGH=14
+ROOT_AUDIT_CRITICAL=0
+ROOT_EXISTING_HIGH_ARE_NOT_CLEARED=true
+CANARY_AUDIT_HIGH=0
+CANARY_AUDIT_CRITICAL=0
+CANARY_AUDIT_TOTAL=0
+GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
+```
+
+Canary content-manifest:
+
+```text
+schema=classic-v0.2-extended-canary-content-manifest/1
+contentManifestSha256=20ae2223a140a383d27e59be6bda9f32944b5b822f698de57e2791a53836c6c1
+lockfileSha256=f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99
+```
+
+`verify:extended-canary`: `unexpectedNetwork=[]`, `secretLikeFiles=[]`, `liveExchangeWrite=false`, `productionCredentialUsed=false`, `probeExitCode=0`.
+
+Independent isolated canary install of `artifacts/extended-canary/classic-grid-extended-canary-0.2.0.tgz` into a temp directory: `npm ci --omit=dev` then `npm audit --omit=dev` reported 0 vulnerabilities (high=0, critical=0, total=0).
+
+Action inventory: `overallPolicyOk=true`, 6 uses, 0 docker actions, codes `PASS`.
+
+## Proof: no credentials, no exchange I/O
+
+- Workspace had no `.env` file.
+- Tests used only `PLACEHOLDER_*` tokens and the already-public starkcrypto self-test vector inside the existing offline reduction fixture.
+- Diagnostic/error tests assert placeholder values never appear in thrown messages.
+- Unit tests install fetch/DNS guards; accidental Extended fetch or WebSocket fails the test.
+- Sandbox `ExtendedExecutor.connect()` throws `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before vendor `init`.
+- Vendor Sepolia `init`/`_reqOnce` also throw `TESTNET_NETWORK_WRITE_UNAUTHORIZED`.
+- Canary verify: no unexpected network, no production credential, no live exchange write.
+- This agent did not contact Extended mainnet or Sepolia, and did not use an API key, Stark key, vault ID, or wallet.
+
+## Proof: frozen R1 branch unchanged
+
+```text
+git rev-parse origin/experiment/classic-v0.2-100u-safety
+= 990a790706e17b52e04d0d1957505cdad5d45862
+git rev-parse origin/experiment/classic-v0.2-100u-safety^{tree}
+= c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
+```
+
+No commit, amend, rebase, merge, reset, or force-push was performed on `experiment/classic-v0.2-100u-safety`. This work is only on `experiment/classic-v0.2-r2-extended-sepolia`.
+
+## Unresolved limitations
+
+1. R2 sandbox/testnet is **not** qualified. Credentialed Sepolia writes remain for a later R2-B task.
+2. Root High=14 findings are unchanged and are not cleared.
+3. Sandbox `runLoop` / `runFlat` / `runStatus` fail closed at `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before lease, telemetry files, or connect. No sandbox run artifacts are produced in R2-A.
+4. WebSocket URL is no longer derived from REST (`http`→`ws`). Sepolia REST host and WS host are different by profile and must stay atomic.
+5. Independent byte review is required. Draft PR CI, if green, is not R2 authorization.
+
+## Commits
+
+Listed after the delivery commits on this branch (`git log --oneline 990a790706e17b52e04d0d1957505cdad5d45862..HEAD`). The identity-bind commit fills that list.

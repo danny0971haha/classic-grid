@@ -54,7 +54,7 @@ export function resolveExecutionCursorPath(p: {
   return path.join(experimentDir(p.experimentId, p.baseDir), "execution-cursors", `${digest}.json`);
 }
 
-export type ExperimentMode = "dry-run" | "live";
+export type ExperimentMode = "dry-run" | "sandbox" | "live";
 
 export type ExperimentManifest = {
   experiment_spec_version: string;
