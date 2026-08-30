@@ -58,9 +58,12 @@ FULL_DIFF_SHA256=2dc50fcd508b82d6569a7c83e3094370892849a2d575c52e5acc88a20320f3e
 CORRECTIVE_IMPLEMENTATION_HEAD=c478a0b36d112f4ecba490a2c7d97e5a74fa910d
 CORRECTIVE_IMPLEMENTATION_TREE=9bd60b17852edc4598dd247d358d5660789dde92
 CORRECTIVE_PRODUCT_DIFF_SHA256=3a3ea87fb588ebb9c16a5250dfee2701ae53f6a8ad3c00fade6ae4ea88388040
+FINAL_HEAD=7f8c7d671df5cb9f0d51b95bcb4113525c372c25
+FINAL_TREE=66873562118ef0a0ede08a262ba57abb7b8d5536
+CORRECTIVE_FULL_DIFF_SHA256=3f57e0fdbf6538a6dacce954cc24084fa6ed597ff942b1f017bb644a4d1751dd
 ```
 
-`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit on top of `REVIEWED_STARTING_HEAD` (an exact match; no reset/rebase/amend). A follow-up evidence commit on this branch records this identity; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
+`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit on top of `REVIEWED_STARTING_HEAD` (an exact match; no reset/rebase/amend). `FINAL_HEAD` is the Corrective 1 identity-bind commit that first recorded that product identity. A follow-up packet-fill commit on this branch may sit on top of `FINAL_HEAD`; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
 
 ```text
 git rev-parse origin/experiment/classic-v0.2-100u-safety
@@ -93,7 +96,7 @@ Paths changed in `CORRECTIVE_IMPLEMENTATION_HEAD` relative to `ACTUAL_STARTING_H
 | `vendor/extended/exchange/extended.js` | `812d777ebf61a67332fd797dc992868773286fc6` | `2004ef3f90915eb82581aa3e8ceb5645f5d027b8` | Production HTTP transport: shared `redirect: "manual"` init + reject 301–308 before body; require exact `websocketBase`. |
 | `test/experiment-v02-r2a-sandbox-boundary.test.ts` | `6aeeeb473a15385fe62dfb6f8972d26437574bdb` | `8742be308110fc26aee88bb1c3e314a58dcace6f` | Behavioral native/proxy redirect tests and websocket tuple tests. |
 | `src/extendedNetwork.ts` | `dfce8a64712f64497f2a52fd0846f629996ec848` | `d31a26b51205f44c9bc6d66f5bcd1f23c6b3fb7a` | One-line comment: `assertSameOriginResponse` is not the production redirect control. |
-| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | `dbd815ef12e7b93e69a7ebc190166464b7bc151a` | (this evidence commit blob) | Record Corrective 1 identity and results. |
+| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | `dbd815ef12e7b93e69a7ebc190166464b7bc151a` | `bdf01c4de79d88611039ebebdc1de0194e13cb65` at Corrective 1 identity-bind; later packet-fill blob supersedes | Record Corrective 1 identity and results. |
 
 `vendor/extended/exchange/index.js` was not changed; `createExchange` already forwarded `websocketBase`. `package-lock.json` and dependency versions were not changed.
 
@@ -419,6 +422,7 @@ a7f90d2e0de06dc00d276a568bb61557e7761046 feat(r2a): add Extended Sepolia sandbox
 b50cd4c2dc1d7e9cfc01d46a38165021187519e7 docs(r2a): bind R2-A candidate identity
 92de0e7d71ab5418412d35135604e1f1d776be08 docs(r2a): record R2-A result HEAD and tree
 c478a0b36d112f4ecba490a2c7d97e5a74fa910d fix(r2a): reject vendor HTTP redirects and require websocketBase
+7f8c7d671df5cb9f0d51b95bcb4113525c372c25 docs(r2a): bind Corrective 1 candidate identity
 ```
 
-Evidence commits after `CORRECTIVE_IMPLEMENTATION_HEAD` do not change product bytes. Independent review should check out the pushed branch tip.
+The identity-bind and packet-fill commits do not change product bytes. Independent review should check out the pushed branch tip.
