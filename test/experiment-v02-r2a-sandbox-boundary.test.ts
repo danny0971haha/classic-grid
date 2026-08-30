@@ -12,7 +12,6 @@ import {
   EXTENDED_NETWORK_PROFILES,
   TESTNET_NETWORK_WRITE_AUTHORIZED,
   MAINNET_NETWORK_WRITE_AUTHORIZED,
-  assertSameOriginResponse,
   assertSandboxWriteAllowed,
   assertStateNetworkIdentity,
   bindNetworkScopeKey,
@@ -56,12 +55,122 @@ const V01_LIVE_ENV = {
   EXPERIMENT_ACCOUNT_SCOPE: "research-1",
 } as const;
 
+const FORBIDDEN_REDIRECT_STATUSES = [301, 302, 303, 307, 308] as const;
+const MAINNET_REST_HOST = "api.starknet.extended.exchange";
+const VENDOR_INDEX_HREF = pathToFileURL(path.join(ROOT, "vendor/extended/exchange/index.js")).href;
+const LOOPBACK_PROXY = "http://127.0.0.1:9";
+const REDIRECT_LOCATION_WITH_SECRET =
+  "https://user:PLACEHOLDER_MAINNET_API_KEY_R2A@evil.example/steal?key=PLACEHOLDER_TESTNET_API_KEY_R2A";
+
+type VendorExchange = {
+  network: string;
+  domain: { chainId: string };
+  signingDomain: string;
+  apiUrl: string;
+  websocketBase: string;
+  init: () => Promise<unknown>;
+  _reqOnce: (
+    method: string,
+    path: string,
+    body?: unknown,
+    opts?: { full?: boolean },
+  ) => Promise<unknown>;
+};
+
+type CreateExchange = (cfg: Record<string, unknown>) => VendorExchange;
+
+type FetchCall = { url: string; init: RequestInit & { dispatcher?: unknown } };
+
 function mixedProfile(overrides: Partial<ExtendedNetworkProfile>): ExtendedNetworkProfile {
   return { ...EXTENDED_NETWORK_PROFILES.sepolia, ...overrides };
 }
 
 function expectThrow(fn: () => unknown, pattern: RegExp, label: string): void {
   assert.throws(fn, pattern, label);
+}
+
+function vendorProfileArgs(profile: ExtendedNetworkProfile): Record<string, string> {
+  return {
+    apiUrl: profile.restOrigin,
+    network: profile.network,
+    chainId: profile.chainId,
+    signingDomain: profile.signingDomain,
+    websocketBase: profile.websocketBase,
+  };
+}
+
+async function loadCreateExchange(): Promise<CreateExchange> {
+  const mod = await import(VENDOR_INDEX_HREF) as { createExchange: CreateExchange };
+  return mod.createExchange;
+}
+
+function createMainnetVendor(createExchange: CreateExchange): VendorExchange {
+  return createExchange({
+    apiKey: PLACEHOLDER_MAINNET_KEY,
+    vault: 424242,
+    starkPrivateKey: PLACEHOLDER_TESTNET_PRIV,
+    ...vendorProfileArgs(EXTENDED_NETWORK_PROFILES.mainnet),
+  });
+}
+
+function instrumentBodyReads(response: Response): { bodyRead: () => boolean } {
+  let bodyRead = false;
+  const origJson = response.json.bind(response);
+  const origText = response.text.bind(response);
+  Object.defineProperty(response, "json", {
+    configurable: true,
+    value: async () => {
+      bodyRead = true;
+      return origJson();
+    },
+  });
+  Object.defineProperty(response, "text", {
+    configurable: true,
+    value: async () => {
+      bodyRead = true;
+      return origText();
+    },
+  });
+  return { bodyRead: () => bodyRead };
+}
+
+function installRedirectAwareFetchMock(
+  handler: (url: string, init: FetchCall["init"]) => Response,
+): { calls: FetchCall[]; restore: () => void } {
+  const calls: FetchCall[] = [];
+  const prev = globalThis.fetch;
+  const mock = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const requestInit = (init ?? {}) as FetchCall["init"];
+    calls.push({ url, init: requestInit });
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error("TEST_NETWORK_GUARD_FETCH");
+    }
+    if (parsed.protocol !== "https:" || parsed.hostname !== MAINNET_REST_HOST) {
+      throw new Error("TEST_REDIRECT_TARGET_CONTACTED");
+    }
+    const response = handler(url, requestInit);
+    const status = response.status;
+    const redirectMode = requestInit.redirect ?? "follow";
+    const isRedirect =
+      status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+    if (isRedirect && redirectMode !== "manual" && redirectMode !== "error") {
+      const location = response.headers.get("Location") || "";
+      const next = new URL(location, url).href;
+      return mock(next, requestInit);
+    }
+    return response;
+  }) as typeof fetch;
+  globalThis.fetch = mock;
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = prev;
+    },
+  };
 }
 
 describe("R2-A Extended Sepolia sandbox boundary", () => {
@@ -449,7 +558,7 @@ describe("R2-A Extended Sepolia sandbox boundary", () => {
     );
   });
 
-  it("rejects plaintext, embedded credentials, unexpected ports, and cross-host redirects", () => {
+  it("rejects plaintext, embedded credentials, and unexpected ports", () => {
     expectThrow(
       () =>
         qualifySandboxNetworkProfile(
@@ -476,23 +585,17 @@ describe("R2-A Extended Sepolia sandbox boundary", () => {
       /EXTENDED_ENDPOINT_UNEXPECTED_PORT/,
       "port",
     );
-    expectThrow(
-      () =>
-        assertSameOriginResponse(
-          "https://api.starknet.sepolia.extended.exchange/api/v1/info/markets",
-          "https://api.starknet.extended.exchange/api/v1/info/markets",
-        ),
-      /EXTENDED_ENDPOINT_REDIRECT_HOST/,
-      "redirect",
-    );
   });
 
   it("vendor no longer unconditionally assigns mainnet network/domain", async () => {
     const vendor = fs.readFileSync(path.join(ROOT, "vendor/extended/exchange/extended.js"), "utf8");
     assert.equal(vendor.includes("this.network = 'mainnet'"), false);
     assert.equal(vendor.includes("this.domain = DOMAINS.mainnet"), false);
+    assert.match(vendor, /redirect: 'manual'/);
+    assert.match(vendor, /EXTENDED_WEBSOCKET_BASE_REQUIRED/);
+    assert.equal(vendor.includes("assertSameOriginResponse"), false);
     const sepolia = EXTENDED_NETWORK_PROFILES.sepolia;
-    const href = pathToFileURL(path.join(ROOT, "vendor/extended/exchange/index.js")).href;
+    const href = VENDOR_INDEX_HREF;
     const { createExchange } = await import(href) as {
       createExchange: (cfg: Record<string, unknown>) => {
         network: string;
@@ -540,5 +643,248 @@ describe("R2-A Extended Sepolia sandbox boundary", () => {
     });
     assert.equal(TESTNET_NETWORK_WRITE_AUTHORIZED, false);
     assert.equal(MAINNET_NETWORK_WRITE_AUTHORIZED, false);
+  });
+
+  it("C-WS1: missing websocketBase is rejected", async () => {
+    const createExchange = await loadCreateExchange();
+    const sepolia = EXTENDED_NETWORK_PROFILES.sepolia;
+    expectThrow(
+      () =>
+        createExchange({
+          apiKey: PLACEHOLDER_TESTNET_KEY,
+          vault: 1,
+          starkPrivateKey: "0x1",
+          apiUrl: sepolia.restOrigin,
+          network: sepolia.network,
+          chainId: sepolia.chainId,
+          signingDomain: sepolia.signingDomain,
+        }),
+      /EXTENDED_WEBSOCKET_BASE_REQUIRED/,
+      "C-WS1",
+    );
+  });
+
+  it("C-WS2: empty websocketBase is rejected", async () => {
+    const createExchange = await loadCreateExchange();
+    const sepolia = EXTENDED_NETWORK_PROFILES.sepolia;
+    expectThrow(
+      () =>
+        createExchange({
+          apiKey: PLACEHOLDER_TESTNET_KEY,
+          vault: 1,
+          starkPrivateKey: "0x1",
+          ...vendorProfileArgs(sepolia),
+          websocketBase: "",
+        }),
+      /EXTENDED_WEBSOCKET_BASE_REQUIRED/,
+      "C-WS2-empty",
+    );
+    expectThrow(
+      () =>
+        createExchange({
+          apiKey: PLACEHOLDER_TESTNET_KEY,
+          vault: 1,
+          starkPrivateKey: "0x1",
+          ...vendorProfileArgs(sepolia),
+          websocketBase: "   ",
+        }),
+      /EXTENDED_WEBSOCKET_BASE_REQUIRED/,
+      "C-WS2-whitespace",
+    );
+  });
+
+  it("C-WS3: mainnet websocketBase with Sepolia profile is rejected", async () => {
+    const createExchange = await loadCreateExchange();
+    const sepolia = EXTENDED_NETWORK_PROFILES.sepolia;
+    expectThrow(
+      () =>
+        createExchange({
+          apiKey: PLACEHOLDER_TESTNET_KEY,
+          vault: 1,
+          starkPrivateKey: "0x1",
+          ...vendorProfileArgs(sepolia),
+          websocketBase: EXTENDED_NETWORK_PROFILES.mainnet.websocketBase,
+        }),
+      /EXTENDED_PROFILE_MIXED/,
+      "C-WS3",
+    );
+  });
+
+  it("C-WS4: Sepolia websocketBase with mainnet profile is rejected", async () => {
+    const createExchange = await loadCreateExchange();
+    const mainnet = EXTENDED_NETWORK_PROFILES.mainnet;
+    expectThrow(
+      () =>
+        createExchange({
+          apiKey: PLACEHOLDER_MAINNET_KEY,
+          vault: 1,
+          starkPrivateKey: "0x1",
+          ...vendorProfileArgs(mainnet),
+          websocketBase: EXTENDED_NETWORK_PROFILES.sepolia.websocketBase,
+        }),
+      /EXTENDED_PROFILE_MIXED/,
+      "C-WS4",
+    );
+  });
+
+  it("C-WS5: correct mainnet tuple remains accepted in the authorized v0.1 context", async () => {
+    const createExchange = await loadCreateExchange();
+    const mainnet = EXTENDED_NETWORK_PROFILES.mainnet;
+    const ex = createMainnetVendor(createExchange);
+    assert.equal(ex.network, "mainnet");
+    assert.equal(ex.domain.chainId, "SN_MAIN");
+    assert.equal(ex.signingDomain, mainnet.signingDomain);
+    assert.equal(ex.apiUrl, mainnet.restOrigin);
+    assert.equal(ex.websocketBase, mainnet.websocketBase);
+    withEnv({ ...V01_LIVE_ENV, EXTENDED_NETWORK: "mainnet" }, () => {
+      const cfg = loadRuntimeConfig();
+      assert.equal(cfg.executionTarget, "live");
+      assert.deepEqual(cfg.extendedProfile, mainnet);
+      assertLiveAllowed(cfg);
+    });
+  });
+
+  it("C-WS6: correct Sepolia tuple parses offline but writes stay unauthorized", async () => {
+    const createExchange = await loadCreateExchange();
+    const sepolia = EXTENDED_NETWORK_PROFILES.sepolia;
+    const ex = createExchange({
+      apiKey: PLACEHOLDER_TESTNET_KEY,
+      vault: 1,
+      starkPrivateKey: "0x1",
+      ...vendorProfileArgs(sepolia),
+    });
+    assert.equal(ex.network, "sepolia");
+    assert.equal(ex.websocketBase, sepolia.websocketBase);
+    await assert.rejects(() => ex.init(), /TESTNET_NETWORK_WRITE_UNAUTHORIZED/);
+    withEnv(SANDBOX_ENV, () => {
+      const cfg = loadRuntimeConfig();
+      assert.deepEqual(cfg.extendedProfile, sepolia);
+      expectThrow(() => assertSandboxWriteAllowed(), /TESTNET_NETWORK_WRITE_UNAUTHORIZED/, "C-WS6");
+    });
+  });
+
+  it("C-R-MOCK: omitted redirect policy would contact the Location target", async () => {
+    const mock = installRedirectAwareFetchMock(
+      () =>
+        new Response(JSON.stringify({ status: "OK", data: { hijacked: true } }), {
+          status: 302,
+          headers: { Location: REDIRECT_LOCATION_WITH_SECRET },
+        }),
+    );
+    try {
+      await assert.rejects(
+        () => globalThis.fetch(`${EXTENDED_NETWORK_PROFILES.mainnet.restOrigin}/api/v1/info/markets`),
+        /TEST_REDIRECT_TARGET_CONTACTED/,
+      );
+      assert.equal(mock.calls.length >= 2, true);
+    } finally {
+      mock.restore();
+    }
+  });
+
+  for (const proxy of [false, true]) {
+    const pathLabel = proxy ? "proxy" : "native";
+    for (const status of FORBIDDEN_REDIRECT_STATUSES) {
+      it(`C-R${status}-${pathLabel}: ${pathLabel} fetch rejects HTTP ${status} before follow or body parse`, async () => {
+        const createExchange = await loadCreateExchange();
+        const ex = createMainnetVendor(createExchange);
+        const path = "/api/v1/info/markets";
+        const expectedUrl = `${EXTENDED_NETWORK_PROFILES.mainnet.restOrigin}${path}`;
+        let bodyRead = (): boolean => false;
+        const env = proxy
+          ? { EXTENDED_USE_PROXY: "1", EXTENDED_PROXY: LOOPBACK_PROXY }
+          : { EXTENDED_USE_PROXY: "", EXTENDED_PROXY: "" };
+        await withEnvAsync(env, async () => {
+          const mock = installRedirectAwareFetchMock(() => {
+            const response = new Response(
+              JSON.stringify({ status: "OK", data: { hijacked: true } }),
+              {
+                status,
+                headers: {
+                  "Content-Type": "application/json",
+                  Location: REDIRECT_LOCATION_WITH_SECRET,
+                },
+              },
+            );
+            const inst = instrumentBodyReads(response);
+            bodyRead = inst.bodyRead;
+            return response;
+          });
+          try {
+            await assert.rejects(() => ex._reqOnce("GET", path), (error: unknown) => {
+              const message = String((error as Error).message);
+              assert.equal(message, "EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN");
+              assert.equal(message.includes(PLACEHOLDER_MAINNET_KEY), false);
+              assert.equal(message.includes(PLACEHOLDER_TESTNET_KEY), false);
+              assert.equal(message.includes(PLACEHOLDER_TESTNET_PRIV), false);
+              assert.equal(message.includes("424242"), false);
+              assert.equal(message.includes("evil.example"), false);
+              assert.equal(message.includes(REDIRECT_LOCATION_WITH_SECRET), false);
+              return true;
+            });
+            assert.equal(mock.calls.length, 1, "redirect target must not be contacted");
+            assert.equal(mock.calls[0]?.url, expectedUrl);
+            assert.equal(mock.calls[0]?.init.redirect, "manual");
+            if (proxy) {
+              assert.equal(mock.calls[0]?.init.dispatcher == null, false);
+            } else {
+              assert.equal(mock.calls[0]?.init.dispatcher, undefined);
+            }
+            assert.equal(bodyRead(), false);
+          } finally {
+            mock.restore();
+          }
+        });
+      });
+    }
+
+    it(`C-R200-${pathLabel}: non-redirect ${pathLabel} response still returns payload data`, async () => {
+      const createExchange = await loadCreateExchange();
+      const ex = createMainnetVendor(createExchange);
+      const path = "/api/v1/info/markets";
+      const env = proxy
+        ? { EXTENDED_USE_PROXY: "1", EXTENDED_PROXY: LOOPBACK_PROXY }
+        : { EXTENDED_USE_PROXY: "", EXTENDED_PROXY: "" };
+      await withEnvAsync(env, async () => {
+        const mock = installRedirectAwareFetchMock(
+          () =>
+            new Response(JSON.stringify({ data: { ok: true, markets: [] } }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+        );
+        try {
+          const data = await ex._reqOnce("GET", path);
+          assert.deepEqual(data, { ok: true, markets: [] });
+          assert.equal(mock.calls.length, 1);
+          assert.equal(mock.calls[0]?.init.redirect, "manual");
+        } finally {
+          mock.restore();
+        }
+      });
+    });
+  }
+
+  it("C-R-SAME-ORIGIN: same-origin Location is still not followed", async () => {
+    const createExchange = await loadCreateExchange();
+    const ex = createMainnetVendor(createExchange);
+    const path = "/api/v1/info/markets";
+    const sameOrigin = `${EXTENDED_NETWORK_PROFILES.mainnet.restOrigin}/api/v1/user/account/info`;
+    const mock = installRedirectAwareFetchMock((url) => {
+      if (url === sameOrigin) {
+        throw new Error("TEST_REDIRECT_TARGET_CONTACTED");
+      }
+      return new Response(JSON.stringify({ data: { ok: true } }), {
+        status: 307,
+        headers: { Location: sameOrigin },
+      });
+    });
+    try {
+      await assert.rejects(() => ex._reqOnce("GET", path), /EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN/);
+      assert.equal(mock.calls.length, 1);
+      assert.equal(mock.calls[0]?.init.redirect, "manual");
+    } finally {
+      mock.restore();
+    }
   });
 });

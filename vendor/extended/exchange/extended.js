@@ -47,11 +47,15 @@ function resolveVendorProfile(opts) {
   const profile = EXTENDED_VENDOR_NETWORK_PROFILES[opts?.network];
   if (!profile) throw new Error('EXTENDED_NETWORK_PROFILE_REQUIRED');
   const apiUrl = String(opts.apiUrl || '').replace(/\/$/, '');
+  const websocketBase = opts.websocketBase;
+  if (websocketBase == null || String(websocketBase).trim() === '') {
+    throw new Error('EXTENDED_WEBSOCKET_BASE_REQUIRED');
+  }
   if (
     apiUrl !== profile.restOrigin ||
     opts.chainId !== profile.chainId ||
     opts.signingDomain !== profile.signingDomain ||
-    (opts.websocketBase != null && opts.websocketBase !== profile.websocketBase)
+    websocketBase !== profile.websocketBase
   ) {
     throw new Error('EXTENDED_PROFILE_MIXED');
   }
@@ -62,6 +66,32 @@ const INTERVALS = { 60: 'PT1M', 300: 'PT5M', 900: 'PT15M', 1800: 'PT30M', 3600: 
 const ORDER_EXPIRY_DAYS = 28;          // resting grid orders live this long
 const SETTLEMENT_BUFFER_DAYS = 14;     // same buffer as the official SDK
 const USER_AGENT = 'ExtendedGridBot/1.0';
+const FORBIDDEN_HTTP_REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+export function buildVendorRequestInit(method, headers, body) {
+  return {
+    method,
+    headers,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000),
+    redirect: 'manual',
+  };
+}
+
+export function rejectForbiddenHttpRedirect(response) {
+  if (FORBIDDEN_HTTP_REDIRECT_STATUSES.has(Number(response?.status))) {
+    throw new Error('EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN');
+  }
+}
+
+async function dispatchVendorHttp(url, init, proxyUrl) {
+  const requestInit = { ...init, redirect: 'manual' };
+  if (proxyUrl) {
+    const { ProxyAgent } = await import('undici');
+    return fetch(url, { ...requestInit, dispatcher: new ProxyAgent(proxyUrl) });
+  }
+  return fetch(url, requestInit);
+}
 
 export class ExtendedExchange extends EventEmitter {
   constructor(opts = {}) {
@@ -185,19 +215,9 @@ export class ExtendedExchange extends EventEmitter {
     }
     const useProxy = /^(1|true|yes)$/i.test(String(process.env.EXTENDED_USE_PROXY || ''));
     const proxyUrl = useProxy ? (process.env.EXTENDED_PROXY || '').trim() : '';
-    const init = {
-      method,
-      headers: this._headers(),
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(15000),
-    };
-    let res;
-    if (proxyUrl) {
-      const { ProxyAgent, fetch: undiciFetch } = await import('undici');
-      res = await undiciFetch(this.apiUrl + path, { ...init, dispatcher: new ProxyAgent(proxyUrl) });
-    } else {
-      res = await fetch(this.apiUrl + path, init);
-    }
+    const init = buildVendorRequestInit(method, this._headers(), body);
+    const res = await dispatchVendorHttp(this.apiUrl + path, init, proxyUrl);
+    rejectForbiddenHttpRedirect(res);
     let j = null;
     try { j = await res.json(); } catch { /* some endpoints return empty bodies */ }
     if (res.status === 401) throw new Error('API key 无效或已过期 (401)。');

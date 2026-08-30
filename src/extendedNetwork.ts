@@ -195,6 +195,7 @@ export function effectiveWebsocketUrl(profile: ExtendedNetworkProfile, channel =
   return `${profile.websocketBase.replace(/\/$/, "")}/${suffix}`;
 }
 
+/** Not the production redirect control. Vendor `_reqOnce` rejects all HTTP redirects. */
 export function assertSameOriginResponse(requestUrl: string, responseUrl: string): void {
   const request = new URL(requestUrl);
   const response = new URL(responseUrl);
