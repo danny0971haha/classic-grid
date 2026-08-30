@@ -1,18 +1,19 @@
 # Classic v0.2 R2-A — Extended Sepolia sandbox boundary
 
-**Status:** R2A_IMPLEMENTATION=REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
-**Date:** 2026-08-28
+**Status:** R2A_CORRECTIVE_IMPLEMENTATION=REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Date:** 2026-08-31
 **Repository:** `danny0971haha/classic-grid`
 **Branch:** `experiment/classic-v0.2-r2-extended-sepolia`
 **Base:** `experiment/classic-v0.2-100u-safety`
-**Task:** `CLASSIC_V02_R2A_EXTENDED_SEPOLIA_SANDBOX_BOUNDARY`
+**Task:** `CLASSIC_V02_R2A_CORRECTIVE_1`
 
-This document does **not** declare R2 PASS. CI success is evidence only and is not R2 qualification. The implementation agent must not self-declare PASS.
+This document does **not** declare R2 PASS, R2A PASS, testnet qualification, live readiness, merge, or deployment. CI success is evidence only.
 
 ```text
-TASK=CLASSIC_V02_R2A_EXTENDED_SEPOLIA_SANDBOX_BOUNDARY
+TASK=CLASSIC_V02_R2A_CORRECTIVE_1
 R1_BASE_PRESERVED=YES
 R2A_IMPLEMENTATION=REVIEW_CANDIDATE
+R2A_CORRECTIVE_IMPLEMENTATION=REVIEW_CANDIDATE
 R2_SANDBOX_TESTNET_QUALIFIED=NO
 R3_BOUNDED_LIVE_CANARY_ELIGIBLE=NO
 TESTNET_NETWORK_WRITE_EXECUTED=NO
@@ -29,6 +30,14 @@ SELF_DECLARED_PASS=NO
 NEXT_ACTION=INDEPENDENT_R2A_CURRENT_BYTE_REVIEW
 TESTNET_NETWORK_WRITE_AUTHORIZED=NO
 MAINNET_NETWORK_WRITE_AUTHORIZED=NO
+HTTP_REDIRECT_MANUAL=YES
+REDIRECT_STATUS_301_TO_308_REJECTED=YES
+REDIRECT_TARGET_CONTACTED=NO
+WEBSOCKET_BASE_REQUIRED=YES
+ATOMIC_PROFILE_ENFORCED=YES
+EXTERNAL_EXTENDED_NETWORK_CONTACTED=NO
+PACKAGE_LOCK_CHANGED=NO
+DEPENDENCY_CHANGED=NO
 ```
 
 ## Binding
@@ -38,14 +47,20 @@ FROZEN_R1_BRANCH=experiment/classic-v0.2-100u-safety
 FROZEN_R1_HEAD=990a790706e17b52e04d0d1957505cdad5d45862
 FROZEN_R1_TREE=c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
 SOURCE_BRANCH=experiment/classic-v0.2-r2-extended-sepolia
+REVIEWED_STARTING_HEAD=92de0e7d71ab5418412d35135604e1f1d776be08
+ACTUAL_STARTING_HEAD=92de0e7d71ab5418412d35135604e1f1d776be08
+ACTUAL_STARTING_TREE=53acae880cecfa50495ddedb930b195b36a8b76f
 IMPLEMENTATION_HEAD=a7f90d2e0de06dc00d276a568bb61557e7761046
 IMPLEMENTATION_TREE=46caf75a80048d18a56e46737f273e8ae0bb272a
 RESULT_HEAD=b50cd4c2dc1d7e9cfc01d46a38165021187519e7
 RESULT_TREE=871f7866c88a6400b4c06ac0b56ecb207ba039c5
 FULL_DIFF_SHA256=2dc50fcd508b82d6569a7c83e3094370892849a2d575c52e5acc88a20320f3e5
+CORRECTIVE_IMPLEMENTATION_HEAD=c478a0b36d112f4ecba490a2c7d97e5a74fa910d
+CORRECTIVE_IMPLEMENTATION_TREE=9bd60b17852edc4598dd247d358d5660789dde92
+CORRECTIVE_PRODUCT_DIFF_SHA256=3a3ea87fb588ebb9c16a5250dfee2701ae53f6a8ad3c00fade6ae4ea88388040
 ```
 
-`IMPLEMENTATION_HEAD` is the product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. A follow-up packet-fill commit on this branch may sit on top of `RESULT_HEAD`; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
+`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit on top of `REVIEWED_STARTING_HEAD` (an exact match; no reset/rebase/amend). A follow-up evidence commit on this branch records this identity; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
 
 ```text
 git rev-parse origin/experiment/classic-v0.2-100u-safety
@@ -54,7 +69,70 @@ git rev-parse origin/experiment/classic-v0.2-100u-safety^{tree}
 = c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
 ```
 
-Local toolchain during implementation: Node v22.23.2 / npm 10.9.8.
+Local toolchain during Corrective 1: Node v22.23.2 / npm 10.9.8 (repository-pinned). Original R2-A implementation used the same pin.
+
+## Corrective 1 — HTTP redirect boundary and atomic WebSocket profile
+
+Corrective 1 does not authorize testnet or mainnet writes. It closes two R2-A review findings on the existing vendor transport:
+
+1. **HTTP redirects.** Native `fetch` and the proxy/undici path now share one request-init builder (`redirect: "manual"`) and one redirect guard. Statuses 301, 302, 303, 307, and 308 fail closed with `EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN` **before** `res.json()` / body parse. The `Location` target is never requested, including same-origin, cross-origin, mainnet, Sepolia, localhost, and credential-bearing URLs. Thrown diagnostics are the stable code only — no API key, vault ID, private key, Location, or response body. `assertSameOriginResponse` in `src/extendedNetwork.ts` is **not** the production control; inspecting `response.url` after an automatic follow is not used and is not claimed sufficient. Credential-bearing requests never automatically follow a redirect.
+2. **WebSocket profile atomicity.** `resolveVendorProfile` requires `websocketBase` to be present and exactly equal to the frozen network profile value. Missing or empty values throw `EXTENDED_WEBSOCKET_BASE_REQUIRED`. A mismatched host (mainnet WS on Sepolia, or Sepolia WS on mainnet) throws `EXTENDED_PROFILE_MIXED`. The WebSocket endpoint is not derived from REST. Caller-supplied custom WS hosts are rejected.
+
+### Corrective 1 changed-file inventory
+
+Paths changed in `CORRECTIVE_IMPLEMENTATION_HEAD` relative to `ACTUAL_STARTING_HEAD`:
+
+```text
+1	0	src/extendedNetwork.ts
+358	12	test/experiment-v02-r2a-sandbox-boundary.test.ts
+34	14	vendor/extended/exchange/extended.js
+```
+
+| path | before (starting HEAD `92de0e7`) | after (corrective product `c478a0b`) | justification |
+| --- | --- | --- | --- |
+| `vendor/extended/exchange/extended.js` | `812d777ebf61a67332fd797dc992868773286fc6` | `2004ef3f90915eb82581aa3e8ceb5645f5d027b8` | Production HTTP transport: shared `redirect: "manual"` init + reject 301–308 before body; require exact `websocketBase`. |
+| `test/experiment-v02-r2a-sandbox-boundary.test.ts` | `6aeeeb473a15385fe62dfb6f8972d26437574bdb` | `8742be308110fc26aee88bb1c3e314a58dcace6f` | Behavioral native/proxy redirect tests and websocket tuple tests. |
+| `src/extendedNetwork.ts` | `dfce8a64712f64497f2a52fd0846f629996ec848` | `d31a26b51205f44c9bc6d66f5bcd1f23c6b3fb7a` | One-line comment: `assertSameOriginResponse` is not the production redirect control. |
+| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | `dbd815ef12e7b93e69a7ebc190166464b7bc151a` | (this evidence commit blob) | Record Corrective 1 identity and results. |
+
+`vendor/extended/exchange/index.js` was not changed; `createExchange` already forwarded `websocketBase`. `package-lock.json` and dependency versions were not changed.
+
+Product diff SHA-256 versus `ACTUAL_STARTING_HEAD` (excluding this evidence file):
+
+```text
+3a3ea87fb588ebb9c16a5250dfee2701ae53f6a8ad3c00fade6ae4ea88388040
+```
+
+### Corrective 1 tests
+
+Behavioral coverage (not source-text-only):
+
+| id | case | result |
+| --- | --- | --- |
+| C-R-MOCK | mock follow control: omitted `redirect: "manual"` contacts Location | `TEST_REDIRECT_TARGET_CONTACTED` |
+| C-R301-native / C-R301-proxy | 301 rejected; `redirect: "manual"`; target not contacted; body not parsed | `EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN` |
+| C-R302-native / C-R302-proxy | 302 same | pass |
+| C-R303-native / C-R303-proxy | 303 same | pass |
+| C-R307-native / C-R307-proxy | 307 same | pass |
+| C-R308-native / C-R308-proxy | 308 same | pass |
+| C-R200-native / C-R200-proxy | non-redirect still returns `j.data` | pass |
+| C-R-SAME-ORIGIN | same-origin Location not followed | pass |
+| C-WS1 | missing `websocketBase` | `EXTENDED_WEBSOCKET_BASE_REQUIRED` |
+| C-WS2 | empty / whitespace `websocketBase` | `EXTENDED_WEBSOCKET_BASE_REQUIRED` |
+| C-WS3 | mainnet WS with Sepolia profile | `EXTENDED_PROFILE_MIXED` |
+| C-WS4 | Sepolia WS with mainnet profile | `EXTENDED_PROFILE_MIXED` |
+| C-WS5 | correct mainnet tuple in authorized v0.1 context | accepted |
+| C-WS6 | correct Sepolia tuple parses; writes unauthorized | `TESTNET_NETWORK_WRITE_UNAUTHORIZED` |
+| N8/N9 | sandbox/mainnet credential separation | still pass |
+| N13/N14/P5 | state network binding | still pass |
+| sandbox connect / vendor Sepolia `init` | testnet write hard-disable | still pass |
+| N12 | v0.2 live forbid | still pass |
+| P1 | historical dry-run | still pass |
+| N15/N16 / offline guard | no external Extended access in tests | still pass |
+
+Redirect tests use placeholder credentials only (`PLACEHOLDER_MAINNET_API_KEY_R2A`, `PLACEHOLDER_TESTNET_*`) and a Location containing those placeholders plus `user:…@evil.example`. The thrown message is exactly `EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN`. Loopback proxy URL `http://127.0.0.1:9` is used only to exercise `ProxyAgent` construction; fetch is mocked and never contacts Extended or the loopback proxy.
+
+R2-A sandbox-boundary file: 49 tests, 49 pass (was 29). `npm run check` TAP: `# tests 636` `# pass 636` `# fail 0` (was 616; +20 corrective cases). `grid.test.ts OK` is additional.
 
 ## Goal
 
@@ -246,23 +324,32 @@ False-positive / positive controls (green after implementation):
 
 R2-A tests added: `test/experiment-v02-r2a-sandbox-boundary.test.ts` (29 cases, 29 pass).
 
-## Final test totals
+## Corrective 1 validation (2026-08-31)
 
-Toolchain: Node v22.23.2 / npm 10.9.8. Commands from a clean `npm ci`.
+Toolchain: Node v22.23.2 / npm 10.9.8. Commands from a clean `npm ci`. No `.env` file in the workspace.
 
 ```text
-npm run typecheck          # pass
-npm run test:security      # tests 178 pass 178 fail 0
-npm run check              # pass; TAP tests 616 pass 616 fail 0 (plus grid.test.ts OK)
-npm run build              # pass (tsc --noEmit)
-npm run verify:action-inventory  # ok true, codes PASS
-npm run pack:extended-canary
-npm run verify:extended-canary   # ok true, CHECKS_OK
-npm run audit:security-baseline  # ok true, high 14, critical 0, existingHighAreNotCleared true
-git diff --check           # clean
+node --version                 # v22.23.2
+npm --version                  # 10.9.8
+npm ci                         # exit 0; package-lock unchanged
+npm run typecheck              # exit 0
+npm run test:security          # exit 0; tests 178 pass 178 fail 0
+node --import tsx --test test/experiment-v02-r2a-sandbox-boundary.test.ts
+                               # exit 0; tests 49 pass 49 fail 0
+npm run check                  # exit 0; TAP tests 636 pass 636 fail 0 (plus grid.test.ts OK)
+npm run build                  # exit 0 (tsc --noEmit)
+npm run verify:action-inventory  # exit 0; ok true, codes PASS
+npm run pack:extended-canary   # exit 0
+npm run verify:extended-canary # exit 0; ok true, CHECKS_OK
+npm run audit:security-baseline  # exit 0; ok true, high 14, critical 0, existingHighAreNotCleared true
+git diff --check               # exit 0
 ```
 
-`npm run check` TAP summary: `# tests 616` `# pass 616` `# fail 0`. `grid.test.ts OK` is additional and is not included in that TAP count.
+`npm run check` TAP summary: `# tests 636` `# pass 636` `# fail 0`. `grid.test.ts OK` is additional and is not included in that TAP count.
+
+## Final test totals
+
+Original R2-A packet (2026-08-28) used the same toolchain pin. That run recorded TAP tests 616 pass 616. Corrective 1 adds 20 cases in the R2-A boundary file (29 → 49).
 
 ## Security / canary
 
@@ -276,13 +363,15 @@ CANARY_AUDIT_TOTAL=0
 GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
 ```
 
-Canary content-manifest:
+Canary content-manifest (after Corrective 1 product bytes):
 
 ```text
 schema=classic-v0.2-extended-canary-content-manifest/1
-contentManifestSha256=20ae2223a140a383d27e59be6bda9f32944b5b822f698de57e2791a53836c6c1
+contentManifestSha256=0b2551674e871d9da3fbb0ee5b06b788822ce321a769954fc42d1f98943bc4d0
 lockfileSha256=f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99
 ```
+
+Original R2-A canary content-manifest SHA-256 (before this corrective) was `20ae2223a140a383d27e59be6bda9f32944b5b822f698de57e2791a53836c6c1`. The lockfile SHA-256 is unchanged.
 
 `verify:extended-canary`: `unexpectedNetwork=[]`, `secretLikeFiles=[]`, `liveExchangeWrite=false`, `productionCredentialUsed=false`, `probeExitCode=0`.
 
@@ -294,8 +383,9 @@ Action inventory: `overallPolicyOk=true`, 6 uses, 0 docker actions, codes `PASS`
 
 - Workspace had no `.env` file.
 - Tests used only `PLACEHOLDER_*` tokens and the already-public starkcrypto self-test vector inside the existing offline reduction fixture.
-- Diagnostic/error tests assert placeholder values never appear in thrown messages.
+- Diagnostic/error tests assert placeholder values never appear in thrown messages. Redirect failures equal `EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN` with no Location.
 - Unit tests install fetch/DNS guards; accidental Extended fetch or WebSocket fails the test.
+- Redirect tests mock `globalThis.fetch` (native and proxy/undici dispatcher path). They never perform DNS lookup or HTTP/WebSocket to Extended mainnet or Sepolia.
 - Sandbox `ExtendedExecutor.connect()` throws `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before vendor `init`.
 - Vendor Sepolia `init`/`_reqOnce` also throw `TESTNET_NETWORK_WRITE_UNAUTHORIZED`.
 - Canary verify: no unexpected network, no production credential, no live exchange write.
@@ -310,21 +400,25 @@ git rev-parse origin/experiment/classic-v0.2-100u-safety^{tree}
 = c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
 ```
 
-No commit, amend, rebase, merge, reset, or force-push was performed on `experiment/classic-v0.2-100u-safety`. This work is only on `experiment/classic-v0.2-r2-extended-sepolia`.
+No commit, amend, rebase, merge, reset, or force-push was performed on `experiment/classic-v0.2-100u-safety`. This work is only on `experiment/classic-v0.2-r2-extended-sepolia`. Frozen R1 HEAD and tree were identical before and after Corrective 1.
 
 ## Unresolved limitations
 
 1. R2 sandbox/testnet is **not** qualified. Credentialed Sepolia writes remain for a later R2-B task.
 2. Root High=14 findings are unchanged and are not cleared.
 3. Sandbox `runLoop` / `runFlat` / `runStatus` fail closed at `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before lease, telemetry files, or connect. No sandbox run artifacts are produced in R2-A.
-4. WebSocket URL is no longer derived from REST (`http`→`ws`). Sepolia REST host and WS host are different by profile and must stay atomic.
+4. WebSocket URL is no longer derived from REST (`http`→`ws`). Sepolia REST host and WS host are different by profile and must stay atomic. Corrective 1 requires `websocketBase` to be supplied and exact.
 5. Independent byte review is required. Draft PR CI, if green, is not R2 authorization.
+6. `assertSameOriginResponse` remains as an unused offline URL-comparison helper. It is not wired into vendor HTTP and is not evidence that redirects cannot be followed.
+7. Node global `fetch` is used for both native and proxy paths; proxy still constructs undici `ProxyAgent` as `dispatcher`. Redirect policy is shared (`redirect: "manual"` + status guard) so the two paths cannot diverge.
 
 ## Commits
 
 ```text
 a7f90d2e0de06dc00d276a568bb61557e7761046 feat(r2a): add Extended Sepolia sandbox execution boundary
 b50cd4c2dc1d7e9cfc01d46a38165021187519e7 docs(r2a): bind R2-A candidate identity
+92de0e7d71ab5418412d35135604e1f1d776be08 docs(r2a): record R2-A result HEAD and tree
+c478a0b36d112f4ecba490a2c7d97e5a74fa910d fix(r2a): reject vendor HTTP redirects and require websocketBase
 ```
 
-`git log --oneline 990a790706e17b52e04d0d1957505cdad5d45862..HEAD` on the pushed branch also includes the packet-fill commit below this line. The identity-bind and packet-fill commits do not change product bytes.
+Evidence commits after `CORRECTIVE_IMPLEMENTATION_HEAD` do not change product bytes. Independent review should check out the pushed branch tip.
