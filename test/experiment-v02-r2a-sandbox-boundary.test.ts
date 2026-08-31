@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import dns from "node:dns";
+import dnsPromises from "node:dns/promises";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -15,6 +17,10 @@ import {
   EXTENDED_NETWORK_PROFILES,
   LIVE_CONFIRM_ALLOWED_VALUES,
   LIVE_CONFIRM_VALUE,
+  SANDBOX_CONFIRM_ALLOWED_VALUES,
+  SANDBOX_CONFIRM_VALUE,
+  SANDBOX_USE_PROXY_ALLOWED_VALUES,
+  SANDBOX_USE_PROXY_DISABLED_VALUE,
   TESTNET_NETWORK_WRITE_AUTHORIZED,
   MAINNET_NETWORK_WRITE_AUTHORIZED,
   assertSandboxWriteAllowed,
@@ -101,6 +107,49 @@ const LIVE_CONFIRM_REJECTED_VALUES = [
   "yesplease",
   "Y",
 ] as const;
+const SANDBOX_CONFIRM_REJECTED_VALUES = [
+  " EXTENDED_SEPOLIA_TEST_ONLY",
+  "EXTENDED_SEPOLIA_TEST_ONLY ",
+  "\tEXTENDED_SEPOLIA_TEST_ONLY",
+  "EXTENDED_SEPOLIA_TEST_ONLY\n",
+  "EXTENDED_SEPOLIA_TEST_ONLY\t",
+  "\nEXTENDED_SEPOLIA_TEST_ONLY",
+  "extended_sepolia_test_only",
+  "Extended_Sepolia_Test_Only",
+  "EXTENDED_sepolia_TEST_ONLY",
+  "TRUE",
+  "YES",
+  "1",
+  "yesplease",
+  "banana",
+] as const;
+const SANDBOX_CONFIRM_MISSING_VALUES = [undefined, ""] as const;
+const SANDBOX_USE_PROXY_REJECTED_VALUES = [
+  "1",
+  "true",
+  "TRUE",
+  "yes",
+  "YES",
+  "on",
+  "enabled",
+  "01",
+  " 0",
+  "0 ",
+  " 1",
+  "1 ",
+  "\t0",
+  "0\n",
+  "\t1",
+  "1\n",
+] as const;
+const SANDBOX_PROXY_NONEMPTY_VALUES = [
+  "http://127.0.0.1:9",
+  "1",
+  "0",
+  " ",
+  "\t",
+  "http://example.invalid",
+] as const;
 const OFFLINE_ENV = {
   EXPERIMENT_MODE: "1",
   EXPERIMENT_SPEC_VERSION: "0.2.0",
@@ -153,6 +202,142 @@ function envWithDryRun(
   if (dryRun === undefined) delete env.DRY_RUN;
   else env.DRY_RUN = dryRun;
   return env;
+}
+
+function envWith(
+  base: Record<string, string>,
+  patch: Record<string, string | undefined>,
+): NodeJS.ProcessEnv {
+  const env = { ...base } as NodeJS.ProcessEnv;
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) delete env[key];
+    else env[key] = value;
+  }
+  return env;
+}
+
+type PrimitiveCounts = {
+  fetch: number;
+  dns: number;
+  websocket: number;
+  signing: number;
+  vendorInit: number;
+  mutation: number;
+};
+
+const C3_PRIMITIVE_TOTALS: PrimitiveCounts = {
+  fetch: 0,
+  dns: 0,
+  websocket: 0,
+  signing: 0,
+  vendorInit: 0,
+  mutation: 0,
+};
+
+function addPrimitiveCounts(counts: PrimitiveCounts): void {
+  C3_PRIMITIVE_TOTALS.fetch += counts.fetch;
+  C3_PRIMITIVE_TOTALS.dns += counts.dns;
+  C3_PRIMITIVE_TOTALS.websocket += counts.websocket;
+  C3_PRIMITIVE_TOTALS.signing += counts.signing;
+  C3_PRIMITIVE_TOTALS.vendorInit += counts.vendorInit;
+  C3_PRIMITIVE_TOTALS.mutation += counts.mutation;
+}
+
+function wrapNetworkPrimitives(): { counts: PrimitiveCounts; restore: () => void } {
+  const counts: PrimitiveCounts = {
+    fetch: 0,
+    dns: 0,
+    websocket: 0,
+    signing: 0,
+    vendorInit: 0,
+    mutation: 0,
+  };
+  const prevFetch = globalThis.fetch;
+  const prevLookup = dns.lookup;
+  const prevLookupPromise = dnsPromises.lookup;
+  const prevWebSocket = globalThis.WebSocket;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    counts.fetch += 1;
+    return prevFetch(input, init);
+  }) as typeof fetch;
+  dns.lookup = ((hostname: unknown, ...rest: unknown[]) => {
+    counts.dns += 1;
+    return (prevLookup as (...args: unknown[]) => unknown)(hostname, ...rest);
+  }) as typeof dns.lookup;
+  dnsPromises.lookup = (async (hostname: unknown, options?: unknown) => {
+    counts.dns += 1;
+    return prevLookupPromise(hostname as string, options as never);
+  }) as typeof dnsPromises.lookup;
+  if (typeof prevWebSocket === "function") {
+    const Wrapped = function WebSocketCounted(
+      this: unknown,
+      ...args: ConstructorParameters<typeof WebSocket>
+    ) {
+      counts.websocket += 1;
+      return new prevWebSocket(...args);
+    } as unknown as typeof WebSocket;
+    Wrapped.prototype = prevWebSocket.prototype;
+    globalThis.WebSocket = Wrapped;
+  }
+  return {
+    counts,
+    restore: () => {
+      globalThis.fetch = prevFetch;
+      dns.lookup = prevLookup;
+      dnsPromises.lookup = prevLookupPromise;
+      globalThis.WebSocket = prevWebSocket;
+    },
+  };
+}
+
+function assertNoExecutionSideEffects(calls: string[], label: string): void {
+  for (const name of [
+    "create",
+    "connect",
+    "stats",
+    "cache",
+    "snapshot",
+    "apply",
+    "cancelAll",
+    "closePosition",
+    "disconnect",
+  ]) {
+    assert.equal(calls.includes(name), false, `${label} ${name}`);
+  }
+}
+
+async function assertFailClosedNoNetwork(
+  env: NodeJS.ProcessEnv,
+  pattern: RegExp,
+  label: string,
+): Promise<void> {
+  const wrapped = wrapNetworkPrimitives();
+  try {
+    expectThrow(() => parseExecutionBoundary(env), pattern, `${label}-parse`);
+    await withEnvAsync(env, async () => {
+      expectThrow(() => loadRuntimeConfig(), pattern, `${label}-cfg`);
+      const loop = trackingLoopBindings();
+      await assert.rejects(() => runLoop(loop.bindings), pattern);
+      assertNoExecutionSideEffects(loop.calls, `${label}-loop`);
+      const status = trackingLoopBindings();
+      await assert.rejects(() => runStatus(status.bindings), pattern);
+      assertNoExecutionSideEffects(status.calls, `${label}-status`);
+      const flat = trackingLoopBindings();
+      await assert.rejects(() => runFlat(flat.bindings), pattern);
+      assertNoExecutionSideEffects(flat.calls, `${label}-flat`);
+      const ex = new ExtendedExecutor(false);
+      await assert.rejects(() => ex.connect(), pattern);
+    });
+    assert.equal(wrapped.counts.fetch, 0, `${label} fetch`);
+    assert.equal(wrapped.counts.dns, 0, `${label} dns`);
+    assert.equal(wrapped.counts.websocket, 0, `${label} websocket`);
+    assert.equal(wrapped.counts.signing, 0, `${label} signing`);
+    assert.equal(wrapped.counts.vendorInit, 0, `${label} vendorInit`);
+    assert.equal(wrapped.counts.mutation, 0, `${label} mutation`);
+    addPrimitiveCounts(wrapped.counts);
+  } finally {
+    wrapped.restore();
+  }
 }
 
 function trackingLoopBindings(): { calls: string[]; bindings: Parameters<typeof runLoop>[0] } {
@@ -1203,5 +1388,104 @@ describe("R2-A Extended Sepolia sandbox boundary", () => {
       /DRY_RUN_INVALID/,
       "C2-PATH-STATS-parse",
     );
+  });
+
+  it("C3-DOC: documented SANDBOX_CONFIRM and sandbox proxy allowlists are exact", () => {
+    assert.deepEqual([...SANDBOX_CONFIRM_ALLOWED_VALUES], ["EXTENDED_SEPOLIA_TEST_ONLY"]);
+    assert.equal(SANDBOX_CONFIRM_VALUE, "EXTENDED_SEPOLIA_TEST_ONLY");
+    assert.deepEqual([...SANDBOX_USE_PROXY_ALLOWED_VALUES], ["0"]);
+    assert.equal(SANDBOX_USE_PROXY_DISABLED_VALUE, "0");
+    assert.deepEqual([...DRY_RUN_ALLOWED_VALUES], ["0", "1"]);
+    assert.deepEqual([...LIVE_CONFIRM_ALLOWED_VALUES], ["YES"]);
+    assert.equal(TESTNET_NETWORK_WRITE_AUTHORIZED, false);
+    assert.equal(MAINNET_NETWORK_WRITE_AUTHORIZED, false);
+  });
+
+  it("C3-SANDBOX-CONFIRM-MISSING: unset or empty SANDBOX_CONFIRM is rejected in sandbox", async () => {
+    for (const value of SANDBOX_CONFIRM_MISSING_VALUES) {
+      await assertFailClosedNoNetwork(
+        envWith({ ...SANDBOX_ENV }, { SANDBOX_CONFIRM: value }),
+        /SANDBOX_CONFIRM_INVALID/,
+        `C3-SANDBOX-CONFIRM-MISSING-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C3-SANDBOX-CONFIRM-REJ: illegal SANDBOX_CONFIRM tokens fail closed with no network or mutation", async () => {
+    for (const value of SANDBOX_CONFIRM_REJECTED_VALUES) {
+      await assertFailClosedNoNetwork(
+        envWith({ ...SANDBOX_ENV }, { SANDBOX_CONFIRM: value }),
+        /SANDBOX_CONFIRM_INVALID/,
+        `C3-SANDBOX-CONFIRM-REJ-sandbox-${JSON.stringify(value)}`,
+      );
+      expectThrow(
+        () => parseExecutionBoundary(envWith({ ...OFFLINE_ENV, DRY_RUN: "1" }, { SANDBOX_CONFIRM: value })),
+        /SANDBOX_CONFIRM_INVALID/,
+        `C3-SANDBOX-CONFIRM-REJ-offline-${JSON.stringify(value)}`,
+      );
+      expectThrow(
+        () =>
+          parseExecutionBoundary(
+            envWith({ ...V01_LIVE_ENV, EXECUTION_MODE: "live" }, { SANDBOX_CONFIRM: value }),
+          ),
+        /SANDBOX_CONFIRM_INVALID/,
+        `C3-SANDBOX-CONFIRM-REJ-live-${JSON.stringify(value)}`,
+      );
+    }
+    const exact = parseExecutionBoundary({ ...SANDBOX_ENV });
+    assert.equal(exact.executionTarget, "sandbox");
+    assert.equal(exact.sandboxConfirm, true);
+  });
+
+  it("C3-PROXY-ACC: sandbox allows unset, empty, and exact 0 for EXTENDED_USE_PROXY", () => {
+    for (const value of [undefined, "", "0"] as const) {
+      const boundary = parseExecutionBoundary(
+        envWith({ ...SANDBOX_ENV }, { EXTENDED_USE_PROXY: value, EXTENDED_PROXY: "" }),
+      );
+      assert.equal(boundary.executionTarget, "sandbox", `proxy allow ${JSON.stringify(value)}`);
+    }
+    const bothUnset = parseExecutionBoundary(
+      envWith({ ...SANDBOX_ENV }, { EXTENDED_USE_PROXY: undefined, EXTENDED_PROXY: undefined }),
+    );
+    assert.equal(bothUnset.executionTarget, "sandbox");
+    const liveWithVendorProxy = parseExecutionBoundary(
+      envWith(
+        { ...V01_LIVE_ENV, EXECUTION_MODE: "live" },
+        { EXTENDED_USE_PROXY: "true", EXTENDED_PROXY: LOOPBACK_PROXY },
+      ),
+    );
+    assert.equal(liveWithVendorProxy.executionTarget, "live");
+  });
+
+  it("C3-PROXY-USE-REJ: illegal EXTENDED_USE_PROXY tokens fail closed with no network or mutation", async () => {
+    for (const value of SANDBOX_USE_PROXY_REJECTED_VALUES) {
+      await assertFailClosedNoNetwork(
+        envWith({ ...SANDBOX_ENV }, { EXTENDED_USE_PROXY: value, EXTENDED_PROXY: "" }),
+        /EXTENDED_SANDBOX_PROXY_FORBIDDEN/,
+        `C3-PROXY-USE-REJ-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C3-PROXY-URL-REJ: any non-empty EXTENDED_PROXY fails closed with no network or mutation", async () => {
+    for (const value of SANDBOX_PROXY_NONEMPTY_VALUES) {
+      await assertFailClosedNoNetwork(
+        envWith({ ...SANDBOX_ENV }, { EXTENDED_USE_PROXY: "0", EXTENDED_PROXY: value }),
+        /EXTENDED_SANDBOX_PROXY_FORBIDDEN/,
+        `C3-PROXY-URL-REJ-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C3-PATH-STATS: fail-closed sandbox tokens never contact network primitives", () => {
+    assert.equal(C3_PRIMITIVE_TOTALS.fetch, 0);
+    assert.equal(C3_PRIMITIVE_TOTALS.dns, 0);
+    assert.equal(C3_PRIMITIVE_TOTALS.websocket, 0);
+    assert.equal(C3_PRIMITIVE_TOTALS.signing, 0);
+    assert.equal(C3_PRIMITIVE_TOTALS.vendorInit, 0);
+    assert.equal(C3_PRIMITIVE_TOTALS.mutation, 0);
+    assert.equal(TESTNET_NETWORK_WRITE_AUTHORIZED, false);
+    assert.equal(MAINNET_NETWORK_WRITE_AUTHORIZED, false);
+    expectThrow(() => assertSandboxWriteAllowed(), /TESTNET_NETWORK_WRITE_UNAUTHORIZED/, "C3-PATH-write");
   });
 });

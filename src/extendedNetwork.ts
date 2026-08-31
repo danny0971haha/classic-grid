@@ -11,8 +11,11 @@ export const SANDBOX_CONFIRM_VALUE = "EXTENDED_SEPOLIA_TEST_ONLY" as const;
 export const DRY_RUN_TRUE_VALUE = "1" as const;
 export const DRY_RUN_FALSE_VALUE = "0" as const;
 export const LIVE_CONFIRM_VALUE = "YES" as const;
+export const SANDBOX_USE_PROXY_DISABLED_VALUE = "0" as const;
 export const DRY_RUN_ALLOWED_VALUES = [DRY_RUN_FALSE_VALUE, DRY_RUN_TRUE_VALUE] as const;
 export const LIVE_CONFIRM_ALLOWED_VALUES = [LIVE_CONFIRM_VALUE] as const;
+export const SANDBOX_CONFIRM_ALLOWED_VALUES = [SANDBOX_CONFIRM_VALUE] as const;
+export const SANDBOX_USE_PROXY_ALLOWED_VALUES = [SANDBOX_USE_PROXY_DISABLED_VALUE] as const;
 
 export type ExecutionTarget = "dry-run" | "sandbox" | "live";
 export type ExtendedNetworkId = "mainnet" | "sepolia";
@@ -236,17 +239,26 @@ export function assertCredentialSeparation(target: ExecutionTarget, env: NodeJS.
   }
 }
 
-function sandboxProxyForbidden(env: NodeJS.ProcessEnv): boolean {
-  return (
-    /^(1|true|yes)$/i.test(String(env.EXTENDED_USE_PROXY || "").trim()) ||
-    String(env.EXTENDED_PROXY ?? "").trim() !== ""
+function assertSandboxProxyDisabled(env: NodeJS.ProcessEnv): void {
+  parseOptionalExact(
+    env.EXTENDED_USE_PROXY,
+    SANDBOX_USE_PROXY_ALLOWED_VALUES,
+    "EXTENDED_SANDBOX_PROXY_FORBIDDEN",
   );
+  const proxy = env.EXTENDED_PROXY;
+  if (proxy !== undefined && proxy !== "") {
+    throw new Error("EXTENDED_SANDBOX_PROXY_FORBIDDEN");
+  }
 }
 
 export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): ExecutionBoundary {
   const executionModeRaw = String(env.EXECUTION_MODE ?? "").trim();
   const networkRaw = String(env.EXTENDED_NETWORK ?? "").trim();
-  const sandboxConfirmRaw = String(env.SANDBOX_CONFIRM ?? "").trim();
+  const sandboxConfirmToken = parseOptionalExact(
+    env.SANDBOX_CONFIRM,
+    SANDBOX_CONFIRM_ALLOWED_VALUES,
+    "SANDBOX_CONFIRM_INVALID",
+  );
   const dryRunToken = parseOptionalExact(env.DRY_RUN, DRY_RUN_ALLOWED_VALUES, "DRY_RUN_INVALID");
   const liveConfirmToken = parseOptionalExact(
     env.LIVE_CONFIRM,
@@ -266,12 +278,9 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
   if (networkRaw !== "" && networkRaw !== "mainnet" && networkRaw !== "sepolia") {
     throw new Error("EXTENDED_NETWORK_UNSUPPORTED");
   }
-  if (sandboxConfirmRaw !== "" && sandboxConfirmRaw !== SANDBOX_CONFIRM_VALUE) {
-    throw new Error("SANDBOX_CONFIRM_INVALID");
-  }
 
-  const sandboxConfirm = sandboxConfirmRaw === SANDBOX_CONFIRM_VALUE;
-  const sandboxConfirmPresent = sandboxConfirmRaw !== "";
+  const sandboxConfirm = sandboxConfirmToken === SANDBOX_CONFIRM_VALUE;
+  const sandboxConfirmPresent = sandboxConfirmToken !== null;
   const liveConfirmPresent = liveConfirmToken !== null;
   const liveConfirm = liveConfirmToken === LIVE_CONFIRM_VALUE;
   const historicalDryRun = dryRunToken !== DRY_RUN_FALSE_VALUE;
@@ -294,7 +303,7 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
     if (!sandboxConfirm) throw new Error("SANDBOX_CONFIRM_INVALID");
     if (networkRaw === "") throw new Error("EXTENDED_NETWORK_REQUIRED");
     if (networkRaw !== "sepolia") throw new Error("EXTENDED_SANDBOX_MAINNET_PROFILE");
-    if (sandboxProxyForbidden(env)) throw new Error("EXTENDED_SANDBOX_PROXY_FORBIDDEN");
+    assertSandboxProxyDisabled(env);
     if (apiUrlRaw !== "") throw new Error("EXTENDED_SANDBOX_CUSTOM_ENDPOINT_FORBIDDEN");
     assertCredentialSeparation("sandbox", env);
     const profile = EXTENDED_NETWORK_PROFILES.sepolia;
