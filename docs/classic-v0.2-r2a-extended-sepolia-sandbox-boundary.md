@@ -82,9 +82,12 @@ CORRECTIVE_3_ACTUAL_STARTING_TREE=fb139e4737711602df44636e8186ccc6694de654
 CORRECTIVE_3_IMPLEMENTATION_HEAD=1fce4d1f5f9f988aa53f23cda029e13ee9d536b8
 CORRECTIVE_3_IMPLEMENTATION_TREE=c59efe7b7c8393272dfa1b315bdd11b10944619e
 CORRECTIVE_3_PRODUCT_DIFF_SHA256=a1bfe9d339c0651024ae465411399a7934a38fd7a443a427f700569ce292aa31
+CORRECTIVE_3_FINAL_HEAD=1687c4a9725b4dc751cf66af00d83d4c0c274d37
+CORRECTIVE_3_FINAL_TREE=87173cd8bc6bc98fe802ae12543dd7efd502ef77
+CORRECTIVE_3_FULL_DIFF_SHA256=2744d5c01582657515c1915a252e95d86b291f897ef6efc49a6f7e7e8f18a18c
 ```
 
-`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit. `FINAL_HEAD` is the Corrective 1 identity-bind commit. `CORRECTIVE_2_IMPLEMENTATION_HEAD` is the Corrective 2 product commit. `CORRECTIVE_2_FINAL_HEAD` is the Corrective 2 identity-bind commit. `CORRECTIVE_3_IMPLEMENTATION_HEAD` is the Corrective 3 product commit on top of `CORRECTIVE_3_REVIEWED_STARTING_HEAD` (exact match; no reset/rebase/amend). Independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
+`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit. `FINAL_HEAD` is the Corrective 1 identity-bind commit. `CORRECTIVE_2_IMPLEMENTATION_HEAD` is the Corrective 2 product commit. `CORRECTIVE_2_FINAL_HEAD` is the Corrective 2 identity-bind commit. `CORRECTIVE_3_IMPLEMENTATION_HEAD` is the Corrective 3 product commit on top of `CORRECTIVE_3_REVIEWED_STARTING_HEAD` (exact match; no reset/rebase/amend). `CORRECTIVE_3_FINAL_HEAD` is the Corrective 3 identity-bind commit that first recorded that product identity. A follow-up packet-fill commit on this branch may sit on top of `CORRECTIVE_3_FINAL_HEAD`; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
 
 ```text
 git rev-parse origin/experiment/classic-v0.2-100u-safety
@@ -642,6 +645,7 @@ c478a0b36d112f4ecba490a2c7d97e5a74fa910d fix(r2a): reject vendor HTTP redirects 
 194add03a0937f121ce5da54af3ddcd8ad4ed51f docs(r2a): bind Corrective 2 candidate identity
 39bf3a797b58f7fd91babf9f2d608cfd28e04487 docs(r2a): record Corrective 2 result HEAD and tree
 1fce4d1f5f9f988aa53f23cda029e13ee9d536b8 fix(r2a): reject non-exact SANDBOX_CONFIRM and sandbox proxy tokens
+1687c4a9725b4dc751cf66af00d83d4c0c274d37 docs(r2a): bind Corrective 3 candidate identity
 ```
 
 The identity-bind and packet-fill commits do not change product bytes. Independent review should check out the pushed branch tip. There is no current-review identity named `REVIEW_CANDIDATE_TIP=92de0e7…`.
