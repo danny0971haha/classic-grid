@@ -1,6 +1,21 @@
 const TRACKED = [
   "DRY_RUN",
   "LIVE_CONFIRM",
+  "EXECUTION_MODE",
+  "EXTENDED_NETWORK",
+  "SANDBOX_CONFIRM",
+  "EXTENDED_API_URL",
+  "EXTENDED_USE_PROXY",
+  "EXTENDED_PROXY",
+  "EXTENDED_API_KEY",
+  "EXTENDED_STARK_PRIVATE_KEY",
+  "EXTENDED_STARK_PUBLIC_KEY",
+  "EXTENDED_VAULT",
+  "EXTENDED_VAULT_ID",
+  "EXTENDED_TESTNET_API_KEY",
+  "EXTENDED_TESTNET_STARK_PRIVATE_KEY",
+  "EXTENDED_TESTNET_STARK_PUBLIC_KEY",
+  "EXTENDED_TESTNET_VAULT_ID",
   "EXPERIMENT_MODE",
   "EXPERIMENT_SPEC_VERSION",
   "EXPERIMENT_ID",
@@ -38,9 +53,21 @@ const TRACKED = [
   "COMMIT_SHA",
 ] as const;
 
+function restoreKeys(
+  keys: readonly string[],
+  prev: Record<string, string | undefined>
+): void {
+  for (const key of keys) {
+    const value = prev[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
 export function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T): T {
+  const keys = [...new Set([...TRACKED, ...Object.keys(vars)])];
   const prev: Record<string, string | undefined> = {};
-  for (const key of TRACKED) prev[key] = process.env[key];
+  for (const key of keys) prev[key] = process.env[key];
   for (const [key, value] of Object.entries(vars)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -48,11 +75,7 @@ export function withEnv<T>(vars: Record<string, string | undefined>, fn: () => T
   try {
     return fn();
   } finally {
-    for (const key of TRACKED) {
-      const value = prev[key];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    restoreKeys(keys, prev);
   }
 }
 
@@ -60,8 +83,9 @@ export async function withEnvAsync<T>(
   vars: Record<string, string | undefined>,
   fn: () => Promise<T>
 ): Promise<T> {
+  const keys = [...new Set([...TRACKED, ...Object.keys(vars)])];
   const prev: Record<string, string | undefined> = {};
-  for (const key of TRACKED) prev[key] = process.env[key];
+  for (const key of keys) prev[key] = process.env[key];
   for (const [key, value] of Object.entries(vars)) {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
@@ -69,10 +93,6 @@ export async function withEnvAsync<T>(
   try {
     return await fn();
   } finally {
-    for (const key of TRACKED) {
-      const value = prev[key];
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
+    restoreKeys(keys, prev);
   }
 }
