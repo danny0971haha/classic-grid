@@ -1,19 +1,20 @@
 # Classic v0.2 R2-A — Extended Sepolia sandbox boundary
 
-**Status:** R2A_CORRECTIVE_IMPLEMENTATION=REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
+**Status:** R2A_CORRECTIVE_2_IMPLEMENTATION=REVIEW_CANDIDATE / INDEPENDENT REVIEW REQUIRED
 **Date:** 2026-08-31
 **Repository:** `danny0971haha/classic-grid`
 **Branch:** `experiment/classic-v0.2-r2-extended-sepolia`
 **Base:** `experiment/classic-v0.2-100u-safety`
-**Task:** `CLASSIC_V02_R2A_CORRECTIVE_1`
+**Task:** `CLASSIC_V02_R2A_CORRECTIVE_2`
 
-This document does **not** declare R2 PASS, R2A PASS, testnet qualification, live readiness, merge, or deployment. CI success is evidence only.
+This document does **not** declare R2 PASS, R2A PASS, testnet qualification, live readiness, merge, or deployment. This is only R2-A sandbox-boundary qualification. Credentialed Sepolia access, testnet writes, mainnet writes, R2-B, deployment, and merge remain unauthorized. CI success is evidence only.
 
 ```text
-TASK=CLASSIC_V02_R2A_CORRECTIVE_1
+TASK=CLASSIC_V02_R2A_CORRECTIVE_2
 R1_BASE_PRESERVED=YES
 R2A_IMPLEMENTATION=REVIEW_CANDIDATE
 R2A_CORRECTIVE_IMPLEMENTATION=REVIEW_CANDIDATE
+R2A_CORRECTIVE_2_IMPLEMENTATION=REVIEW_CANDIDATE
 R2_SANDBOX_TESTNET_QUALIFIED=NO
 R3_BOUNDED_LIVE_CANARY_ELIGIBLE=NO
 TESTNET_NETWORK_WRITE_EXECUTED=NO
@@ -35,6 +36,8 @@ REDIRECT_STATUS_301_TO_308_REJECTED=YES
 REDIRECT_TARGET_CONTACTED=NO
 WEBSOCKET_BASE_REQUIRED=YES
 ATOMIC_PROFILE_ENFORCED=YES
+DRY_RUN_STRICT_EXACT=YES
+LIVE_CONFIRM_STRICT_EXACT=YES
 EXTERNAL_EXTENDED_NETWORK_CONTACTED=NO
 PACKAGE_LOCK_CHANGED=NO
 DEPENDENCY_CHANGED=NO
@@ -61,9 +64,15 @@ CORRECTIVE_PRODUCT_DIFF_SHA256=3a3ea87fb588ebb9c16a5250dfee2701ae53f6a8ad3c00fad
 FINAL_HEAD=7f8c7d671df5cb9f0d51b95bcb4113525c372c25
 FINAL_TREE=66873562118ef0a0ede08a262ba57abb7b8d5536
 CORRECTIVE_FULL_DIFF_SHA256=3f57e0fdbf6538a6dacce954cc24084fa6ed597ff942b1f017bb644a4d1751dd
+CORRECTIVE_2_REVIEWED_STARTING_HEAD=7300422bef95ab5a533d521e1826af300a7d8652
+CORRECTIVE_2_ACTUAL_STARTING_HEAD=7300422bef95ab5a533d521e1826af300a7d8652
+CORRECTIVE_2_ACTUAL_STARTING_TREE=65c269e758cf7153e6e87eb5b83299e098df5518
+CORRECTIVE_2_IMPLEMENTATION_HEAD=2f01b52afea04c4a0d2fab5eb0260b81e9a62c66
+CORRECTIVE_2_IMPLEMENTATION_TREE=abf8892e6f995f390d0ecfbc6771cb949045b915
+CORRECTIVE_2_PRODUCT_DIFF_SHA256=b97cbf0f208fe8804ad194f78680194a12f36d29f36f673a7348615881eed82b
 ```
 
-`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit on top of `REVIEWED_STARTING_HEAD` (an exact match; no reset/rebase/amend). `FINAL_HEAD` is the Corrective 1 identity-bind commit that first recorded that product identity. A follow-up packet-fill commit on this branch may sit on top of `FINAL_HEAD`; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
+`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit. `FINAL_HEAD` is the Corrective 1 identity-bind commit. `CORRECTIVE_2_IMPLEMENTATION_HEAD` is the Corrective 2 product commit on top of `CORRECTIVE_2_REVIEWED_STARTING_HEAD` (exact match; no reset/rebase/amend). There is no stale `REVIEW_CANDIDATE_TIP=92de0e7…` identity for this corrective: that SHA is the original R2-A packet-fill / Corrective 1 starting HEAD only. Independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
 
 ```text
 git rev-parse origin/experiment/classic-v0.2-100u-safety
@@ -72,7 +81,68 @@ git rev-parse origin/experiment/classic-v0.2-100u-safety^{tree}
 = c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
 ```
 
-Local toolchain during Corrective 1: Node v22.23.2 / npm 10.9.8 (repository-pinned). Original R2-A implementation used the same pin.
+Local toolchain during Corrective 2: Node v22.23.2 / npm 10.9.8 (repository-pinned). Corrective 1 and the original R2-A implementation used the same pin.
+
+## Corrective 2 — strict fail-closed DRY_RUN / LIVE_CONFIRM parsing
+
+Corrective 2 does not authorize testnet or mainnet writes. It closes the R2-A review finding that permissive `truthy()` parsing treated unknown `DRY_RUN` values as explicit false.
+
+`parseExecutionBoundary` now accepts only the documented exact tokens. There is no trim, case-fold, prefix match, or numeric coercion.
+
+```text
+DRY_RUN=0|1          # unset or empty defaults to 1 (historical dry-run)
+LIVE_CONFIRM=YES     # unset or empty means not confirmed
+```
+
+Rejected with `DRY_RUN_INVALID` (never interpreted as `DRY_RUN=false`): `banana`, `FALSEE`, `TRUE`, `00`, `yesplease`, `true`, `yes`, `YES`, `false`, `FALSE`, whitespace-padded `0`/`1`, `00`, `01`, `1.0`, `-0`, `no`, `off`, `2`, and any other non-exact value.
+
+Rejected with `LIVE_CONFIRM_INVALID`: `yes`, `Yes`, `true`, `TRUE`, `1`, `banana`, padded `YES`, and any other non-exact value. Sandbox still cannot reuse `LIVE_CONFIRM=YES` (`EXECUTION_CONFIRMATION_CONFLICT`).
+
+Official Extended mainnet/Sepolia REST, WebSocket, signing-domain, chain-ID, and SNIP-12 profile values are unchanged.
+
+### Corrective 2 changed-file inventory
+
+Paths changed in `CORRECTIVE_2_IMPLEMENTATION_HEAD` relative to `CORRECTIVE_2_ACTUAL_STARTING_HEAD`:
+
+```text
+2	0	.env.example
+25	19	src/extendedNetwork.ts
+317	0	test/experiment-v02-r2a-sandbox-boundary.test.ts
+```
+
+| path | before (starting HEAD `7300422`) | after (corrective 2 product `2f01b52`) | justification |
+| --- | --- | --- | --- |
+| `src/extendedNetwork.ts` | `d31a26b51205f44c9bc6d66f5bcd1f23c6b3fb7a` | `94c9c920b773de173d462245f4d6cf105c97eb7f` | Replace `truthy()` with exact `0`/`1` and `YES` parsers; unknown values throw `DRY_RUN_INVALID` / `LIVE_CONFIRM_INVALID`. |
+| `test/experiment-v02-r2a-sandbox-boundary.test.ts` | `8742be308110fc26aee88bb1c3e314a58dcace6f` | `44a8149ecd9d0e4eb93bec90bff612c9040e48ce` | Accepted/rejected matrix in offline, sandbox, and live; execution-path fail-closed tests. |
+| `.env.example` | `742ff3c18ed156bb2556f9836142abacba6f3f73` | `8d7f7db2e869c9e38114f1644f1a991621a5f73d` | Document the exact accepted `DRY_RUN` / `LIVE_CONFIRM` tokens. |
+| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | `938359f0a1a625e9b5af87b3bb910a41a060f561` | this evidence commit blob | Record Corrective 2 identity and results. |
+
+`package-lock.json` and dependency versions were not changed. Official profile tuples in `EXTENDED_NETWORK_PROFILES` were not changed.
+
+Product diff SHA-256 versus `CORRECTIVE_2_ACTUAL_STARTING_HEAD` (excluding this evidence file):
+
+```text
+b97cbf0f208fe8804ad194f78680194a12f36d29f36f673a7348615881eed82b
+```
+
+### Corrective 2 tests
+
+| id | case | result |
+| --- | --- | --- |
+| C2-DOC | documented allowlists are exact `0`/`1` and `YES` | pass |
+| C2-DRY-ACC-OFFLINE | unset / empty / `1` remain dry-run; exact `0` is live, not sandbox | pass |
+| C2-DRY-ACC-SANDBOX | sandbox accepts only exact `DRY_RUN=0`; `1`/absent conflict | pass |
+| C2-DRY-ACC-LIVE | live accepts exact `0` and absent with `EXECUTION_MODE=live`; `1` conflicts | pass |
+| C2-DRY-REJ-OFFLINE | all rejected values throw `DRY_RUN_INVALID` (historical and explicit dry-run) | pass |
+| C2-DRY-REJ-SANDBOX | rejected values are not treated as sandbox `DRY_RUN=0` | pass |
+| C2-DRY-REJ-LIVE | rejected values are not treated as live `DRY_RUN=0` | pass |
+| C2-LIVE-CONFIRM | `LIVE_CONFIRM` accepts only exact `YES`; rejected in offline/sandbox/live | pass |
+| C2-PATH | `loadRuntimeConfig` / `runLoop` / `runStatus` / `runFlat` / `connect` throw before create/connect/write | pass |
+| C2-PATH-VENDOR | Sepolia vendor `init`/`_reqOnce` stay `TESTNET_NETWORK_WRITE_UNAUTHORIZED` | pass |
+| C2-PATH-STATS | official Extended fetch returns empty on parse failure before `createExchange` | pass |
+| N12 / P1 / P2 / write gates | v0.2 live forbid, historical dry-run, sandbox parse, write hard-disable | still pass |
+
+R2-A sandbox-boundary file: 60 tests, 60 pass (was 49). `npm run check` TAP: `# tests 647` `# pass 647` `# fail 0` (was 636; +11 corrective cases). `grid.test.ts OK` is additional.
 
 ## Corrective 1 — HTTP redirect boundary and atomic WebSocket profile
 
@@ -156,7 +226,8 @@ Exact values only. Ambiguous truthy sandbox confirmations are rejected.
 EXECUTION_MODE=dry-run|sandbox|live
 EXTENDED_NETWORK=mainnet|sepolia
 SANDBOX_CONFIRM=EXTENDED_SEPOLIA_TEST_ONLY
-LIVE_CONFIRM=YES   # existing live acknowledgement; not valid for sandbox
+LIVE_CONFIRM=YES   # exact token only; not valid for sandbox
+DRY_RUN=0|1        # exact tokens only; unset/empty defaults to 1
 ```
 
 Absent new settings preserve historical behavior:
@@ -165,6 +236,7 @@ Absent new settings preserve historical behavior:
 - missing `EXECUTION_MODE` + `DRY_RUN=0` → live path via existing `assertLiveAllowed`
 - `DRY_RUN=0` is never converted into sandbox
 - sandbox is never inferred from `EXTENDED_API_URL`
+- `DRY_RUN` and `LIVE_CONFIRM` are compared exactly. No trim, case-fold, or truthy aliases. Unknown values throw `DRY_RUN_INVALID` / `LIVE_CONFIRM_INVALID` and are never treated as `DRY_RUN=false`.
 
 Sandbox double opt-in:
 
@@ -350,9 +422,32 @@ git diff --check               # exit 0
 
 `npm run check` TAP summary: `# tests 636` `# pass 636` `# fail 0`. `grid.test.ts OK` is additional and is not included in that TAP count.
 
+## Corrective 2 validation (2026-08-31)
+
+Toolchain: Node v22.23.2 / npm 10.9.8. Commands from a clean `npm ci`. No `.env` file in the workspace.
+
+```text
+node --version                 # v22.23.2
+npm --version                  # 10.9.8
+npm ci                         # exit 0; package-lock unchanged
+npm run typecheck              # exit 0
+npm run test:security          # exit 0; tests 178 pass 178 fail 0
+node --import tsx --test test/experiment-v02-r2a-sandbox-boundary.test.ts
+                               # exit 0; tests 60 pass 60 fail 0
+npm run check                  # exit 0; TAP tests 647 pass 647 fail 0 (plus grid.test.ts OK)
+npm run build                  # exit 0 (tsc --noEmit)
+npm run verify:action-inventory  # exit 0; ok true, codes PASS
+npm run pack:extended-canary   # exit 0
+npm run verify:extended-canary # exit 0; ok true, CHECKS_OK
+npm run audit:security-baseline  # exit 0; ok true, high 14, critical 0, existingHighAreNotCleared true
+git diff --check               # exit 0
+```
+
+`npm run check` TAP summary: `# tests 647` `# pass 647` `# fail 0`. `grid.test.ts OK` is additional and is not included in that TAP count.
+
 ## Final test totals
 
-Original R2-A packet (2026-08-28) used the same toolchain pin. That run recorded TAP tests 616 pass 616. Corrective 1 adds 20 cases in the R2-A boundary file (29 → 49).
+Original R2-A packet (2026-08-28) used the same toolchain pin. That run recorded TAP tests 616 pass 616. Corrective 1 adds 20 cases in the R2-A boundary file (29 → 49). Corrective 2 adds 11 cases (49 → 60). Suite TAP 616 → 636 → 647.
 
 ## Security / canary
 
@@ -366,15 +461,15 @@ CANARY_AUDIT_TOTAL=0
 GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
 ```
 
-Canary content-manifest (after Corrective 1 product bytes):
+Canary content-manifest (after Corrective 2 product bytes):
 
 ```text
 schema=classic-v0.2-extended-canary-content-manifest/1
-contentManifestSha256=0b2551674e871d9da3fbb0ee5b06b788822ce321a769954fc42d1f98943bc4d0
+contentManifestSha256=2510544ff839caa5ae82e972ffc2d583a864112eb0e6b86fa1d0a983461d1e84
 lockfileSha256=f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99
 ```
 
-Original R2-A canary content-manifest SHA-256 (before this corrective) was `20ae2223a140a383d27e59be6bda9f32944b5b822f698de57e2791a53836c6c1`. The lockfile SHA-256 is unchanged.
+Corrective 1 canary content-manifest SHA-256 was `0b2551674e871d9da3fbb0ee5b06b788822ce321a769954fc42d1f98943bc4d0`. Original R2-A was `20ae2223a140a383d27e59be6bda9f32944b5b822f698de57e2791a53836c6c1`. The lockfile SHA-256 is unchanged.
 
 `verify:extended-canary`: `unexpectedNetwork=[]`, `secretLikeFiles=[]`, `liveExchangeWrite=false`, `productionCredentialUsed=false`, `probeExitCode=0`.
 
@@ -389,7 +484,8 @@ Action inventory: `overallPolicyOk=true`, 6 uses, 0 docker actions, codes `PASS`
 - Diagnostic/error tests assert placeholder values never appear in thrown messages. Redirect failures equal `EXTENDED_ENDPOINT_REDIRECT_FORBIDDEN` with no Location.
 - Unit tests install fetch/DNS guards; accidental Extended fetch or WebSocket fails the test.
 - Redirect tests mock `globalThis.fetch` (native and proxy/undici dispatcher path). They never perform DNS lookup or HTTP/WebSocket to Extended mainnet or Sepolia.
-- Sandbox `ExtendedExecutor.connect()` throws `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before vendor `init`.
+- Invalid `DRY_RUN` / `LIVE_CONFIRM` fail at `parseExecutionBoundary` with `DRY_RUN_INVALID` / `LIVE_CONFIRM_INVALID` before `runLoop` / `runStatus` / `runFlat` / `ExtendedExecutor.connect` create a transport or call official stats.
+- Sandbox `ExtendedExecutor.connect()` throws `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before vendor `init` when sandbox config is otherwise valid.
 - Vendor Sepolia `init`/`_reqOnce` also throw `TESTNET_NETWORK_WRITE_UNAUTHORIZED`.
 - Canary verify: no unexpected network, no production credential, no live exchange write.
 - This agent did not contact Extended mainnet or Sepolia, and did not use an API key, Stark key, vault ID, or wallet.
@@ -403,17 +499,18 @@ git rev-parse origin/experiment/classic-v0.2-100u-safety^{tree}
 = c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8
 ```
 
-No commit, amend, rebase, merge, reset, or force-push was performed on `experiment/classic-v0.2-100u-safety`. This work is only on `experiment/classic-v0.2-r2-extended-sepolia`. Frozen R1 HEAD and tree were identical before and after Corrective 1.
+No commit, amend, rebase, merge, reset, or force-push was performed on `experiment/classic-v0.2-100u-safety`. This work is only on `experiment/classic-v0.2-r2-extended-sepolia`. Frozen R1 HEAD and tree were identical before and after Corrective 1 and Corrective 2.
 
 ## Unresolved limitations
 
-1. R2 sandbox/testnet is **not** qualified. Credentialed Sepolia writes remain for a later R2-B task.
+1. R2 sandbox/testnet is **not** qualified. This packet is only R2-A sandbox-boundary qualification. Credentialed Sepolia access, testnet writes, mainnet writes, R2-B, deployment, and merge remain unauthorized.
 2. Root High=14 findings are unchanged and are not cleared.
-3. Sandbox `runLoop` / `runFlat` / `runStatus` fail closed at `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before lease, telemetry files, or connect. No sandbox run artifacts are produced in R2-A.
+3. Valid sandbox `runLoop` / `runFlat` / `runStatus` fail closed at `TESTNET_NETWORK_WRITE_UNAUTHORIZED` before lease, telemetry files, or connect. Invalid `DRY_RUN` fails earlier at `DRY_RUN_INVALID`. No sandbox run artifacts are produced in R2-A.
 4. WebSocket URL is no longer derived from REST (`http`→`ws`). Sepolia REST host and WS host are different by profile and must stay atomic. Corrective 1 requires `websocketBase` to be supplied and exact.
 5. Independent byte review is required. Draft PR CI, if green, is not R2 authorization.
 6. `assertSameOriginResponse` remains as an unused offline URL-comparison helper. It is not wired into vendor HTTP and is not evidence that redirects cannot be followed.
 7. Node global `fetch` is used for both native and proxy paths; proxy still constructs undici `ProxyAgent` as `dispatcher`. Redirect policy is shared (`redirect: "manual"` + status guard) so the two paths cannot diverge.
+8. `EXTENDED_USE_PROXY` is not a `DRY_RUN`/`LIVE_CONFIRM` token and still uses the existing `1|true|yes` sandbox-forbid regex. Vendor proxy enablement is unchanged.
 
 ## Commits
 
@@ -423,6 +520,8 @@ b50cd4c2dc1d7e9cfc01d46a38165021187519e7 docs(r2a): bind R2-A candidate identity
 92de0e7d71ab5418412d35135604e1f1d776be08 docs(r2a): record R2-A result HEAD and tree
 c478a0b36d112f4ecba490a2c7d97e5a74fa910d fix(r2a): reject vendor HTTP redirects and require websocketBase
 7f8c7d671df5cb9f0d51b95bcb4113525c372c25 docs(r2a): bind Corrective 1 candidate identity
+7300422bef95ab5a533d521e1826af300a7d8652 docs(r2a): record Corrective 1 result HEAD and tree
+2f01b52afea04c4a0d2fab5eb0260b81e9a62c66 fix(r2a): reject non-exact DRY_RUN and LIVE_CONFIRM values
 ```
 
-The identity-bind and packet-fill commits do not change product bytes. Independent review should check out the pushed branch tip.
+The identity-bind and packet-fill commits do not change product bytes. Independent review should check out the pushed branch tip. There is no current-review identity named `REVIEW_CANDIDATE_TIP=92de0e7…`.
