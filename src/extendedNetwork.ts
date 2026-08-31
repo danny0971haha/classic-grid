@@ -8,6 +8,11 @@ export const TESTNET_NETWORK_WRITE_AUTHORIZED = false as const;
 export const MAINNET_NETWORK_WRITE_AUTHORIZED = false as const;
 
 export const SANDBOX_CONFIRM_VALUE = "EXTENDED_SEPOLIA_TEST_ONLY" as const;
+export const DRY_RUN_TRUE_VALUE = "1" as const;
+export const DRY_RUN_FALSE_VALUE = "0" as const;
+export const LIVE_CONFIRM_VALUE = "YES" as const;
+export const DRY_RUN_ALLOWED_VALUES = [DRY_RUN_FALSE_VALUE, DRY_RUN_TRUE_VALUE] as const;
+export const LIVE_CONFIRM_ALLOWED_VALUES = [LIVE_CONFIRM_VALUE] as const;
 
 export type ExecutionTarget = "dry-run" | "sandbox" | "live";
 export type ExtendedNetworkId = "mainnet" | "sepolia";
@@ -86,8 +91,14 @@ export type ExecutionBoundary = {
   profile: ExtendedNetworkProfile | null;
 };
 
-function truthy(v: string | undefined): boolean {
-  return ["1", "true", "yes", "YES"].includes(String(v || "").trim());
+function parseOptionalExact(
+  raw: string | undefined,
+  allowed: readonly string[],
+  errorCode: string,
+): string | null {
+  if (raw === undefined || raw === "") return null;
+  if (allowed.includes(raw)) return raw;
+  throw new Error(errorCode);
 }
 
 function present(env: NodeJS.ProcessEnv, key: string): boolean {
@@ -236,8 +247,12 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
   const executionModeRaw = String(env.EXECUTION_MODE ?? "").trim();
   const networkRaw = String(env.EXTENDED_NETWORK ?? "").trim();
   const sandboxConfirmRaw = String(env.SANDBOX_CONFIRM ?? "").trim();
-  const liveConfirmRaw = String(env.LIVE_CONFIRM ?? "").trim();
-  const dryRaw = env.DRY_RUN;
+  const dryRunToken = parseOptionalExact(env.DRY_RUN, DRY_RUN_ALLOWED_VALUES, "DRY_RUN_INVALID");
+  const liveConfirmToken = parseOptionalExact(
+    env.LIVE_CONFIRM,
+    LIVE_CONFIRM_ALLOWED_VALUES,
+    "LIVE_CONFIRM_INVALID",
+  );
   const apiUrlRaw = String(env.EXTENDED_API_URL ?? "").trim();
 
   if (
@@ -257,10 +272,9 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
 
   const sandboxConfirm = sandboxConfirmRaw === SANDBOX_CONFIRM_VALUE;
   const sandboxConfirmPresent = sandboxConfirmRaw !== "";
-  const liveConfirmPresent = liveConfirmRaw !== "";
-  const liveConfirm = truthy(liveConfirmRaw);
-  const historicalDryRun =
-    dryRaw == null || String(dryRaw).trim() === "" ? true : truthy(String(dryRaw));
+  const liveConfirmPresent = liveConfirmToken !== null;
+  const liveConfirm = liveConfirmToken === LIVE_CONFIRM_VALUE;
+  const historicalDryRun = dryRunToken !== DRY_RUN_FALSE_VALUE;
 
   if (liveConfirmPresent && sandboxConfirmPresent) {
     throw new Error("EXECUTION_CONFIRMATION_CONFLICT");
@@ -273,11 +287,7 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
   else executionTarget = historicalDryRun ? "dry-run" : "live";
 
   if (executionTarget === "sandbox") {
-    const dryExplicitTrue =
-      dryRaw != null && String(dryRaw).trim() !== "" && truthy(String(dryRaw));
-    const dryExplicitFalse =
-      dryRaw != null && String(dryRaw).trim() !== "" && !truthy(String(dryRaw));
-    if (dryExplicitTrue || !dryExplicitFalse) {
+    if (dryRunToken !== DRY_RUN_FALSE_VALUE) {
       throw new Error("EXECUTION_MODE_DRY_RUN_CONFLICT");
     }
     if (liveConfirmPresent) throw new Error("EXECUTION_CONFIRMATION_CONFLICT");
@@ -301,9 +311,7 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
   }
 
   if (executionTarget === "live") {
-    const dryExplicitTrue =
-      dryRaw != null && String(dryRaw).trim() !== "" && truthy(String(dryRaw));
-    if (executionModeRaw === "live" && dryExplicitTrue) {
+    if (executionModeRaw === "live" && dryRunToken === DRY_RUN_TRUE_VALUE) {
       throw new Error("EXECUTION_MODE_DRY_RUN_CONFLICT");
     }
     if (sandboxConfirmPresent) throw new Error("EXECUTION_CONFIRMATION_CONFLICT");
@@ -327,9 +335,7 @@ export function parseExecutionBoundary(env: NodeJS.ProcessEnv = process.env): Ex
     };
   }
 
-  const dryExplicitFalse =
-    dryRaw != null && String(dryRaw).trim() !== "" && !truthy(String(dryRaw));
-  if (executionModeRaw === "dry-run" && dryExplicitFalse) {
+  if (executionModeRaw === "dry-run" && dryRunToken === DRY_RUN_FALSE_VALUE) {
     throw new Error("EXECUTION_MODE_DRY_RUN_CONFLICT");
   }
   if (sandboxConfirmPresent) throw new Error("EXECUTION_CONFIRMATION_CONFLICT");

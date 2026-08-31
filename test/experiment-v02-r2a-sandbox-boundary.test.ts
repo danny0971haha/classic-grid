@@ -9,7 +9,12 @@ import {
   loadRuntimeConfig,
 } from "../src/config.js";
 import {
+  DRY_RUN_ALLOWED_VALUES,
+  DRY_RUN_FALSE_VALUE,
+  DRY_RUN_TRUE_VALUE,
   EXTENDED_NETWORK_PROFILES,
+  LIVE_CONFIRM_ALLOWED_VALUES,
+  LIVE_CONFIRM_VALUE,
   TESTNET_NETWORK_WRITE_AUTHORIZED,
   MAINNET_NETWORK_WRITE_AUTHORIZED,
   assertSandboxWriteAllowed,
@@ -23,7 +28,9 @@ import {
   vendorRequestUrl,
   type ExtendedNetworkProfile,
 } from "../src/extendedNetwork.js";
+import { runFlat, runLoop, runStatus } from "../src/loop.js";
 import { ExtendedExecutor } from "../src/venues/extended.js";
+import type { VenueExecutor } from "../src/venues/types.js";
 import { withEnv, withEnvAsync } from "./helpers/env.js";
 import { installOfflineNetworkGuard } from "./helpers/offlineNetworkGuard.js";
 
@@ -55,6 +62,55 @@ const V01_LIVE_ENV = {
   EXPERIMENT_ACCOUNT_SCOPE: "research-1",
 } as const;
 
+const DRY_RUN_ACCEPTED_TRUE = [undefined, "", DRY_RUN_TRUE_VALUE] as const;
+const DRY_RUN_REJECTED_VALUES = [
+  "banana",
+  "FALSEE",
+  "TRUE",
+  "00",
+  "yesplease",
+  "true",
+  "True",
+  "yes",
+  "YES",
+  "false",
+  "FALSE",
+  "False",
+  " 0",
+  "0 ",
+  " 1",
+  "1 ",
+  "\t0",
+  "0\n",
+  "1.0",
+  "01",
+  "-0",
+  "no",
+  "off",
+  "2",
+] as const;
+const LIVE_CONFIRM_REJECTED_VALUES = [
+  "yes",
+  "Yes",
+  "true",
+  "TRUE",
+  "1",
+  "banana",
+  " YES",
+  "YES ",
+  "yesplease",
+  "Y",
+] as const;
+const OFFLINE_ENV = {
+  EXPERIMENT_MODE: "1",
+  EXPERIMENT_SPEC_VERSION: "0.2.0",
+  EXECUTION_MODE: "",
+  EXTENDED_NETWORK: "",
+  SANDBOX_CONFIRM: "",
+  LIVE_CONFIRM: "",
+  VENUES: "extended",
+  MARKETS: "BTC",
+} as const;
 const FORBIDDEN_REDIRECT_STATUSES = [301, 302, 303, 307, 308] as const;
 const MAINNET_REST_HOST = "api.starknet.extended.exchange";
 const VENDOR_INDEX_HREF = pathToFileURL(path.join(ROOT, "vendor/extended/exchange/index.js")).href;
@@ -87,6 +143,60 @@ function mixedProfile(overrides: Partial<ExtendedNetworkProfile>): ExtendedNetwo
 
 function expectThrow(fn: () => unknown, pattern: RegExp, label: string): void {
   assert.throws(fn, pattern, label);
+}
+
+function envWithDryRun(
+  base: Record<string, string>,
+  dryRun: string | undefined,
+): NodeJS.ProcessEnv {
+  const env = { ...base } as NodeJS.ProcessEnv;
+  if (dryRun === undefined) delete env.DRY_RUN;
+  else env.DRY_RUN = dryRun;
+  return env;
+}
+
+function trackingLoopBindings(): { calls: string[]; bindings: Parameters<typeof runLoop>[0] } {
+  const calls: string[] = [];
+  const executor: VenueExecutor = {
+    id: "extended",
+    async connect() {
+      calls.push("connect");
+    },
+    disconnect() {
+      calls.push("disconnect");
+    },
+    async snapshot(market) {
+      calls.push("snapshot");
+      return { venue: "extended", market, mid: 0, position: 0, openOrders: [] };
+    },
+    async apply() {
+      calls.push("apply");
+      return { placed: 0, cancelled: 0, failed: 0, errors: [] };
+    },
+    async cancelAll() {
+      calls.push("cancelAll");
+    },
+    async closePosition() {
+      calls.push("closePosition");
+    },
+  };
+  return {
+    calls,
+    bindings: {
+      createExecutor: () => {
+        calls.push("create");
+        return executor;
+      },
+      refreshOfficialStats: async () => {
+        calls.push("stats");
+        throw new Error("OFFICIAL_STATS_MUST_NOT_RUN");
+      },
+      getOfficialCache: () => {
+        calls.push("cache");
+        return null;
+      },
+    },
+  };
 }
 
 function vendorProfileArgs(profile: ExtendedNetworkProfile): Record<string, string> {
@@ -886,5 +996,212 @@ describe("R2-A Extended Sepolia sandbox boundary", () => {
     } finally {
       mock.restore();
     }
+  });
+
+  it("C2-DOC: documented DRY_RUN and LIVE_CONFIRM allowlists are exact 0/1 and YES", () => {
+    assert.deepEqual([...DRY_RUN_ALLOWED_VALUES], ["0", "1"]);
+    assert.deepEqual([...LIVE_CONFIRM_ALLOWED_VALUES], ["YES"]);
+    assert.equal(DRY_RUN_TRUE_VALUE, "1");
+    assert.equal(DRY_RUN_FALSE_VALUE, "0");
+    assert.equal(LIVE_CONFIRM_VALUE, "YES");
+  });
+
+  it("C2-DRY-ACC-OFFLINE: accepted DRY_RUN values stay dry-run unless exact 0", () => {
+    for (const value of DRY_RUN_ACCEPTED_TRUE) {
+      const historical = parseExecutionBoundary(envWithDryRun({ ...OFFLINE_ENV }, value));
+      assert.equal(historical.executionTarget, "dry-run", `historical ${JSON.stringify(value)}`);
+      assert.equal(historical.dryRun, true, `historical dryRun ${JSON.stringify(value)}`);
+      const explicit = parseExecutionBoundary(
+        envWithDryRun({ ...OFFLINE_ENV, EXECUTION_MODE: "dry-run" }, value),
+      );
+      assert.equal(explicit.executionTarget, "dry-run", `explicit ${JSON.stringify(value)}`);
+      assert.equal(explicit.dryRun, true, `explicit dryRun ${JSON.stringify(value)}`);
+    }
+    const liveViaZero = parseExecutionBoundary(envWithDryRun({ ...OFFLINE_ENV }, "0"));
+    assert.equal(liveViaZero.executionTarget, "live");
+    assert.equal(liveViaZero.dryRun, false);
+    expectThrow(
+      () => parseExecutionBoundary(envWithDryRun({ ...OFFLINE_ENV, EXECUTION_MODE: "dry-run" }, "0")),
+      /EXECUTION_MODE_DRY_RUN_CONFLICT/,
+      "C2-DRY-ACC-OFFLINE-explicit-0",
+    );
+  });
+
+  it("C2-DRY-ACC-SANDBOX: sandbox accepts only exact DRY_RUN=0", () => {
+    const ok = parseExecutionBoundary(envWithDryRun({ ...SANDBOX_ENV }, "0"));
+    assert.equal(ok.executionTarget, "sandbox");
+    assert.equal(ok.dryRun, false);
+    for (const value of DRY_RUN_ACCEPTED_TRUE) {
+      expectThrow(
+        () => parseExecutionBoundary(envWithDryRun({ ...SANDBOX_ENV }, value)),
+        /EXECUTION_MODE_DRY_RUN_CONFLICT/,
+        `C2-DRY-ACC-SANDBOX-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C2-DRY-ACC-LIVE: live accepts exact DRY_RUN=0 and absent DRY_RUN with EXECUTION_MODE=live", () => {
+    const liveEnv = { ...V01_LIVE_ENV, EXECUTION_MODE: "live" };
+    const exactZero = parseExecutionBoundary(envWithDryRun(liveEnv, "0"));
+    assert.equal(exactZero.executionTarget, "live");
+    assert.equal(exactZero.dryRun, false);
+    const absent = parseExecutionBoundary(envWithDryRun(liveEnv, undefined));
+    assert.equal(absent.executionTarget, "live");
+    assert.equal(absent.dryRun, false);
+    expectThrow(
+      () => parseExecutionBoundary(envWithDryRun(liveEnv, "1")),
+      /EXECUTION_MODE_DRY_RUN_CONFLICT/,
+      "C2-DRY-ACC-LIVE-explicit-1",
+    );
+  });
+
+  it("C2-DRY-REJ-OFFLINE: rejected DRY_RUN values fail closed and are never live or sandbox", () => {
+    for (const value of DRY_RUN_REJECTED_VALUES) {
+      expectThrow(
+        () => parseExecutionBoundary(envWithDryRun({ ...OFFLINE_ENV }, value)),
+        /DRY_RUN_INVALID/,
+        `C2-DRY-REJ-OFFLINE-historical-${JSON.stringify(value)}`,
+      );
+      expectThrow(
+        () =>
+          parseExecutionBoundary(
+            envWithDryRun({ ...OFFLINE_ENV, EXECUTION_MODE: "dry-run" }, value),
+          ),
+        /DRY_RUN_INVALID/,
+        `C2-DRY-REJ-OFFLINE-explicit-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C2-DRY-REJ-SANDBOX: rejected DRY_RUN values are not treated as sandbox DRY_RUN=0", () => {
+    for (const value of DRY_RUN_REJECTED_VALUES) {
+      expectThrow(
+        () => parseExecutionBoundary(envWithDryRun({ ...SANDBOX_ENV }, value)),
+        /DRY_RUN_INVALID/,
+        `C2-DRY-REJ-SANDBOX-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C2-DRY-REJ-LIVE: rejected DRY_RUN values are not treated as live DRY_RUN=0", () => {
+    const liveEnv = { ...V01_LIVE_ENV, EXECUTION_MODE: "live" };
+    for (const value of DRY_RUN_REJECTED_VALUES) {
+      expectThrow(
+        () => parseExecutionBoundary(envWithDryRun(liveEnv, value)),
+        /DRY_RUN_INVALID/,
+        `C2-DRY-REJ-LIVE-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C2-LIVE-CONFIRM: LIVE_CONFIRM accepts only exact YES", () => {
+    const dryYes = parseExecutionBoundary({ ...OFFLINE_ENV, DRY_RUN: "1", LIVE_CONFIRM: "YES" });
+    assert.equal(dryYes.executionTarget, "dry-run");
+    assert.equal(dryYes.liveConfirm, true);
+    const dryAbsent = parseExecutionBoundary({ ...OFFLINE_ENV, DRY_RUN: "1", LIVE_CONFIRM: "" });
+    assert.equal(dryAbsent.liveConfirm, false);
+    const liveYes = parseExecutionBoundary({ ...V01_LIVE_ENV, EXECUTION_MODE: "live" });
+    assert.equal(liveYes.liveConfirm, true);
+    expectThrow(
+      () => parseExecutionBoundary({ ...SANDBOX_ENV, LIVE_CONFIRM: "YES" }),
+      /EXECUTION_CONFIRMATION_CONFLICT/,
+      "C2-LIVE-CONFIRM-sandbox-YES",
+    );
+    for (const value of LIVE_CONFIRM_REJECTED_VALUES) {
+      expectThrow(
+        () => parseExecutionBoundary({ ...OFFLINE_ENV, DRY_RUN: "1", LIVE_CONFIRM: value }),
+        /LIVE_CONFIRM_INVALID/,
+        `C2-LIVE-CONFIRM-offline-${JSON.stringify(value)}`,
+      );
+      expectThrow(
+        () => parseExecutionBoundary({ ...SANDBOX_ENV, LIVE_CONFIRM: value }),
+        /LIVE_CONFIRM_INVALID/,
+        `C2-LIVE-CONFIRM-sandbox-${JSON.stringify(value)}`,
+      );
+      expectThrow(
+        () =>
+          parseExecutionBoundary({
+            ...V01_LIVE_ENV,
+            EXECUTION_MODE: "live",
+            LIVE_CONFIRM: value,
+          }),
+        /LIVE_CONFIRM_INVALID/,
+        `C2-LIVE-CONFIRM-live-${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  it("C2-PATH: invalid DRY_RUN fails closed on every execution path before connect or write", async () => {
+    const samples = ["banana", "FALSEE", "TRUE", "00", "yesplease"] as const;
+    for (const value of samples) {
+      const offline = envWithDryRun({ ...OFFLINE_ENV }, value);
+      const sandbox = envWithDryRun({ ...SANDBOX_ENV }, value);
+      const live = envWithDryRun({ ...V01_LIVE_ENV, EXECUTION_MODE: "live" }, value);
+      for (const [label, env] of [
+        ["offline", offline],
+        ["sandbox", sandbox],
+        ["live", live],
+      ] as const) {
+        expectThrow(
+          () => parseExecutionBoundary(env),
+          /DRY_RUN_INVALID/,
+          `C2-PATH-parse-${label}-${value}`,
+        );
+        await withEnvAsync(env, async () => {
+          expectThrow(() => loadRuntimeConfig(), /DRY_RUN_INVALID/, `C2-PATH-cfg-${label}-${value}`);
+          const loop = trackingLoopBindings();
+          await assert.rejects(() => runLoop(loop.bindings), /DRY_RUN_INVALID/);
+          assert.equal(loop.calls.includes("create"), false, `loop create ${label} ${value}`);
+          assert.equal(loop.calls.includes("connect"), false, `loop connect ${label} ${value}`);
+          assert.equal(loop.calls.includes("stats"), false, `loop stats ${label} ${value}`);
+          const status = trackingLoopBindings();
+          await assert.rejects(() => runStatus(status.bindings), /DRY_RUN_INVALID/);
+          assert.equal(status.calls.includes("create"), false, `status create ${label} ${value}`);
+          const flat = trackingLoopBindings();
+          await assert.rejects(() => runFlat(flat.bindings), /DRY_RUN_INVALID/);
+          assert.equal(flat.calls.includes("create"), false, `flat create ${label} ${value}`);
+          const ex = new ExtendedExecutor(false);
+          await assert.rejects(() => ex.connect(), /DRY_RUN_INVALID/);
+        });
+      }
+    }
+    assert.equal(TESTNET_NETWORK_WRITE_AUTHORIZED, false);
+    assert.equal(MAINNET_NETWORK_WRITE_AUTHORIZED, false);
+    expectThrow(() => assertSandboxWriteAllowed(), /TESTNET_NETWORK_WRITE_UNAUTHORIZED/, "C2-PATH-write");
+  });
+
+  it("C2-PATH-VENDOR: Sepolia vendor init stays unauthorized even after a config parse failure", async () => {
+    await withEnvAsync({ ...SANDBOX_ENV, DRY_RUN: "banana" }, async () => {
+      expectThrow(() => parseExecutionBoundary(), /DRY_RUN_INVALID/, "C2-PATH-VENDOR-parse");
+      const createExchange = await loadCreateExchange();
+      const sepolia = EXTENDED_NETWORK_PROFILES.sepolia;
+      const ex = createExchange({
+        apiKey: PLACEHOLDER_TESTNET_KEY,
+        vault: 1,
+        starkPrivateKey: "0x1",
+        ...vendorProfileArgs(sepolia),
+      });
+      await assert.rejects(() => ex.init(), /TESTNET_NETWORK_WRITE_UNAUTHORIZED/);
+      await assert.rejects(
+        () => ex._reqOnce("GET", "/api/v1/info/markets"),
+        /TESTNET_NETWORK_WRITE_UNAUTHORIZED/,
+      );
+    });
+  });
+
+  it("C2-PATH-STATS: official Extended fetch returns empty on parse failure before createExchange", () => {
+    const src = fs.readFileSync(path.join(ROOT, "src/officialStats.ts"), "utf8");
+    const start = src.indexOf("async function fetchExtended");
+    const end = src.indexOf("async function fetchRisex");
+    const body = src.slice(start, end);
+    const catchEmpty = body.indexOf('return empty("extended"');
+    const create = body.indexOf("createExchange");
+    assert.equal(start >= 0 && end > start, true);
+    assert.equal(catchEmpty >= 0 && create >= 0 && catchEmpty < create, true);
+    expectThrow(
+      () => parseExecutionBoundary(envWithDryRun({ ...OFFLINE_ENV }, "banana")),
+      /DRY_RUN_INVALID/,
+      "C2-PATH-STATS-parse",
+    );
   });
 });
