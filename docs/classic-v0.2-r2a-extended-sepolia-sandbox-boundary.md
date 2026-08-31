@@ -70,9 +70,12 @@ CORRECTIVE_2_ACTUAL_STARTING_TREE=65c269e758cf7153e6e87eb5b83299e098df5518
 CORRECTIVE_2_IMPLEMENTATION_HEAD=2f01b52afea04c4a0d2fab5eb0260b81e9a62c66
 CORRECTIVE_2_IMPLEMENTATION_TREE=abf8892e6f995f390d0ecfbc6771cb949045b915
 CORRECTIVE_2_PRODUCT_DIFF_SHA256=b97cbf0f208fe8804ad194f78680194a12f36d29f36f673a7348615881eed82b
+CORRECTIVE_2_FINAL_HEAD=194add03a0937f121ce5da54af3ddcd8ad4ed51f
+CORRECTIVE_2_FINAL_TREE=07f98206cc42f5e9073a715ccfadefbb4c2ab5c2
+CORRECTIVE_2_FULL_DIFF_SHA256=8132d726d04e1cb205d2c3b84f882aea7704d062956f861f46cde8c0ad39ff91
 ```
 
-`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit. `FINAL_HEAD` is the Corrective 1 identity-bind commit. `CORRECTIVE_2_IMPLEMENTATION_HEAD` is the Corrective 2 product commit on top of `CORRECTIVE_2_REVIEWED_STARTING_HEAD` (exact match; no reset/rebase/amend). There is no stale `REVIEW_CANDIDATE_TIP=92de0e7…` identity for this corrective: that SHA is the original R2-A packet-fill / Corrective 1 starting HEAD only. Independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. Frozen origin R1 must remain:
+`IMPLEMENTATION_HEAD` is the original R2-A product-code commit. `RESULT_HEAD` is the identity-bind commit that first recorded that implementation identity. `CORRECTIVE_IMPLEMENTATION_HEAD` is the Corrective 1 product commit. `FINAL_HEAD` is the Corrective 1 identity-bind commit. `CORRECTIVE_2_IMPLEMENTATION_HEAD` is the Corrective 2 product commit on top of `CORRECTIVE_2_REVIEWED_STARTING_HEAD` (exact match; no reset/rebase/amend). `CORRECTIVE_2_FINAL_HEAD` is the Corrective 2 identity-bind commit that first recorded that product identity. A follow-up packet-fill commit on this branch may sit on top of `CORRECTIVE_2_FINAL_HEAD`; independent review should use `git rev-parse` of `experiment/classic-v0.2-r2-extended-sepolia` after push as the checkout tip. There is no stale `REVIEW_CANDIDATE_TIP=92de0e7…` identity for this corrective: that SHA is the original R2-A packet-fill / Corrective 1 starting HEAD only. Frozen origin R1 must remain:
 
 ```text
 git rev-parse origin/experiment/classic-v0.2-100u-safety
@@ -115,7 +118,7 @@ Paths changed in `CORRECTIVE_2_IMPLEMENTATION_HEAD` relative to `CORRECTIVE_2_AC
 | `src/extendedNetwork.ts` | `d31a26b51205f44c9bc6d66f5bcd1f23c6b3fb7a` | `94c9c920b773de173d462245f4d6cf105c97eb7f` | Replace `truthy()` with exact `0`/`1` and `YES` parsers; unknown values throw `DRY_RUN_INVALID` / `LIVE_CONFIRM_INVALID`. |
 | `test/experiment-v02-r2a-sandbox-boundary.test.ts` | `8742be308110fc26aee88bb1c3e314a58dcace6f` | `44a8149ecd9d0e4eb93bec90bff612c9040e48ce` | Accepted/rejected matrix in offline, sandbox, and live; execution-path fail-closed tests. |
 | `.env.example` | `742ff3c18ed156bb2556f9836142abacba6f3f73` | `8d7f7db2e869c9e38114f1644f1a991621a5f73d` | Document the exact accepted `DRY_RUN` / `LIVE_CONFIRM` tokens. |
-| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | `938359f0a1a625e9b5af87b3bb910a41a060f561` | this evidence commit blob | Record Corrective 2 identity and results. |
+| `docs/classic-v0.2-r2a-extended-sepolia-sandbox-boundary.md` | `938359f0a1a625e9b5af87b3bb910a41a060f561` | `27cc9ac62c6b33be9c37b57b32b2ffde73c14630` at Corrective 2 identity-bind; later packet-fill blob supersedes | Record Corrective 2 identity and results. |
 
 `package-lock.json` and dependency versions were not changed. Official profile tuples in `EXTENDED_NETWORK_PROFILES` were not changed.
 
@@ -522,6 +525,7 @@ c478a0b36d112f4ecba490a2c7d97e5a74fa910d fix(r2a): reject vendor HTTP redirects 
 7f8c7d671df5cb9f0d51b95bcb4113525c372c25 docs(r2a): bind Corrective 1 candidate identity
 7300422bef95ab5a533d521e1826af300a7d8652 docs(r2a): record Corrective 1 result HEAD and tree
 2f01b52afea04c4a0d2fab5eb0260b81e9a62c66 fix(r2a): reject non-exact DRY_RUN and LIVE_CONFIRM values
+194add03a0937f121ce5da54af3ddcd8ad4ed51f docs(r2a): bind Corrective 2 candidate identity
 ```
 
 The identity-bind and packet-fill commits do not change product bytes. Independent review should check out the pushed branch tip. There is no current-review identity named `REVIEW_CANDIDATE_TIP=92de0e7…`.
