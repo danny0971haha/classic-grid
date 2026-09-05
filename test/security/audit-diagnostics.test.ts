@@ -8,19 +8,15 @@ import { runNpmAudit } from "../../scripts/security/audit-baseline.js";
 // A local fake npm exercises subprocess capture without a registry or credentials.
 function capture(status: number, stdout: string, stderr: string) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "audit-diagnostic-"));
-  const previousPath = process.env.PATH;
   try {
     fs.writeFileSync(path.join(root, "npm"),
       `#!${process.execPath}\nprocess.stdout.write(${JSON.stringify(stdout)});\n` +
       `process.stderr.write(${JSON.stringify(stderr)});\nprocess.exit(${status});\n`,
       { mode: 0o700 });
-    process.env.PATH = root;
-    const result = runNpmAudit(root, "out");
+    const result = runNpmAudit(root, "out", { executable: path.join(root, "npm"), env: {} });
     const diagnostic = JSON.parse(fs.readFileSync(path.join(root, "out/audit-command.json"), "utf8"));
     return { result, diagnostic };
   } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
     fs.rmSync(root, { recursive: true, force: true });
   }
 }
@@ -63,17 +59,36 @@ test("sanitization keeps artifact JSON parseable and removes diagnostic secrets"
 
 test("spawn failure records null status and the actual error without a success", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "audit-diagnostic-"));
-  const previousPath = process.env.PATH;
   try {
-    process.env.PATH = root;
-    const result = runNpmAudit(root, "out");
+    const result = runNpmAudit(root, "out", { executable: path.join(root, "npm"), env: {} });
     const diagnostic = JSON.parse(fs.readFileSync(path.join(root, "out/audit-command.json"), "utf8"));
     assert.equal(result.ok, false);
     assert.equal(diagnostic.status, null);
     assert.match(diagnostic.error, /ENOENT/);
   } finally {
-    if (previousPath === undefined) delete process.env.PATH;
-    else process.env.PATH = previousPath;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test("signal termination retains capture time, signal, and both streams", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "audit-signal-"));
+  try {
+    const result = runNpmAudit(root, "out", {
+      executable: process.execPath,
+      args: ["-e", 'process.stdout.write("before signal"); process.stderr.write("signal diagnostic"); process.kill(process.pid, "SIGTERM");'],
+      cwd: root,
+      env: {},
+    });
+    const diagnostic = JSON.parse(fs.readFileSync(path.join(root, "out/audit-command.json"), "utf8"));
+    assert.equal(result.ok, false);
+    assert.equal(diagnostic.status, null);
+    assert.equal(diagnostic.signal, "SIGTERM");
+    assert.equal(diagnostic.stdout, "before signal");
+    assert.equal(diagnostic.stderr, "signal diagnostic");
+    assert.equal(diagnostic.error, null);
+    assert.ok(Number.isFinite(Date.parse(diagnostic.capturedAt)));
+  } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });

@@ -23,10 +23,12 @@ jobs:
       EVIDENCE_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        id: required_01
         with:
           persist-credentials: false
           fetch-depth: 0
       - name: Fetch pull-request head for identity
+        id: required_02
         if: github.event_name == 'pull_request'
         env:
           GIT_TERMINAL_PROMPT: "0"
@@ -41,12 +43,15 @@ jobs:
           git cat-file -e "${HEAD_SHA}^{commit}"
           git rev-parse --verify "${HEAD_SHA}^{tree}"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        id: required_03
         with:
           node-version: 22.23.2
           cache: npm
       - name: Pin npm
+        id: required_04
         run: npm install -g npm@10.9.8
       - name: Record toolchain and identity
+        id: required_05
         run: |
           node --version
           npm --version
@@ -60,43 +65,90 @@ jobs:
           echo "evidence_source_head=${EVIDENCE_SOURCE_HEAD_SHA}"
           echo "base=${CHECKPOINT_E_BASE_SHA}"
           echo "evidence_base=${EVIDENCE_BASE_SHA}"
-      - run: npm ci
+      - run: npm ci --no-audit
+        id: required_06
+        continue-on-error: true
       - run: npm run typecheck
+        id: required_07
+        continue-on-error: true
       - name: Audit diagnostic regression tests
-        run: node --import tsx --test test/security/audit-diagnostics.test.ts
+        id: required_08
+        continue-on-error: true
+        run: npm run test:audit-diagnostics
       - run: npm run test:checkpoint-e
+        id: required_09
+        continue-on-error: true
       - run: npm run test:checkpoint-e-corrective
+        id: required_10
+        continue-on-error: true
       - run: npm run test:checkpoint-f
+        id: required_11
+        continue-on-error: true
       - run: npm run check
+        id: required_12
+        continue-on-error: true
       - run: npm run build
+        id: required_13
+        continue-on-error: true
       - name: Generate Checkpoint E evidence
+        id: required_14
+        continue-on-error: true
         run: npm run evidence:checkpoint-e
       - name: Verify Checkpoint E evidence
+        id: required_15
+        continue-on-error: true
         run: npm run evidence:checkpoint-e:verify
       - name: Generate Checkpoint F evidence
+        id: required_16
+        continue-on-error: true
         run: npm run evidence:checkpoint-f
       - name: Verify Checkpoint F evidence
+        id: required_17
+        continue-on-error: true
         run: npm run evidence:checkpoint-f:verify
       - name: Security checker tests
+        id: required_18
+        continue-on-error: true
         run: |
           set -euo pipefail
           mkdir -p artifacts/security
-          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts test/security/extended-canary-boundary.test.ts test/security/source-policy.test.ts test/security/canary-manifest-strict.test.ts test/security/canary-artifact-content.test.ts \
+          node --import tsx --test --test-reporter=tap test/security/audit-baseline.test.ts test/security/audit-diagnostics.test.ts test/security/audit-identity.test.ts test/security/audit-ci.test.ts test/security/action-pin.test.ts test/security/action-trust-git.test.ts test/security/extended-canary-boundary.test.ts test/security/source-policy.test.ts test/security/canary-manifest-strict.test.ts test/security/canary-artifact-content.test.ts \
             | node --import tsx scripts/security/audit-baseline.ts sanitize-log \
             > artifacts/security/security-checker-tests.log
       - name: Dependency audit policy
-        run: npm run audit:security-baseline
+        id: required_19
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npm run test:audit-live
+      - name: Replay captured live audit offline
+        id: required_20
+        continue-on-error: true
+        run: npm run audit:security-baseline -- --audit-json artifacts/security/audit.json --out-dir artifacts/security/replay
       - name: Verify GitHub Actions inventory
+        id: required_21
+        continue-on-error: true
         run: npm run verify:action-inventory
+      - name: Canary clean-install regression
+        id: required_22
+        continue-on-error: true
+        timeout-minutes: 5
+        run: npm run test:canary-live
       - name: Extended canary dependency boundary
+        id: required_23
+        continue-on-error: true
         run: npm run verify:extended-canary
       - name: Record dependency-boundary evidence
+        id: required_24
+        continue-on-error: true
         run: npm run evidence:dependency-boundary
       - name: Assert security inventory files
+        id: required_25
+        continue-on-error: true
         run: |
           set -euo pipefail
           for f in \
             artifacts/security/audit.json \
+            artifacts/security/audit-command.json \
             artifacts/security/audit-baseline-verification.json \
             artifacts/security/action-pin-inventory.json \
             artifacts/security/package-lock.sha256 \
@@ -108,8 +160,12 @@ jobs:
             test -s "$f"
           done
       - name: Production artifact smoke and exact content-manifest verifier
+        id: required_26
+        continue-on-error: true
         run: node --import tsx scripts/security/canary-artifact-smoke.ts
       - name: Whitespace check
+        id: required_27
+        continue-on-error: true
         env:
           GIT_TERMINAL_PROMPT: "0"
         run: |
@@ -144,6 +200,8 @@ jobs:
             git diff --check "$F_BASE" HEAD
           fi
       - name: Working tree clean
+        id: required_28
+        continue-on-error: true
         run: |
           set -euo pipefail
           git diff --exit-code
@@ -152,18 +210,26 @@ jobs:
             exit 1
           fi
       - name: Upload Checkpoint E evidence
+        id: required_29
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: classic-v0.2-checkpoint-e-results
           path: artifacts/classic-v0.2-checkpoint-e-results.json
           if-no-files-found: error
       - name: Upload Checkpoint F evidence
+        id: required_30
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: classic-v0.2-checkpoint-f-results
           path: artifacts/classic-v0.2-checkpoint-f-results.json
           if-no-files-found: error
       - name: Upload security inventory
+        id: required_31
+        continue-on-error: true
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -174,8 +240,27 @@ jobs:
           if-no-files-found: error
           retention-days: 90
       - name: Upload dependency-boundary evidence
+        id: required_32
+        if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: classic-v0.2-dependency-boundary-corrective-1
           path: artifacts/classic-v0.2-dependency-boundary-corrective-1.json
           if-no-files-found: error
+      - name: Aggregate required outcomes (fail closed)
+        if: always()
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(steps) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          node --input-type=module <<'JS'
+          const results = JSON.parse(process.env.REQUIRED_RESULTS);
+          const required = ['required_01', 'required_02', 'required_03', 'required_04', 'required_05', 'required_06', 'required_07', 'required_08', 'required_09', 'required_10', 'required_11', 'required_12', 'required_13', 'required_14', 'required_15', 'required_16', 'required_17', 'required_18', 'required_19', 'required_20', 'required_21', 'required_22', 'required_23', 'required_24', 'required_25', 'required_26', 'required_27', 'required_28', 'required_29', 'required_30', 'required_31', 'required_32'];
+          const failures = required.filter(id => {
+            if (id === 'required_02' && process.env.EVENT_NAME !== 'pull_request') return false;
+            return results[id]?.outcome !== 'success';
+          });
+          for (const id of failures) console.error(`${id}: ${results[id]?.outcome ?? 'missing'}`);
+          if (failures.length) process.exit(1);
+          JS
