@@ -1,0 +1,33 @@
+{
+  "sourceHead": "75157059f5af474dbcbc9f2ca7c1b9102b7d12fb",
+  "runId": 33964860391,
+  "artifactId": 9969122759,
+  "archiveSha256": "67af386da3fec55dd2c587d8b3301286897fba50d84b6cd66e8bee8e4f734e21",
+  "files": [
+    {
+      "artifactPath": "security-a10-6459/action-pin-inventory.json",
+      "sha256": "c2050602bca6be82225f8a0ad7afbf7d806619e05cee9c7d5783c74e5a9bdb96",
+      "bytes": 3820
+    },
+    {
+      "artifactPath": "security-a10-6459/audit-baseline-verification.json",
+      "sha256": "e7430394c9ff1b97a32620844e6887cd85ea1fadd744491bf6ceaefab0e932ea",
+      "bytes": 3863
+    },
+    {
+      "artifactPath": "security-a10-6459/audit-command.json",
+      "sha256": "3b1406f8a639ece5747c98ec470ed02c3c2c4b00770ce8c61c638ea5d54ec532",
+      "bytes": 23759
+    },
+    {
+      "artifactPath": "security-a10-6459/audit.json",
+      "sha256": "9a8087fee8ea93310b5d20842e0e93f6b66bf1c21a0f4becd464b1c7ba01e2ad",
+      "bytes": 20903
+    },
+    {
+      "artifactPath": "security-a10-6459/package-lock.sha256",
+      "sha256": "d2baeeab44da7629ba5de904a730a494ed739d2a64982c93247ee7d3ff241666",
+      "bytes": 84
+    }
+  ]
+}

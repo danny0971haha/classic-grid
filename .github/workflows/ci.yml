@@ -62,6 +62,8 @@ jobs:
           echo "evidence_base=${EVIDENCE_BASE_SHA}"
       - run: npm ci
       - run: npm run typecheck
+      - name: Audit diagnostic regression tests
+        run: node --import tsx --test test/security/audit-diagnostics.test.ts
       - run: npm run test:checkpoint-e
       - run: npm run test:checkpoint-e-corrective
       - run: npm run test:checkpoint-f
@@ -162,10 +164,13 @@ jobs:
           path: artifacts/classic-v0.2-checkpoint-f-results.json
           if-no-files-found: error
       - name: Upload security inventory
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: classic-v0.2-security-inventory-${{ github.event.pull_request.head.sha || github.sha }}
-          path: artifacts/security/
+          path: |
+            artifacts/security/
+            artifacts/security-a10-*/
           if-no-files-found: error
           retention-days: 90
       - name: Upload dependency-boundary evidence
