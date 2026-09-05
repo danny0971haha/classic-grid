@@ -7,6 +7,8 @@
 
 **R2-A is a REVIEW_CANDIDATE.** Read [current status](docs/CURRENT_STATUS.md) before using the historical instructions below. The bounded artifact is `packages/extended-canary/`; the root repository is not a security-cleared production artifact. Testnet/mainnet writes, real-fund testing, deployment and merge remain unauthorized.
 
+Agent work starts with [AGENTS.md](AGENTS.md) and [AI_START_HERE.md](AI_START_HERE.md). Follow the current task and impact-based reading map; historical launch examples are not task or trading authorization.
+
 Local verification: `npm run verify:current-candidate`. See its scope and prerequisites in [the verification guide](docs/CURRENT_STATUS.md#local-verification). [Repository protection guidance](docs/REPOSITORY_PROTECTION.md).
 
 等差网格：现价下买上卖，**成交后补相邻反向单**；启动校验格距 > 双边手续费、保证金预检。
@@ -181,6 +183,8 @@ test/                 # 核心网格单测
 ---
 
 ## 给 AI / 改代码时
+
+先读 [AGENTS.md](AGENTS.md) 和 [AI_START_HERE.md](AI_START_HERE.md)，按当前任务影响范围阅读合约；下列历史操作入口不构成执行或交易授权。
 
 - 策略：`src/grid.ts` · 循环：`src/loop.ts` · 适配器：`src/venues/` · TG：`src/telegram.ts`
 - 演示静态页：`docs/demo-dashboard.html`
