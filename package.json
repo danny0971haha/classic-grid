@@ -29,7 +29,9 @@
     "evidence:dependency-boundary": "node --import tsx tools/dependency-boundary-evidence.ts generate",
     "audit:security-baseline": "node --import tsx scripts/security/audit-baseline.ts",
     "verify:action-inventory": "node --import tsx scripts/security/verify-action-inventory.ts",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "verify:current-candidate": "python3 scripts/verify-current-candidate.py",
+    "test:verification": "python3 -m unittest discover -s scripts/verification-tests -p \"test_*.py\""
   },
   "engines": {
     "node": ">=20"

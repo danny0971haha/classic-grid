@@ -3,12 +3,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](./package.json)
 
+## Current development status
+
+**R2-A is a REVIEW_CANDIDATE.** Read [current status](docs/CURRENT_STATUS.md) before using the historical instructions below. The bounded artifact is `packages/extended-canary/`; the root repository is not a security-cleared production artifact. Testnet/mainnet writes, real-fund testing, deployment and merge remain unauthorized.
+
+Local verification: `npm run verify:current-candidate`. See its scope and prerequisites in [the verification guide](docs/CURRENT_STATUS.md#local-verification). [Repository protection guidance](docs/REPOSITORY_PROTECTION.md).
+
 等差网格：现价下买上卖，**成交后补相邻反向单**；启动校验格距 > 双边手续费、保证金预检。
 
 适配器：**Extended · RISEx · Decibel · N1 · Phoenix · Phoenix2 · Nado · PopDEX**
 
 > 开源模板，**不含私钥 / API Key / Telegram Token / 服务器地址 / 账本文件**。
-> 生产运行只需要：`cp .env.example .env`，填上你的密钥，其余代码零改动。
+> 历史生产启动说明（当前候选未获授权，不应执行）：`cp .env.example .env`，填上你的密钥，其余代码零改动。
 
 ---
 

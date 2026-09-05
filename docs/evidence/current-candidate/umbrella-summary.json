@@ -1,0 +1,40 @@
+{
+  "repository": "classic-grid",
+  "candidate": "39bf3a797b58f7fd91babf9f2d608cfd28e04487",
+  "offlineValidationCompleted": false,
+  "liveExchangeWrites": false,
+  "testnetWrites": false,
+  "authorizationGranted": false,
+  "networkIsolation": "LINUX_SECCOMP_AF_UNIX_ONLY",
+  "checks": [
+    {
+      "command": [
+        "npm",
+        "run",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "log": "artifacts/current-candidate/01.log",
+      "logSha256": "10c9bed26029507841b3ff1752445c210723a72825eca74bb43a0ea8f0801c22"
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "test:security"
+      ],
+      "exitCode": 1,
+      "log": "artifacts/current-candidate/02.log",
+      "logSha256": "c994d13ef767c43f306ad4dc230c1287b7988bdb307cde219a688bd21cb9453c"
+    }
+  ],
+  "blockers": [
+    "MANDATORY_CHECK_FAILED"
+  ],
+  "notExecuted": [
+    "verify:extended-canary (registry install/audit)"
+  ],
+  "candidateTree": "fb139e4737711602df44636e8186ccc6694de654",
+  "workingTreeStatus": "M  .gitignore\nM  README.md\nA  docs/CURRENT_STATUS.md\nA  docs/REPOSITORY_PROTECTION.md\nM  package.json\nA  scripts/verification-tests/test_entrypoint.py\nA  scripts/verify-current-candidate.py\n?? artifacts/security-a10-2881/action-pin-inventory.json\n?? artifacts/security-a10-2881/audit-baseline-verification.json\n?? artifacts/security-a10-2881/audit.json\n?? artifacts/security-a10-2881/package-lock.sha256\n?? artifacts/security-a10-47/action-pin-inventory.json\n?? artifacts/security-a10-47/audit-baseline-verification.json\n?? artifacts/security-a10-47/audit.json\n?? artifacts/security-a10-47/package-lock.sha256\n?? artifacts/security-a10-83/action-pin-inventory.json\n?? artifacts/security-a10-83/audit-baseline-verification.json\n?? artifacts/security-a10-83/audit.json\n?? artifacts/security-a10-83/package-lock.sha256",
+  "frozenIdentityPreserved": true
+}

@@ -1,0 +1,234 @@
+[
+  {
+    "command": [
+      "npm",
+      "run",
+      "typecheck"
+    ],
+    "exitCode": 0,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/01.log",
+    "sha256": "10c9bed26029507841b3ff1752445c210723a72825eca74bb43a0ea8f0801c22",
+    "testCounts": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "test:security"
+    ],
+    "exitCode": 1,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/02.log",
+    "sha256": "bcc348efa046022815bf73482cde015d60bdb436c8706583d6fefeffc97a2641",
+    "testCounts": {
+      "tests": [
+        178
+      ],
+      "pass": [
+        176
+      ],
+      "fail": [
+        2
+      ],
+      "cancelled": [
+        0
+      ],
+      "skipped": [
+        0
+      ],
+      "todo": [
+        0
+      ]
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "test"
+    ],
+    "exitCode": 1,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/03.log",
+    "sha256": "83758e10ab0c5c5ebb9f85608911141f421e4c5b3fa444e7ca39655991a0fac7",
+    "testCounts": {
+      "tests": [
+        647
+      ],
+      "pass": [
+        638
+      ],
+      "fail": [
+        9
+      ],
+      "cancelled": [
+        0
+      ],
+      "skipped": [
+        0
+      ],
+      "todo": [
+        0
+      ]
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "build"
+    ],
+    "exitCode": 0,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/04.log",
+    "sha256": "ff55bd2eb3dc38ad4eacec466f6e9da644ec905a7f713dd4dbdd8509323f0055",
+    "testCounts": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "verify:action-inventory"
+    ],
+    "exitCode": 0,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/05.log",
+    "sha256": "60268e43510ba50fbde39302b5560081f9d960dd8512bcbf55ec0d8da4e772a8",
+    "testCounts": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "pack:extended-canary"
+    ],
+    "exitCode": 0,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/06.log",
+    "sha256": "3399870917eef71cefd33d1674b00d51a902af86c3da45d6bec30252b7fbbad9",
+    "testCounts": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "verify:extended-canary"
+    ],
+    "exitCode": 1,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/07.log",
+    "sha256": "01e6b66a03545a1bcc133e057dca6b296532ec81f173cd8e97a4616cbf5f3e56",
+    "testCounts": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    }
+  },
+  {
+    "command": [
+      "npm",
+      "run",
+      "test:verification"
+    ],
+    "exitCode": 0,
+    "tapTotals": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    },
+    "log": "/workspace/scratch/dc6fcc8945ba/.retrieval/evidence/classic-grid/08.log",
+    "sha256": "d1baebac1b4c309dbc5a23271e13d7ff81267c878ba08fe9ddd10b7c3f6ef91c",
+    "testCounts": {
+      "tests": [],
+      "pass": [],
+      "fail": [],
+      "cancelled": [],
+      "skipped": [],
+      "todo": []
+    }
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "file": "raw-logs.json",
+    "bytes": 115224,
+    "sha256": "a346f4bb8240e0f4708914c1776555a9c6326d8ef6a1a8343f7e17abb5d5ff97"
+  },
+  {
+    "file": "results.json",
+    "bytes": 4640,
+    "sha256": "af7507de2816fbbac64aecef035b2dc52ef12bed72ec677a5eaf4e629110499b"
+  },
+  {
+    "file": "umbrella-summary.json",
+    "bytes": 1881,
+    "sha256": "d18dd960e874b3869b68845a7a95f0f2eb67022047b56e6e96b303c24173653f"
+  }
+]

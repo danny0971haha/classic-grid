@@ -11,6 +11,11 @@ deploy/
 scripts/*
 !scripts/security/
 !scripts/security/**
+!scripts/verify-current-candidate.py
+!scripts/verification-tests/
+!scripts/verification-tests/test_*.py
+scripts/verification-tests/__pycache__/
+scripts/__pycache__/
 
 # 生产快照 / 内部文档 / 研究模板
 docs/live-snapshot*.json
@@ -25,5 +30,6 @@ artifacts/classic-v0.2-dependency-boundary-corrective-1.json
 artifacts/security/
 artifacts/security-tmp-*
 artifacts/extended-canary/
+artifacts/current-candidate/
 packages/extended-canary/node_modules/
 packages/extended-canary/dist/
