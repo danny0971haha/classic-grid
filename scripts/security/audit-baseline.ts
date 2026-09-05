@@ -31,13 +31,34 @@ function writeRelative(root: string, relative: string, contents: string): void {
   fs.writeFileSync(full, sanitizeForArtifact(contents, root));
 }
 
-export function runNpmAudit(root: string): { ok: true; raw: string } | { ok: false; code: "AUDIT_COMMAND_FAILED"; stderr: string } {
+export function runNpmAudit(root: string, diagnosticDir?: string): { ok: true; raw: string } | { ok: false; code: "AUDIT_COMMAND_FAILED"; stderr: string } {
   const spawned = spawnSync("npm", ["audit", "--omit=dev", "--json"], {
     cwd: root,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
     env: process.env,
   });
+  if (diagnosticDir) {
+    // Capture the same invocation, including registry/error JSON. Never rerun an
+    // audit to explain a prior failure or substitute this document for policy.
+    const full = repoPath(root, path.join(diagnosticDir, "audit-command.json"));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    const redact = (value: string) => sanitizeForArtifact(value, root)
+      .replace(/(https?:\/\/)[^\s/"@]+@/gi, "$1[redacted]@")
+      .replace(/((?:_authToken|_auth|token|password)\s*[=:]\s*)[^\s,"}]+/gi, "$1[redacted]");
+    fs.writeFileSync(full, `${JSON.stringify({
+      schemaVersion: "classic-audit-command-diagnostic/1",
+      command: ["npm", "audit", "--omit=dev", "--json"],
+      capturedAt: new Date().toISOString(),
+      status: spawned.status,
+      signal: spawned.signal,
+      error: spawned.error ? redact(String(spawned.error)) : null,
+      stdout: redact(spawned.stdout || ""),
+      stderr: redact(spawned.stderr || ""),
+      streamsAreSanitized: true,
+      authorizationGranted: false,
+    }, null, 2)}\n`);
+  }
   if (spawned.error || spawned.status === null) {
     return { ok: false, code: "AUDIT_COMMAND_FAILED", stderr: spawned.stderr || String(spawned.error || "spawn failed") };
   }
@@ -83,7 +104,7 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
     }
     auditRaw = loaded.raw;
   } else {
-    const audited = runNpmAudit(root);
+    const audited = runNpmAudit(root, outDir);
     if (!audited.ok) {
       const result = commandFailedResult(baseline, lockfileSha256, "AUDIT_COMMAND_FAILED");
       writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
