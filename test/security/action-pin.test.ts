@@ -307,6 +307,12 @@ function assertUploadsAfterSecurityGates(workflow: string): void {
     assert.notEqual(idx, -1, `missing ${token}`);
     assert.ok(idx < firstUpload, `${token} must precede upload-artifact`);
   }
-  assert.equal(workflow.includes("if: always()"), false);
-  assert.equal(workflow.includes("continue-on-error: true"), false);
+  // Evidence must survive check failures under this corrective's CI contract.
+  // audit-ci.test.ts executes the final aggregator against every failed/missing
+  // prerequisite, including success conclusions masked by continue-on-error.
+  const aggregate = workflow.indexOf("Aggregate required outcomes (fail closed)");
+  assert.ok(aggregate > workflow.lastIndexOf("uses: actions/upload-artifact@"));
+  const finalStep = workflow.slice(aggregate);
+  assert.match(finalStep, /if: always\(\)/);
+  assert.equal(finalStep.includes("continue-on-error: true"), false);
 }

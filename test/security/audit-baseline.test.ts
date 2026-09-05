@@ -26,7 +26,7 @@ function finding(overrides: Partial<HighFinding> = {}): HighFinding {
   return {
     advisoryId: "1001",
     sourceId: "1001",
-    ghsaId: "GHSA-test-xxxx",
+    ghsaId: "GHSA-aaaa-bbbb-1001",
     package: "axios",
     severity: "high",
     isDirect: false,
@@ -43,7 +43,7 @@ function highPackage(overrides: Partial<HighPackage> = {}): HighPackage {
     severity: "high",
     isDirect: false,
     dependencyPaths: ["node_modules/axios"],
-    vulnerableRange: "1.0.0 - 1.17.0",
+    vulnerableRange: "*",
     viaHighAdvisoryIds: ["1001"],
     fixAvailable: false,
     ...overrides,
@@ -71,7 +71,7 @@ function viaObject(source: number, name: string, severity: string, range: string
     name,
     dependency: name,
     title: `${name} fixture`,
-    url: `https://github.com/advisories/GHSA-test-${source}`,
+    url: `https://github.com/advisories/GHSA-aaaa-bbbb-${source}`,
     severity,
     range,
     cwe: [],
@@ -593,18 +593,40 @@ describe("audit adversarial metadata and identity cases", () => {
     assert.deepEqual(result.codes, ["AUDIT_COUNT_INVALID"]);
   });
 
-  it("A-10 accepts the current real audit baseline without clearing existing highs", () => {
+  it("A-10 evaluates a synthetic baseline-consistent fixture offline without clearing existing highs", () => {
     const committed = JSON.parse(fs.readFileSync(BASELINE_RELATIVE_PATH, "utf8")) as AuditBaseline;
     assert.equal(committed.policy.existingHighAreNotCleared, true);
     assert.equal(committed.highPackages.length, 14);
     const outDir = path.join("artifacts", `security-a10-${process.pid}`);
-    const result = runAuditBaseline(process.cwd(), { outDir });
+    // This is deliberately synthetic: it exercises the committed accepted set, not
+    // a captured historical registry response. Aggregate references are synthetic.
+    const fixture = auditJson({
+      vulnerabilities: Object.fromEntries(committed.highPackages.map((pkg) => {
+        const leaves = committed.highFindings.filter((finding) => finding.package === pkg.package);
+        return [pkg.package, {
+          name: pkg.package,
+          severity: pkg.severity,
+          isDirect: pkg.isDirect,
+          range: pkg.vulnerableRange,
+          nodes: pkg.dependencyPaths,
+          fixAvailable: pkg.fixAvailable,
+          via: leaves.length > 0 ? leaves.map((finding) => viaObject(Number(finding.sourceId), finding.package, finding.severity, finding.vulnerableRange, {
+            url: `https://github.com/advisories/${finding.ghsaId}`,
+          })) : [committed.highFindings[0]!.package],
+        }];
+      })),
+    });
+    const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "classic-a10-synthetic-"));
+    const fixturePath = path.join(fixtureDir, "synthetic-audit.json");
+    fs.writeFileSync(fixturePath, fixture);
+    const result = runAuditBaseline(process.cwd(), { outDir, auditJsonPath: fixturePath });
+    fs.rmSync(fixtureDir, { recursive: true, force: true });
     assert.equal(result.ok, true);
     assert.deepEqual(result.codes, ["PASS"]);
     assert.equal(result.metadataMatchesObserved, true);
     assert.equal(result.metadata.high, 14);
     assert.equal(result.metadata.critical, 0);
-    assert.equal(result.metadata.total, 22);
+    assert.equal(result.metadata.total, 14);
     assert.deepEqual(result.observed, result.metadata);
     assert.equal(result.resolvedHigh.length, 0);
     const document = verificationDocument(result);

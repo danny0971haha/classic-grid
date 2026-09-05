@@ -36,6 +36,9 @@ export type PolicyCode =
   | "CRITICAL_VULNERABILITY"
   | "NEW_HIGH"
   | "ADVISORY_REPLACED"
+  | "ADVISORY_SOURCE_RENUMBERED"
+  | "VULNERABLE_RANGE_CHANGED"
+  | "AFFECTED_PACKAGE_ADDED"
   | "DEPENDENCY_PATH_CHANGED"
   | "PACKAGE_IDENTITY_CHANGED";
 
@@ -78,11 +81,13 @@ export type PackageRow = {
   name: string;
   severity: SeverityLevel;
   viaAdvisoryIds: string[];
+  referencedPackages: string[];
 };
 
 export type AdvisoryIdentityMissing = {
   advisoryId: string;
   package: string;
+  reason: "GHSA_MISSING_OR_INVALID" | "BASELINE_GHSA_MISSING_OR_INVALID" | "STILL_HIGH_WITHOUT_EXPECTED_GHSA" | "NO_REACHABLE_HIGH_GHSA";
 };
 
 export type AuditBaseline = {
@@ -114,7 +119,10 @@ export type PolicyResult = {
   newHigh: HighFinding[];
   advisoryIdentityMissing: AdvisoryIdentityMissing[];
   critical: Array<{ package: string; advisoryId: string | null; severity: "critical" }>;
-  advisoryReplaced: Array<{ package: string; expectedAdvisoryId: string; actualAdvisoryId: string }>;
+  advisoryReplaced: Array<{ package: string; expectedAdvisoryId: string; actualAdvisoryId: string; expectedGhsaId: string; actualGhsaId: string }>;
+  advisorySourceRenumbered: Array<{ package: string; ghsaId: string; expectedSourceId: string; actualSourceId: string }>;
+  vulnerableRangeChanged: Array<{ advisoryId: string; package: string; expected: string; actual: string }>;
+  affectedPackageAdded: HighPackage[];
   dependencyPathChanged: Array<{ advisoryId: string; package: string; expected: string[]; actual: string[] }>;
   packageIdentityChanged: Array<{ advisoryId: string; expectedPackage: string; actualPackage: string }>;
 };
@@ -207,8 +215,8 @@ function isSeverity(value: string): value is SeverityLevel {
 function ghsaFromUrl(url: unknown): string | null {
   const text = asString(url);
   if (!text) return null;
-  const match = text.match(/GHSA-[0-9a-z-]+/i);
-  return match ? match[0] : null;
+  const match = text.match(/(?:^|\/)(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4})(?:$|[?#])/i);
+  return match ? `GHSA-${match[1]!.slice(5).toLowerCase()}` : null;
 }
 
 function normalizeFixAvailable(value: unknown): FixAvailable | null {
@@ -233,6 +241,7 @@ export type ParseFailure = {
     | "AUDIT_COUNT_MISMATCH"
     | "AUDIT_SEVERITY_INVALID"
     | "ADVISORY_IDENTITY_MISSING"
+    | "PACKAGE_IDENTITY_CHANGED"
   >;
   metadata: SeverityCounts | null;
   observed: SeverityCounts | null;
@@ -277,6 +286,8 @@ function parseViaAdvisory(
   const severity = asString(via.severity);
   const range = asString(via.range);
   if (!sourceId || !name || !severity || !range) return parseFail("AUDIT_MISSING_FIELDS");
+  if (name !== pkg.name) return parseFail("PACKAGE_IDENTITY_CHANGED");
+  if (!isSeverity(severity)) return parseFail("AUDIT_SEVERITY_INVALID");
   if (severity !== "high" && severity !== "critical") {
     return { sourceId, severity, finding: null };
   }
@@ -349,6 +360,7 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
     if (!name || !severityRaw || isDirect === null || !range || !Array.isArray(nodes) || !Array.isArray(via) || fixAvailable === null) {
       return parseFail("AUDIT_MISSING_FIELDS", metadata, observed);
     }
+    if (name !== key) return parseFail("PACKAGE_IDENTITY_CHANGED", metadata, observed);
     if (!isSeverity(severityRaw)) return parseFail("AUDIT_SEVERITY_INVALID", metadata, observed);
     if (!nodes.every((node) => typeof node === "string")) {
       return parseFail("AUDIT_MISSING_FIELDS", metadata, observed);
@@ -368,7 +380,9 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
         return parseFail(parsedVia.code, metadata, observed);
       }
       if (parsedVia === null) continue;
-      viaAdvisoryIds.push(parsedVia.sourceId);
+      // Source IDs are npm metadata; resolution uses the stable GHSA identity.
+      const ghsaId = isRecord(item) ? ghsaFromUrl(item.url) : null;
+      if (ghsaId) viaAdvisoryIds.push(ghsaId);
       if (parsedVia.finding === null) continue;
       if (parsedVia.severity === "critical") {
         criticalRows.push({
@@ -387,6 +401,7 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
       name,
       severity: severityRaw,
       viaAdvisoryIds: sortedUnique(viaAdvisoryIds),
+      referencedPackages: sortedUnique(via.filter((item): item is string => typeof item === "string")),
     });
 
     if (severityRaw === "critical") {
@@ -415,10 +430,10 @@ export function parseAuditReport(raw: string): ParsedAudit | ParseFailure {
     metadata,
     observed,
     metadataMatchesObserved: true,
-    highFindings,
+    highFindings: uniqueRows(highFindings),
     highPackages,
     packageRows,
-    critical: criticalRows,
+    critical: uniqueRows(criticalRows),
     raw: parsed,
   };
 }
@@ -447,6 +462,9 @@ function emptyResult(partial: Partial<PolicyResult> & Pick<PolicyResult, "ok" | 
     advisoryIdentityMissing: [],
     critical: [],
     advisoryReplaced: [],
+    advisorySourceRenumbered: [],
+    vulnerableRangeChanged: [],
+    affectedPackageAdded: [],
     dependencyPathChanged: [],
     packageIdentityChanged: [],
     ...partial,
@@ -485,6 +503,14 @@ function uniqueCodes(codes: PolicyCode[]): PolicyCode[] {
 
 function packageStillHigh(severity: SeverityLevel | undefined): boolean {
   return severity === "high" || severity === "critical";
+}
+
+function uniqueRows<T>(rows: T[]): T[] {
+  return [...new Map(rows.map((row) => [JSON.stringify(row), row])).values()];
+}
+
+function stableKey(finding: Pick<HighFinding, "package" | "ghsaId">): string {
+  return JSON.stringify([finding.package, ghsaFromUrl(finding.ghsaId)]);
 }
 
 export function evaluateAuditPolicy(input: {
@@ -532,140 +558,119 @@ export function evaluateAuditPolicy(input: {
   const dependencyPathChanged: PolicyResult["dependencyPathChanged"] = [];
   const packageIdentityChanged: PolicyResult["packageIdentityChanged"] = [];
 
-  const baselineById = new Map(input.baseline.highFindings.map((finding) => [finding.advisoryId, finding]));
-  const baselineByIdPackage = new Map(
-    input.baseline.highFindings.map((finding) => [`${finding.advisoryId}\0${finding.package}`, finding]),
-  );
-  const baselineByPackagePath = new Map(
-    input.baseline.highFindings.map((finding) => [`${finding.package}\0${sortedUnique(finding.dependencyPaths).join("\0")}`, finding]),
-  );
-  const seenCurrentIds = new Set<string>();
-  const currentAdvisoryIds = new Set<string>();
-  for (const row of parsed.packageRows) {
-    for (const id of row.viaAdvisoryIds) currentAdvisoryIds.add(id);
-  }
-  const currentByName = new Map<string, PackageRow>();
-  for (const row of parsed.packageRows) {
-    currentByName.set(row.name, row);
+  const advisorySourceRenumbered: PolicyResult["advisorySourceRenumbered"] = [];
+  const vulnerableRangeChanged: PolicyResult["vulnerableRangeChanged"] = [];
+  const affectedPackageAdded: HighPackage[] = [];
+  const baselineFindings = uniqueRows(input.baseline.highFindings);
+  const currentFindings = uniqueRows(parsed.highFindings);
+  const baselineByIdentity = new Map(baselineFindings.map((finding) => [stableKey(finding), finding]));
+  const currentByName = new Map(parsed.packageRows.map((row) => [row.name, row]));
+  const currentKeys = new Set(currentFindings.filter((row) => ghsaFromUrl(row.ghsaId)).map(stableKey));
+
+  // Validate the baseline's existing GHSA fields without rewriting its accepted set.
+  for (const finding of baselineFindings) {
+    if (!ghsaFromUrl(finding.ghsaId)) {
+      codes.push("ADVISORY_IDENTITY_MISSING");
+      advisoryIdentityMissing.push({ advisoryId: finding.advisoryId, package: finding.package, reason: "BASELINE_GHSA_MISSING_OR_INVALID" });
+    }
   }
 
-  for (const current of parsed.highFindings) {
-    seenCurrentIds.add(current.advisoryId);
-    const sameIdPackage = baselineByIdPackage.get(`${current.advisoryId}\0${current.package}`);
-    if (sameIdPackage) {
-      if (!pathsEqual(sameIdPackage.dependencyPaths, current.dependencyPaths)) {
+  for (const current of currentFindings) {
+    const ghsaId = ghsaFromUrl(current.ghsaId);
+    if (!ghsaId) {
+      codes.push("ADVISORY_IDENTITY_MISSING");
+      advisoryIdentityMissing.push({ advisoryId: current.advisoryId, package: current.package, reason: "GHSA_MISSING_OR_INVALID" });
+      continue;
+    }
+    const expected = baselineByIdentity.get(stableKey(current));
+    if (expected) {
+      let matches = true;
+      if (!pathsEqual(expected.dependencyPaths, current.dependencyPaths)) {
+        matches = false;
         codes.push("DEPENDENCY_PATH_CHANGED");
-        dependencyPathChanged.push({
-          advisoryId: current.advisoryId,
-          package: current.package,
-          expected: sameIdPackage.dependencyPaths,
-          actual: current.dependencyPaths,
-        });
-      } else {
-        matchingHigh.push(current);
+        dependencyPathChanged.push({ advisoryId: ghsaId, package: current.package, expected: expected.dependencyPaths, actual: current.dependencyPaths });
       }
+      if (expected.vulnerableRange !== current.vulnerableRange) {
+        matches = false;
+        codes.push("VULNERABLE_RANGE_CHANGED");
+        vulnerableRangeChanged.push({ advisoryId: ghsaId, package: current.package, expected: expected.vulnerableRange, actual: current.vulnerableRange });
+      }
+      if (expected.sourceId !== current.sourceId) {
+        codes.push("ADVISORY_SOURCE_RENUMBERED");
+        advisorySourceRenumbered.push({ package: current.package, ghsaId, expectedSourceId: expected.sourceId, actualSourceId: current.sourceId });
+      }
+      if (matches) matchingHigh.push(current);
       continue;
     }
-    const samePackagePath = baselineByPackagePath.get(
-      `${current.package}\0${sortedUnique(current.dependencyPaths).join("\0")}`,
-    );
-    if (samePackagePath) {
-      codes.push("ADVISORY_REPLACED");
-      advisoryReplaced.push({
-        package: current.package,
-        expectedAdvisoryId: samePackagePath.advisoryId,
-        actualAdvisoryId: current.advisoryId,
-      });
-      continue;
-    }
-    const sameId = baselineById.get(current.advisoryId);
-    if (sameId) {
-      codes.push("PACKAGE_IDENTITY_CHANGED");
-      packageIdentityChanged.push({
-        advisoryId: current.advisoryId,
-        expectedPackage: sameId.package,
-        actualPackage: current.package,
-      });
-      continue;
-    }
+
+    // Every unseen package + GHSA is a new high, including same-path replacements.
     codes.push("NEW_HIGH");
     newHigh.push(current);
+    for (const old of baselineFindings) {
+      const oldGhsa = ghsaFromUrl(old.ghsaId);
+      if (oldGhsa === ghsaId && old.package !== current.package) {
+        codes.push("PACKAGE_IDENTITY_CHANGED");
+        packageIdentityChanged.push({ advisoryId: ghsaId, expectedPackage: old.package, actualPackage: current.package });
+      }
+      if (oldGhsa && oldGhsa !== ghsaId && old.package === current.package &&
+          pathsEqual(old.dependencyPaths, current.dependencyPaths) && !currentKeys.has(stableKey(old))) {
+        codes.push("ADVISORY_REPLACED");
+        advisoryReplaced.push({ package: current.package, expectedAdvisoryId: old.advisoryId, actualAdvisoryId: current.advisoryId, expectedGhsaId: oldGhsa, actualGhsaId: ghsaId });
+      }
+    }
   }
 
   const resolvedHigh: HighFinding[] = [];
-  for (const finding of input.baseline.highFindings) {
-    if (seenCurrentIds.has(finding.advisoryId) || currentAdvisoryIds.has(finding.advisoryId)) {
-      continue;
-    }
+  for (const finding of baselineFindings) {
+    const ghsaId = ghsaFromUrl(finding.ghsaId);
+    if (!ghsaId || currentKeys.has(stableKey(finding))) continue;
     const pkg = currentByName.get(finding.package);
+    if (pkg?.viaAdvisoryIds.includes(ghsaId)) continue;
     if (pkg && packageStillHigh(pkg.severity)) {
+      // An explicit replacement is already reported above; do not also call it missing.
+      if (advisoryReplaced.some((row) => row.package === finding.package && row.expectedGhsaId === ghsaId)) continue;
       codes.push("ADVISORY_IDENTITY_MISSING");
-      advisoryIdentityMissing.push({ advisoryId: finding.advisoryId, package: finding.package });
+      advisoryIdentityMissing.push({ advisoryId: finding.advisoryId, package: finding.package, reason: "STILL_HIGH_WITHOUT_EXPECTED_GHSA" });
       continue;
     }
     resolvedHigh.push(finding);
   }
 
+  function hasReachableHighIdentity(name: string, visited = new Set<string>()): boolean {
+    if (visited.has(name)) return false;
+    visited.add(name);
+    const row = currentByName.get(name);
+    if (!row) return false;
+    if (currentFindings.some((finding) => finding.package === name && ghsaFromUrl(finding.ghsaId))) return true;
+    if (row.severity === "critical" && row.viaAdvisoryIds.length > 0) return true;
+    return row.referencedPackages.some((dependency) => hasReachableHighIdentity(dependency, visited));
+  }
+
+  // Affected-package rows describe propagation and paths, never additional leaf advisories.
   const baselinePackages = new Map(input.baseline.highPackages.map((row) => [row.package, row]));
   for (const current of parsed.highPackages) {
     const expected = baselinePackages.get(current.package);
     if (!expected) {
-      codes.push("NEW_HIGH");
-      newHigh.push({
-        advisoryId: current.viaHighAdvisoryIds[0] ?? `package:${current.package}`,
-        sourceId: current.viaHighAdvisoryIds[0] ?? `package:${current.package}`,
-        ghsaId: null,
-        package: current.package,
-        severity: "high",
-        isDirect: current.isDirect,
-        dependencyPaths: current.dependencyPaths,
-        vulnerableRange: current.vulnerableRange,
-        fixAvailable: current.fixAvailable,
-      });
-      continue;
-    }
-    if (!pathsEqual(expected.dependencyPaths, current.dependencyPaths)) {
-      codes.push("DEPENDENCY_PATH_CHANGED");
-      dependencyPathChanged.push({
-        advisoryId: current.viaHighAdvisoryIds[0] ?? `package:${current.package}`,
-        package: current.package,
-        expected: expected.dependencyPaths,
-        actual: current.dependencyPaths,
-      });
-    }
-    const expectedIds = sortedUnique(expected.viaHighAdvisoryIds);
-    const actualIds = sortedUnique(current.viaHighAdvisoryIds);
-    if (expectedIds.join("\0") !== actualIds.join("\0")) {
-      const added = actualIds.filter((id) => !expectedIds.includes(id));
-      const removed = expectedIds.filter((id) => !actualIds.includes(id));
-      if (added.length > 0 && removed.length > 0) {
-        codes.push("ADVISORY_REPLACED");
-        advisoryReplaced.push({
-          package: current.package,
-          expectedAdvisoryId: removed.join(","),
-          actualAdvisoryId: added.join(","),
-        });
-      } else if (added.length > 0) {
-        codes.push("NEW_HIGH");
-        for (const id of added) {
-          newHigh.push({
-            advisoryId: id,
-            sourceId: id,
-            ghsaId: null,
-            package: current.package,
-            severity: "high",
-            isDirect: current.isDirect,
-            dependencyPaths: current.dependencyPaths,
-            vulnerableRange: current.vulnerableRange,
-            fixAvailable: current.fixAvailable,
-          });
-        }
-      } else if (removed.length > 0 && packageStillHigh(current.severity)) {
-        codes.push("ADVISORY_IDENTITY_MISSING");
-        for (const id of removed) {
-          advisoryIdentityMissing.push({ advisoryId: id, package: current.package });
+      codes.push("AFFECTED_PACKAGE_ADDED");
+      affectedPackageAdded.push(current);
+    } else {
+      if (!pathsEqual(expected.dependencyPaths, current.dependencyPaths)) {
+        codes.push("DEPENDENCY_PATH_CHANGED");
+        // The leaf comparison already describes the same package/path change, if present.
+        if (!dependencyPathChanged.some((row) => row.package === current.package && pathsEqual(row.expected, expected.dependencyPaths) && pathsEqual(row.actual, current.dependencyPaths))) {
+          dependencyPathChanged.push({ advisoryId: `package:${current.package}`, package: current.package, expected: expected.dependencyPaths, actual: current.dependencyPaths });
         }
       }
+      if (expected.vulnerableRange !== current.vulnerableRange) {
+        codes.push("VULNERABLE_RANGE_CHANGED");
+        if (!vulnerableRangeChanged.some((row) => row.package === current.package && row.expected === expected.vulnerableRange && row.actual === current.vulnerableRange)) {
+          vulnerableRangeChanged.push({ advisoryId: `package:${current.package}`, package: current.package, expected: expected.vulnerableRange, actual: current.vulnerableRange });
+        }
+      }
+    }
+    if (!hasReachableHighIdentity(current.package) && !advisoryIdentityMissing.some((row) => row.package === current.package)) {
+      codes.push("ADVISORY_IDENTITY_MISSING");
+      advisoryIdentityMissing.push({ advisoryId: `package:${current.package}`, package: current.package, reason: "NO_REACHABLE_HIGH_GHSA" });
     }
   }
 
@@ -674,10 +679,10 @@ export function evaluateAuditPolicy(input: {
   }
 
   const unique = uniqueCodes(codes);
-  const ok = unique.length === 0;
+  const ok = unique.every((code) => code === "ADVISORY_SOURCE_RENUMBERED");
   return {
     ok,
-    codes: ok ? ["PASS"] : unique,
+    codes: unique.length === 0 ? ["PASS"] : unique,
     lockfileSha256: input.lockfileSha256,
     expectedLockfileSha256,
     auditReportVersion: parsed.auditReportVersion,
@@ -687,14 +692,17 @@ export function evaluateAuditPolicy(input: {
     highCount: parsed.metadata.high,
     criticalCount: parsed.metadata.critical,
     totalCount: parsed.metadata.total,
-    matchingHigh,
-    resolvedHigh,
-    newHigh,
-    advisoryIdentityMissing,
+    matchingHigh: uniqueRows(matchingHigh),
+    resolvedHigh: uniqueRows(resolvedHigh),
+    newHigh: uniqueRows(newHigh),
+    advisoryIdentityMissing: uniqueRows(advisoryIdentityMissing),
     critical: parsed.critical,
-    advisoryReplaced,
-    dependencyPathChanged,
-    packageIdentityChanged,
+    advisoryReplaced: uniqueRows(advisoryReplaced),
+    advisorySourceRenumbered: uniqueRows(advisorySourceRenumbered),
+    vulnerableRangeChanged: uniqueRows(vulnerableRangeChanged),
+    affectedPackageAdded,
+    dependencyPathChanged: uniqueRows(dependencyPathChanged),
+    packageIdentityChanged: uniqueRows(packageIdentityChanged),
   };
 }
 
@@ -742,6 +750,9 @@ export function verificationDocument(result: PolicyResult): Record<string, unkno
     advisoryIdentityMissing: result.advisoryIdentityMissing,
     critical: result.critical,
     advisoryReplaced: result.advisoryReplaced,
+    advisorySourceRenumbered: result.advisorySourceRenumbered,
+    vulnerableRangeChanged: result.vulnerableRangeChanged,
+    affectedPackageAdded: result.affectedPackageAdded,
     dependencyPathChanged: result.dependencyPathChanged,
     packageIdentityChanged: result.packageIdentityChanged,
   }) as Record<string, unknown>;

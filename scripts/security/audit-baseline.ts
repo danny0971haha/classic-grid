@@ -31,12 +31,21 @@ function writeRelative(root: string, relative: string, contents: string): void {
   fs.writeFileSync(full, sanitizeForArtifact(contents, root));
 }
 
-export function runNpmAudit(root: string, diagnosticDir?: string): { ok: true; raw: string } | { ok: false; code: "AUDIT_COMMAND_FAILED"; stderr: string } {
-  const spawned = spawnSync("npm", ["audit", "--omit=dev", "--json"], {
-    cwd: root,
+export type AuditCommandOptions = {
+  executable?: string;
+  args?: string[];
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+};
+
+export function runNpmAudit(root: string, diagnosticDir?: string, options: AuditCommandOptions = {}): { ok: true; raw: string } | { ok: false; code: "AUDIT_COMMAND_FAILED"; stderr: string } {
+  const executable = options.executable ?? "npm";
+  const args = options.args ?? ["audit", "--omit=dev", "--json"];
+  const spawned = spawnSync(executable, args, {
+    cwd: options.cwd ?? root,
     encoding: "utf8",
     maxBuffer: 32 * 1024 * 1024,
-    env: process.env,
+    env: options.env ?? process.env,
   });
   if (diagnosticDir) {
     // Capture the same invocation, including registry/error JSON. Never rerun an
@@ -48,7 +57,7 @@ export function runNpmAudit(root: string, diagnosticDir?: string): { ok: true; r
       .replace(/((?:_authToken|_auth|token|password)\s*[=:]\s*)[^\s,"}]+/gi, "$1[redacted]");
     fs.writeFileSync(full, `${JSON.stringify({
       schemaVersion: "classic-audit-command-diagnostic/1",
-      command: ["npm", "audit", "--omit=dev", "--json"],
+      command: [executable, ...args].map(redact),
       capturedAt: new Date().toISOString(),
       status: spawned.status,
       signal: spawned.signal,
@@ -139,7 +148,13 @@ function main(argv: string[]): void {
   }
   const auditJsonIndex = argv.indexOf("--audit-json");
   const auditJsonPath = auditJsonIndex >= 0 ? argv[auditJsonIndex + 1] : undefined;
-  const result = runAuditBaseline(root, { auditJsonPath });
+  const outDirIndex = argv.indexOf("--out-dir");
+  const outDir = outDirIndex >= 0 ? argv[outDirIndex + 1] : undefined;
+  if ((auditJsonIndex >= 0 && (!auditJsonPath || auditJsonPath.startsWith("--"))) ||
+      (outDirIndex >= 0 && (!outDir || outDir.startsWith("--")))) {
+    throw new Error("AUDIT_ARGUMENT_VALUE_MISSING");
+  }
+  const result = runAuditBaseline(root, { auditJsonPath, outDir });
   const actions = inventoryGitRepository(root, { requireProductionPins: true });
   if (!result.ok || !actions.overallPolicyOk) {
     console.error(JSON.stringify({

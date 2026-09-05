@@ -42,9 +42,18 @@ npm run verify:current-candidate -- --audit-json /absolute/path/to/captured-audi
 
 Prerequisites: Linux, Python 3, `libseccomp.so.2`, installed lockfile dependencies, git objects for frozen R1, and a clean credential-free checkout. The wrapper installs an inherited kernel filter permitting only Unix sockets; DNS, HTTP, WebSocket and Internet sockets cannot reach an exchange. If isolation cannot be installed, it exits before validation. It does not read `.env`, use caller credentials, or fall back to network access. A fresh temporary HOME is used for child commands.
 
-The mandatory order is typecheck, `test:security`, `test`, build, action inventory, canary pack, then `audit:security-baseline -- --audit-json ...`. Existing scripts and tests are unchanged. The first nonzero mandatory command stops the wrapper. Logs and their hashes are recorded in `artifacts/current-candidate/`; stdout is a structured informational JSON summary identifying HEAD/tree and working-tree status. A dirty checkout is identified explicitly and is not evidence for HEAD alone.
+The mandatory order is typecheck, `test:security`, `test`, build, action inventory, canary pack, then `audit:security-baseline -- --audit-json ...`. The wrapper preserves its mandatory order and first-failure behavior. The first nonzero mandatory command stops the wrapper. Logs and their hashes are recorded in `artifacts/current-candidate/`; stdout is a structured informational JSON summary identifying HEAD/tree and working-tree status. A dirty checkout is identified explicitly and is not evidence for HEAD alone.
 
-**Known offline constraint:** both historical test commands include the clean canary installation/audit test. That test internally invokes registry-dependent `npm ci` and `npm audit`. The wrapper does not skip it, fake its output or label a blocked installation successful. At the current implementation it may stop there with `offlineValidationCompleted=false`. Full `verify:extended-canary` is also registry-dependent and is not invoked by this offline entrypoint. This limitation needs a separately reviewed offline-input design before the entire historical install/audit evidence can be reproduced without a registry. It is not a product-code defect or authorization to loosen tests.
+**Deterministic regression boundary (audit identity corrective):** `npm test`,
+`npm run test:security`, and `npm run check` now use offline advisory fixtures.
+The A-10 fixture is synthetic and is not represented as a historical registry
+capture. The unchanged clean canary installation/audit assertion is retained in
+`npm run test:canary-live`, required by CI alongside `verify:extended-canary`.
+The dedicated root live audit is `npm run test:audit-live`; it captures one npm
+audit invocation and remains blocking on new GHSAs. CI runs later validation and
+uploads despite individual check failure, then fails closed using original step
+outcomes. The local offline wrapper still cannot establish advisory freshness or
+perform the separate canary registry installation/audit.
 
 The root audit input is a previously captured report, not a fabricated empty report. Existing audit-policy semantics validate it against the lockfile/baseline. Its SHA-256 is reported; this command cannot establish current advisory freshness. No supplied file means the audit stage fails closed. Root vulnerabilities are never cleared by a successful baseline comparison.
 
