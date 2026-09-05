@@ -1,0 +1,136 @@
+{
+  "schemaVersion": "classic-v0.2-action-pin-inventory/3",
+  "overallPolicyOk": true,
+  "codes": [
+    "PASS"
+  ],
+  "actionUsesTotal": 6,
+  "checkoutOccurrenceCount": 1,
+  "setupNodeOccurrenceCount": 1,
+  "uploadArtifactOccurrenceCount": 4,
+  "unpinnedExternalActions": 0,
+  "unsafeCheckouts": 0,
+  "dockerActionCount": 0,
+  "trackedManifests": [
+    ".github/workflows/ci.yml"
+  ],
+  "scannedFiles": [
+    ".github/workflows/ci.yml"
+  ],
+  "allowlist": [
+    {
+      "identity": "actions/checkout",
+      "sha": "11d5960a326750d5838078e36cf38b85af677262",
+      "release": "v4.4.0"
+    },
+    {
+      "identity": "actions/setup-node",
+      "sha": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+      "release": "v4.4.0"
+    },
+    {
+      "identity": "actions/upload-artifact",
+      "sha": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "release": "v4.6.2"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      ".github/workflows/ci.yml"
+    ],
+    "edges": [],
+    "cycles": []
+  },
+  "occurrences": [
+    {
+      "index": 0,
+      "file": ".github/workflows/ci.yml",
+      "line": 25,
+      "raw": "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+      "kind": "external",
+      "identity": "actions/checkout",
+      "ref": "11d5960a326750d5838078e36cf38b85af677262",
+      "immutablePin": true,
+      "allowlisted": true,
+      "checkoutPersistCredentials": false,
+      "checkoutFetchDepth": 0,
+      "source": "step",
+      "codes": []
+    },
+    {
+      "index": 1,
+      "file": ".github/workflows/ci.yml",
+      "line": 43,
+      "raw": "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+      "kind": "external",
+      "identity": "actions/setup-node",
+      "ref": "49933ea5288caeca8642d1e84afbd3f7d6820020",
+      "immutablePin": true,
+      "allowlisted": true,
+      "checkoutPersistCredentials": null,
+      "checkoutFetchDepth": null,
+      "source": "step",
+      "codes": []
+    },
+    {
+      "index": 2,
+      "file": ".github/workflows/ci.yml",
+      "line": 155,
+      "raw": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "kind": "external",
+      "identity": "actions/upload-artifact",
+      "ref": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "immutablePin": true,
+      "allowlisted": true,
+      "checkoutPersistCredentials": null,
+      "checkoutFetchDepth": null,
+      "source": "step",
+      "codes": []
+    },
+    {
+      "index": 3,
+      "file": ".github/workflows/ci.yml",
+      "line": 161,
+      "raw": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "kind": "external",
+      "identity": "actions/upload-artifact",
+      "ref": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "immutablePin": true,
+      "allowlisted": true,
+      "checkoutPersistCredentials": null,
+      "checkoutFetchDepth": null,
+      "source": "step",
+      "codes": []
+    },
+    {
+      "index": 4,
+      "file": ".github/workflows/ci.yml",
+      "line": 168,
+      "raw": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "kind": "external",
+      "identity": "actions/upload-artifact",
+      "ref": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "immutablePin": true,
+      "allowlisted": true,
+      "checkoutPersistCredentials": null,
+      "checkoutFetchDepth": null,
+      "source": "step",
+      "codes": []
+    },
+    {
+      "index": 5,
+      "file": ".github/workflows/ci.yml",
+      "line": 177,
+      "raw": "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "kind": "external",
+      "identity": "actions/upload-artifact",
+      "ref": "ea165f8d65b6e75b540449e92b4886f43607fa02",
+      "immutablePin": true,
+      "allowlisted": true,
+      "checkoutPersistCredentials": null,
+      "checkoutFetchDepth": null,
+      "source": "step",
+      "codes": []
+    }
+  ]
+}

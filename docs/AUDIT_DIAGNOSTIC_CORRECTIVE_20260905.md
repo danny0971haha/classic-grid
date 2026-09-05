@@ -46,3 +46,33 @@ No credentials, exchange access, merge, force-push, deployment, settings change
 or new phase. Existing root highs remain uncleared. No independent gate decision
 is made. Review the captured command alongside policy codes before proposing
 any dependency or baseline corrective; do not enlarge the baseline to get green CI.
+
+## Captured CI diagnosis
+
+Run `33964860391` tested source `75157059f5af474dbcbc9f2ca7c1b9102b7d12fb`.
+Pinned install, typecheck, the five new diagnostic tests and checkpoint suites
+completed. The historical check failed and the security upload still succeeded.
+Artifact `9969122759` ZIP SHA-256 is
+`67af386da3fec55dd2c587d8b3301286897fba50d84b6cd66e8bee8e4f734e21`;
+downloaded bytes independently matched GitHub's digest.
+
+The [captured files](evidence/audit-diagnostic-20260905/capture.json) retain the
+original artifact member bytes and hashes. At `2026-09-05T12:02:40.905Z`, npm
+returned status 1, no process error, empty stderr and a valid report. The
+lockfile still matches the baseline. Observed counts are **16 high, 0 critical,
+8 moderate, 24 total**, versus historical 14 high/22 total. Policy reasons:
+
+- `NEW_HIGH`: toml advisories and the affected @coral-xyz/anchor package row.
+- `ADVISORY_REPLACED`: axios source ID 1123967 is now reported as 1153178.
+- `ADVISORY_IDENTITY_MISSING`: the expected historical axios ID is absent.
+
+This confirms current advisory/policy mismatch, not a failed registry command
+or an agent-documentation regression. It does not establish exploitability.
+Do not clear these findings by accepting a larger baseline.
+
+Replaying the captured `audit.json` through the existing CLI with `--audit-json`
+returned exit 1 and the same three policy codes; no registry was contacted.
+An initial replay invocation from the workspace parent failed ENOENT (exit 254)
+before execution; rerunning from this repository produced the result above.
+Dependency remediation remains a separate review with the existing safety and
+bounded-canary constraints. No dependency changes were made here.
