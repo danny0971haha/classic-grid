@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -92,3 +94,75 @@ test("signal termination retains capture time, signal, and both streams", () => 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+
+const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const empty = { auditReportVersion: 2, vulnerabilities: {}, metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 0, total: 0 } } };
+
+function fixture() {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "audit-output-"));
+  const root = path.join(temp, "repo");
+  fs.mkdirSync(root);
+  fs.cpSync(path.join(source, "scripts/security"), path.join(root, "scripts/security"), { recursive: true });
+  fs.cpSync(path.join(source, ".github"), path.join(root, ".github"), { recursive: true });
+  fs.copyFileSync(path.join(source, "package-lock.json"), path.join(root, "package-lock.json"));
+  fs.writeFileSync(path.join(root, "package.json"), '{"type":"module"}');
+  fs.symlinkSync(path.join(source, "node_modules"), path.join(root, "node_modules"), "dir");
+  for (const args of [["init", "-q"], ["add", ".github"]]) {
+    assert.equal(spawnSync("git", args, { cwd: root, env: { PATH: process.env.PATH }, encoding: "utf8" }).status, 0);
+  }
+  const bin = path.join(temp, "bin"); fs.mkdirSync(bin);
+  const marker = path.join(temp, "npm-called");
+  fs.writeFileSync(path.join(bin, "npm"), `#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'called');process.stderr.write('fixture subprocess failure');process.exit(2);\n`, { mode: 0o700 });
+  const invoke = (args: string[]) => spawnSync(process.execPath, ["--import", import.meta.resolve("tsx"), path.join(root, "scripts/security/audit-baseline.ts"), ...args], {
+    cwd: temp, encoding: "utf8", timeout: 10000,
+    env: { PATH: `${bin}${path.delimiter}${process.env.PATH}`, HOME: temp, TMPDIR: temp },
+  });
+  return { temp, root, marker, invoke };
+}
+
+for (const mode of ["absolute", "relative", "default"] as const) {
+  for (const scenario of ["normal", "policy", "missing", "malformed", "subprocess"] as const) {
+    test(`audit ${scenario} uses ${mode} output contract without stray reports`, () => {
+      const f = fixture();
+      try {
+        const outArg = mode === "absolute" ? path.join(f.temp, "external") : "relative-output";
+        const expected = mode === "absolute" ? outArg : path.join(f.root, mode === "default" ? "artifacts/security" : outArg);
+        const input = path.join(f.temp, "input.json");
+        if (scenario !== "missing") fs.writeFileSync(input, scenario === "malformed" ? "{" : JSON.stringify(scenario === "policy" ? {
+          ...empty, vulnerabilities: { example: { name: "example", severity: "critical", isDirect: true, range: "*", nodes: ["node_modules/example"], via: [{ source: 123, name: "example", severity: "critical", range: "*", url: "https://github.com/advisories/GHSA-aaaa-bbbb-cccc" }], fixAvailable: false } },
+          metadata: { vulnerabilities: { info: 0, low: 0, moderate: 0, high: 0, critical: 1, total: 1 } },
+        } : empty));
+        const args = scenario === "subprocess" ? [] : ["--audit-json", input];
+        if (mode !== "default") args.push("--out-dir", outArg);
+        const result = f.invoke(args);
+        assert.equal(result.error, undefined);
+        assert.equal(result.status, scenario === "normal" ? 0 : 1, result.stderr);
+        const verification = JSON.parse(fs.readFileSync(path.join(expected, "audit-baseline-verification.json"), "utf8"));
+        assert.equal(verification.overallPolicyOk, scenario === "normal");
+        const files = ["action-pin-inventory.json", "audit-baseline-verification.json"];
+        if (scenario === "subprocess") files.push("audit-command.json");
+        else if (scenario !== "missing") files.push("audit.json", "package-lock.sha256");
+        assert.deepEqual(fs.readdirSync(expected).sort(), files.sort());
+        if (mode === "absolute") assert.equal(fs.existsSync(path.join(f.root, outArg)), false);
+        if (mode !== "default") assert.equal(fs.existsSync(path.join(f.root, "artifacts/security")), false);
+        if (mode === "relative") assert.equal(fs.existsSync(path.join(f.temp, outArg)), false);
+        assert.equal(fs.existsSync(f.marker), scenario === "subprocess");
+      } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+    });
+  }
+}
+
+for (const args of [["--unknown"], ["positional"], ["--audit-json"], ["--out-dir"], ["--audit-json", "--out-dir", "x"], ["--out-dir", "x", "--unknown"], ["--out-dir", "x", "--out-dir", "y"], ["sanitize-log", "--unknown"], ["--audit-json=x"]]) {
+  test(`rejects ${JSON.stringify(args)} before any report or npm invocation`, () => {
+    const f = fixture();
+    try {
+      const before = fs.readdirSync(f.root, { recursive: true }).sort();
+      const result = f.invoke(args);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /AUDIT_ARGUMENT_/);
+      assert.equal(fs.existsSync(f.marker), false);
+      assert.deepEqual(fs.readdirSync(f.root, { recursive: true }).sort(), before);
+    } finally { fs.rmSync(f.temp, { recursive: true, force: true }); }
+  });
+}
