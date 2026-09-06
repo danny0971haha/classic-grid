@@ -25,8 +25,9 @@ export function repoRootFromHere(): string {
   return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 }
 
-function writeRelative(root: string, relative: string, contents: string): void {
-  const full = repoPath(root, relative);
+// Audit output paths alone support absolute destinations; repoPath retains its contract.
+function writeOutput(root: string, outputPath: string, contents: string): void {
+  const full = path.resolve(root, outputPath);
   fs.mkdirSync(path.dirname(full), { recursive: true });
   fs.writeFileSync(full, sanitizeForArtifact(contents, root));
 }
@@ -50,7 +51,7 @@ export function runNpmAudit(root: string, diagnosticDir?: string, options: Audit
   if (diagnosticDir) {
     // Capture the same invocation, including registry/error JSON. Never rerun an
     // audit to explain a prior failure or substitute this document for policy.
-    const full = repoPath(root, path.join(diagnosticDir, "audit-command.json"));
+    const full = path.resolve(root, diagnosticDir, "audit-command.json");
     fs.mkdirSync(path.dirname(full), { recursive: true });
     const redact = (value: string) => sanitizeForArtifact(value, root)
       .replace(/(https?:\/\/)[^\s/"@]+@/gi, "$1[redacted]@")
@@ -86,7 +87,7 @@ function commandFailedResult(baseline: AuditBaseline, lockfileSha256: string, co
 
 function writeActionInventory(root: string, outDir: string): ReturnType<typeof inventoryGitRepository> {
   const actionInventory = inventoryGitRepository(root, { requireProductionPins: true });
-  writeRelative(
+  writeOutput(
     root,
     path.join(outDir, "action-pin-inventory.json"),
     `${JSON.stringify(actionInventoryDocument(actionInventory), null, 2)}\n`,
@@ -107,7 +108,7 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
     const loaded = readAuditFile(options.auditJsonPath);
     if (!loaded.ok) {
       const result = commandFailedResult(baseline, lockfileSha256, "AUDIT_FILE_MISSING");
-      writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
+      writeOutput(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
       writeActionInventory(root, outDir);
       return result;
     }
@@ -116,7 +117,7 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
     const audited = runNpmAudit(root, outDir);
     if (!audited.ok) {
       const result = commandFailedResult(baseline, lockfileSha256, "AUDIT_COMMAND_FAILED");
-      writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
+      writeOutput(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
       writeActionInventory(root, outDir);
       return result;
     }
@@ -128,9 +129,9 @@ export function runAuditBaseline(root = repoRootFromHere(), options: {
     ? evaluateAuditPolicy({ baseline, lockfileSha256, parsed })
     : evaluateAuditPolicy({ baseline, lockfileSha256, auditRaw });
 
-  writeRelative(root, path.join(outDir, "audit.json"), `${JSON.stringify(parsed.ok ? parsed.raw : { malformed: true }, null, 2)}\n`);
-  writeRelative(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
-  writeRelative(root, path.join(outDir, "package-lock.sha256"), `${lockfileSha256}  ${LOCKFILE_RELATIVE_PATH}\n`);
+  writeOutput(root, path.join(outDir, "audit.json"), `${JSON.stringify(parsed.ok ? parsed.raw : { malformed: true }, null, 2)}\n`);
+  writeOutput(root, path.join(outDir, "audit-baseline-verification.json"), `${JSON.stringify(verificationDocument(result), null, 2)}\n`);
+  writeOutput(root, path.join(outDir, "package-lock.sha256"), `${lockfileSha256}  ${LOCKFILE_RELATIVE_PATH}\n`);
   writeActionInventory(root, outDir);
   return result;
 }
@@ -141,19 +142,24 @@ function isMain(argv1: string | undefined): boolean {
 
 function main(argv: string[]): void {
   const root = repoRootFromHere();
-  if (argv[0] === "sanitize-log") {
+  if (argv[0] === "sanitize-log" && argv.length === 1) {
     const input = fs.readFileSync(0, "utf8");
     process.stdout.write(sanitizeForArtifact(input, root));
     return;
   }
-  const auditJsonIndex = argv.indexOf("--audit-json");
-  const auditJsonPath = auditJsonIndex >= 0 ? argv[auditJsonIndex + 1] : undefined;
-  const outDirIndex = argv.indexOf("--out-dir");
-  const outDir = outDirIndex >= 0 ? argv[outDirIndex + 1] : undefined;
-  if ((auditJsonIndex >= 0 && (!auditJsonPath || auditJsonPath.startsWith("--"))) ||
-      (outDirIndex >= 0 && (!outDir || outDir.startsWith("--")))) {
-    throw new Error("AUDIT_ARGUMENT_VALUE_MISSING");
+  const values = new Map<string, string>();
+  for (let index = 0; index < argv.length; index += 2) {
+    const option = argv[index];
+    if (option !== "--audit-json" && option !== "--out-dir") {
+      throw new Error("AUDIT_ARGUMENT_UNSUPPORTED");
+    }
+    if (values.has(option)) throw new Error("AUDIT_ARGUMENT_DUPLICATE");
+    const value = argv[index + 1];
+    if (!value || value.startsWith("--")) throw new Error("AUDIT_ARGUMENT_VALUE_MISSING");
+    values.set(option, value);
   }
+  const auditJsonPath = values.get("--audit-json");
+  const outDir = values.get("--out-dir");
   const result = runAuditBaseline(root, { auditJsonPath, outDir });
   const actions = inventoryGitRepository(root, { requireProductionPins: true });
   if (!result.ok || !actions.overallPolicyOk) {
