@@ -49,3 +49,17 @@ The mandatory order is typecheck, `test:security`, `test`, build, action invento
 The root audit input is a previously captured report, not a fabricated empty report. Existing audit-policy semantics validate it against the lockfile/baseline. Its SHA-256 is reported; this command cannot establish current advisory freshness. No supplied file means the audit stage fails closed. Root vulnerabilities are never cleared by a successful baseline comparison.
 
 `offlineValidationCompleted` describes only this local sequence. It never grants independent acceptance, sandbox qualification, merge, deployment, live access or authority to start R2-B/R3. Preserve all historical evidence and stop after evidence delivery.
+
+## 2026-09-08 dependency-prerequisite reconcilation
+
+Pointer only. Not a gate decision and not Route B adoption.
+
+```text
+TASK_STATUS=OWNER_DECISION_REQUIRED
+ROUTE_A=BLOCKED_MISSING_INPUTS
+ROUTE_B=NOT_ADOPTED
+CANDIDATE_CREATED=NOT_CREATED
+GLOBAL_DEPENDENCY_SECURITY_CLEARANCE=NO
+```
+
+PR #12 remote HEAD/tree still match the historical audit-output-path anchors. Upstream `@n1xyz/nord-ts` metadata was re-checked and produced **no new candidate-build input**. Packet: [dependency-prereq-20260908/classic-handoff.md](evidence/dependency-prereq-20260908/classic-handoff.md).
