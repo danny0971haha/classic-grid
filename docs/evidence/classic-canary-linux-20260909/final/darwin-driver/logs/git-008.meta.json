@@ -1,0 +1,21 @@
+{
+  "name": "git-008",
+  "command": [
+    "git",
+    "-C",
+    "/private/tmp/classic-grid-canary-driver-20260909",
+    "remote",
+    "get-url",
+    "origin"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:34:09.762284+00:00",
+  "ended_at_utc": "2026-09-08T17:34:09.799978+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/git-008.stdout",
+  "stdoutSha256": "181ea22159aa50060401025fa9ff5f5eaafe41100fa1301cf18efe2ac349a632",
+  "stderr": "logs/git-008.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

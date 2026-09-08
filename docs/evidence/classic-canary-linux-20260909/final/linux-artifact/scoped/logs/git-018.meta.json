@@ -1,0 +1,21 @@
+{
+  "name": "git-018",
+  "command": [
+    "git",
+    "-C",
+    "/home/runner/work/classic-grid/classic-grid",
+    "status",
+    "--porcelain",
+    "--untracked-files=all"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:35:08.494553+00:00",
+  "ended_at_utc": "2026-09-08T17:35:08.502215+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/git-018.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/git-018.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

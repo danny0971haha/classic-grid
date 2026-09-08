@@ -1,0 +1,23 @@
+{
+  "name": "remote-refs",
+  "command": [
+    "git",
+    "ls-remote",
+    "https://github.com/danny0971haha/classic-grid.git",
+    "refs/heads/fix/classic-audit-output-path-20260906",
+    "refs/heads/fix/classic-canary-driver-20260909",
+    "refs/heads/tooling/classic-canary-review-20260908",
+    "refs/heads/experiment/classic-v0.2-100u-safety",
+    "refs/heads/experiment/classic-v0.2-r2-extended-sepolia"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:34:03.600929+00:00",
+  "ended_at_utc": "2026-09-08T17:34:03.815325+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/remote-refs.stdout",
+  "stdoutSha256": "01e320646bae050acce0da8d56d82c78ebdd36f10db2e3e9f46ae5b5ee8f13ea",
+  "stderr": "logs/remote-refs.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

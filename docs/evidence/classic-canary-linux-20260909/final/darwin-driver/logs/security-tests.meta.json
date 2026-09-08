@@ -1,0 +1,32 @@
+{
+  "name": "security-tests",
+  "command": [
+    "/usr/local/bin/python3",
+    "/private/tmp/classic-grid-canary-driver-20260909/tools/review/classic-canary-20260908/check-isolation.py",
+    "--target-root",
+    "/private/tmp/classic-canary-fixed-target-20260909",
+    "--report",
+    "/private/tmp/classic-canary-local-driver-evidence-20260909/offline/tests-isolation.json",
+    "--",
+    "node",
+    "--import",
+    "/private/tmp/classic-grid-canary-driver-20260909/tools/review/classic-canary-20260908/trace-child.mjs",
+    "--import",
+    "/private/tmp/classic-canary-fixed-target-20260909/node_modules/tsx/dist/loader.mjs",
+    "--test",
+    "test/security/extended-canary-boundary.test.ts",
+    "test/security/source-policy.test.ts",
+    "test/security/canary-manifest-strict.test.ts",
+    "test/security/canary-artifact-content.test.ts"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.733133+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.733316+00:00",
+  "exitCode": null,
+  "status": "NOT_RUN",
+  "reason": "DEPENDENCY_NOT_SUCCESS:tool-resolution,isolation",
+  "stdout": "logs/security-tests.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/security-tests.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

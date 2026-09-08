@@ -1,0 +1,20 @@
+{
+  "name": "git-013",
+  "command": [
+    "git",
+    "-C",
+    "/home/runner/work/_temp/classic-canary-target",
+    "rev-parse",
+    "HEAD^{tree}"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:35:08.464548+00:00",
+  "ended_at_utc": "2026-09-08T17:35:08.468161+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/git-013.stdout",
+  "stdoutSha256": "4b83645cc4afa5a04759bbd65707d5a742417d7706423a62306c46b0665579d9",
+  "stderr": "logs/git-013.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

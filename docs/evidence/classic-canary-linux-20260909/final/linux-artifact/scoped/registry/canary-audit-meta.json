@@ -1,0 +1,22 @@
+{
+  "queried_at_utc_start": "2026-09-08T17:34:16.171Z",
+  "queried_at_utc_end": "2026-09-08T17:34:16.566Z",
+  "cwd": "/home/runner/work/_temp/classic-canary-evidence/registry/lock-install",
+  "command": [
+    "npm",
+    "audit",
+    "--omit=dev",
+    "--json"
+  ],
+  "exitCode": 0,
+  "counts": {
+    "info": 0,
+    "low": 0,
+    "moderate": 0,
+    "high": 0,
+    "critical": 0,
+    "total": 0
+  },
+  "is_historical_zero_high_reuse": false,
+  "is_this_round_query": true
+}

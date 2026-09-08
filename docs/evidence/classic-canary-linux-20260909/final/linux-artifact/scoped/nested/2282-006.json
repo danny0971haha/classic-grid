@@ -1,0 +1,18 @@
+{
+  "command": [
+    "tar",
+    "-czf",
+    "/home/runner/work/_temp/classic-canary-evidence/tmp/classic-canary-pack-b-rdYQNV/classic-grid-extended-canary-0.2.0.tgz",
+    "-C",
+    "/home/runner/work/_temp/classic-canary-evidence/tmp/classic-canary-tarwrap-d0872G",
+    "package"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:15.469Z",
+  "ended_at_utc": "2026-09-08T17:34:15.491Z",
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "2282-006.stdout",
+  "stderr": "2282-006.stderr"
+}

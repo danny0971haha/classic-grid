@@ -1,0 +1,20 @@
+{
+  "name": "git-017",
+  "command": [
+    "git",
+    "-C",
+    "/home/runner/work/classic-grid/classic-grid",
+    "rev-parse",
+    "HEAD^{tree}"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:35:08.490593+00:00",
+  "ended_at_utc": "2026-09-08T17:35:08.494170+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/git-017.stdout",
+  "stdoutSha256": "c76bda69a3c71a0822508040aeaa320b842aeaebb736e96ac8f8303d80ce3cb8",
+  "stderr": "logs/git-017.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

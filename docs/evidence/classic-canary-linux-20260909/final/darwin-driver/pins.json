@@ -1,0 +1,12 @@
+{
+  "node": {
+    "expected": "v22.23.2",
+    "observed": "v26.5.0",
+    "matches": false
+  },
+  "npm": {
+    "expected": "10.9.8",
+    "observed": "11.17.0",
+    "matches": false
+  }
+}

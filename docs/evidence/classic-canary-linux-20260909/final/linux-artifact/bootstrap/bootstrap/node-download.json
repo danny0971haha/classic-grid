@@ -1,0 +1,18 @@
+{
+  "command": [
+    "curl",
+    "--fail",
+    "--silent",
+    "--show-error",
+    "--proto",
+    "=https",
+    "--tlsv1.2",
+    "https://nodejs.org/dist/v22.23.2/node-v22.23.2-linux-x64.tar.xz",
+    "-o",
+    "/home/runner/work/_temp/node-v22.23.2-linux-x64.tar.xz"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:33:54.451553+00:00",
+  "ended_at_utc": "2026-09-08T17:33:54.616112+00:00",
+  "exitCode": 0
+}

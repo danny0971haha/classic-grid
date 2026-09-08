@@ -1,0 +1,13 @@
+{
+  "command": [
+    "tar",
+    "-xJf",
+    "/home/runner/work/_temp/node-v22.23.2-linux-x64.tar.xz",
+    "-C",
+    "/home/runner/work/_temp"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:33:54.642055+00:00",
+  "ended_at_utc": "2026-09-08T17:33:56.810297+00:00",
+  "exitCode": 0
+}

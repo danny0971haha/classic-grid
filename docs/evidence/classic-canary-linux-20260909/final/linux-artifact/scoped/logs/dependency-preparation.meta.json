@@ -1,0 +1,20 @@
+{
+  "name": "dependency-preparation",
+  "command": [
+    "npm",
+    "ci",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:03.816491+00:00",
+  "ended_at_utc": "2026-09-08T17:34:14.506966+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/dependency-preparation.stdout",
+  "stdoutSha256": "ba240a4d350871799adc17fb5963b70bb7adbd5ba77f004a8919d0d65f2249d0",
+  "stderr": "logs/dependency-preparation.stderr",
+  "stderrSha256": "d902246ec0dad033d1fadd1823edc19f4f09e45459d866589a0cba799532e57f"
+}

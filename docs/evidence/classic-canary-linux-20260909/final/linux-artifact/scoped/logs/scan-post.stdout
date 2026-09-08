@@ -1,0 +1,12 @@
+{"system": "Linux", "machine": "x86_64", "kernel_isolation": "LINUX_SECCOMP_AF_UNIX_ONLY", "checks": ["AF_UNIX_BIND_LISTEN_CONNECT_DATA_SOCKETPAIR", "socket:AF_INET:EPERM", "socketpair:AF_INET:EPERM", "socket:AF_INET6:EPERM", "socketpair:AF_INET6:EPERM", "socket:AF_PACKET:EPERM", "socketpair:AF_PACKET:EPERM", "EXEC_CHILD_AF_INET_EPERM"]}
+{
+  "wrote": "/home/runner/work/_temp/classic-canary-evidence/offline/extra-boundary-scan.json",
+  "hits": {
+    "lockfile_text": [],
+    "lockfile_names": [],
+    "installed_names": [],
+    "tarball_entries": [],
+    "loaded_specifiers": [],
+    "loaded_text": []
+  }
+}

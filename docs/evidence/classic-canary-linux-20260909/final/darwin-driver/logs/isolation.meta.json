@@ -1,0 +1,21 @@
+{
+  "name": "isolation",
+  "command": [
+    "/usr/local/bin/python3",
+    "/private/tmp/classic-grid-canary-driver-20260909/tools/review/classic-canary-20260908/check-isolation.py",
+    "--target-root",
+    "/private/tmp/classic-canary-fixed-target-20260909",
+    "--report",
+    "/private/tmp/classic-canary-local-driver-evidence-20260909/offline/isolation-check.json"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.050535+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.122622+00:00",
+  "exitCode": 78,
+  "status": "BLOCKED",
+  "reason": null,
+  "stdout": "logs/isolation.stdout",
+  "stdoutSha256": "33dceffd8db1df690deb9e2f62d1835b25ee312bd30cc8f906724c84319c4047",
+  "stderr": "logs/isolation.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

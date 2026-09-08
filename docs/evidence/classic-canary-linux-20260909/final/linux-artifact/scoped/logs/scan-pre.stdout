@@ -1,0 +1,11 @@
+{
+  "wrote": "/home/runner/work/_temp/classic-canary-evidence/registry/extra-boundary-scan.json",
+  "hits": {
+    "lockfile_text": [],
+    "lockfile_names": [],
+    "installed_names": [],
+    "tarball_entries": [],
+    "loaded_specifiers": [],
+    "loaded_text": []
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "schema": "classic-canary-linux-delivery/20260909",
+  "disposition": "EVIDENCE_FOR_INDEPENDENT_REVIEW",
+  "codeBranch": "fix/classic-canary-driver-20260909",
+  "draftPr": 14,
+  "baseBranch": "fix/classic-audit-output-path-20260906",
+  "codeHead": "40223bb5e106668e2d5a2c8971579b41e7a9dbfa",
+  "codeTree": "c99180aab2b4cf9b4abb40780c7d2192686d9eec",
+  "originalTool": {
+    "head": "3ca01ae046f27aa4ca74e9e8370928a48d0c7810",
+    "tree": "c756dedb245d1560cafb8f3ea018cc0180da6244"
+  },
+  "testedCheckout": {
+    "root": "/home/runner/work/_temp/classic-canary-target",
+    "head": "fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf",
+    "tree": "7f14f66eac518c4427076f18fbcfdc7d935c79d8",
+    "status": "",
+    "origin": "https://github.com/danny0971haha/classic-grid.git"
+  },
+  "beforeAfterIdentical": true,
+  "linuxRunId": 34257856526,
+  "linuxRunConclusion": "success",
+  "driverStatus": "COMPLETED",
+  "driverExitCode": 0,
+  "regressionTests": 25,
+  "existingCanaryTests": {
+    "tests": 122,
+    "passed": 122,
+    "failed": 0,
+    "skipped": 0
+  },
+  "isolationReports": [
+    "linux-artifact/scoped/offline/isolation-check.json",
+    "linux-artifact/scoped/offline/probe-isolation.json",
+    "linux-artifact/scoped/offline/scan-post-isolation.json",
+    "linux-artifact/scoped/offline/tests-isolation.json"
+  ],
+  "audit": {
+    "queried_at_utc_start": "2026-09-08T17:34:16.171Z",
+    "queried_at_utc_end": "2026-09-08T17:34:16.566Z",
+    "exitCode": 0,
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  },
+  "artifact": {
+    "packed_lockfile_sha256": "f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99",
+    "artifact_sha256": "e1065cf703ea2f738774b6761c27fb7d227d11863c6ea46be47df3d9fa2822f5",
+    "artifact_sha256_second": "e1065cf703ea2f738774b6761c27fb7d227d11863c6ea46be47df3d9fa2822f5",
+    "content_manifest_sha256": "2510544ff839caa5ae82e972ffc2d583a864112eb0e6b86fa1d0a983461d1e84",
+    "entrypoint_relative": "src/cli/run-extended-canary.ts",
+    "entrypoint_sha256": "3301e908c8558317794d66837842aa67c7993429b964fe105d38f91f4b3f6d16",
+    "lockfile_relative": "packages/extended-canary/package-lock.json"
+  },
+  "probe": {
+    "exitCode": 0,
+    "unexpectedNetwork": [],
+    "moduleGraphHits": [],
+    "liveExchangeWrite": false,
+    "productionCredentialUsed": false,
+    "unavailableVenueExitCode": 1
+  },
+  "downloadVerification": "download-verification.json",
+  "protectedObjects": "protected-object-identity.json",
+  "resolved": [
+    "driver-errexit-evidence-truncation",
+    "ignored-boundary-outcomes",
+    "hardcoded-pins",
+    "unverified-checkout-publication-columns",
+    "stale-output-missing-input-success",
+    "Linux-seccomp-and-AF_UNIX-environment-gap-for-scoped-CI"
+  ],
+  "stillBlocked": [
+    "Darwin-native-Linux-validation",
+    "root-dependency-security-clearance"
+  ],
+  "notRun": [
+    "independent-acceptance",
+    "R2-A-local-snapshot-publication",
+    "Route-B-publication-policy-adoption",
+    "R2-B",
+    "merge",
+    "deployment",
+    "exchange-writes"
+  ],
+  "rootCiObservation": "root-ci-observation.json",
+  "rootCiDoesNotDetermineScopedOutcome": true
+}

@@ -1,0 +1,21 @@
+{
+  "name": "git-021",
+  "command": [
+    "git",
+    "-C",
+    "/home/runner/work/classic-grid/classic-grid",
+    "merge-base",
+    "3ca01ae046f27aa4ca74e9e8370928a48d0c7810",
+    "40223bb5e106668e2d5a2c8971579b41e7a9dbfa"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:35:08.508740+00:00",
+  "ended_at_utc": "2026-09-08T17:35:08.512320+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/git-021.stdout",
+  "stdoutSha256": "e1d666a02a6dc07a041dd5d8197643a0e78c01f368787f72ec9f1a1907d2554d",
+  "stderr": "logs/git-021.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

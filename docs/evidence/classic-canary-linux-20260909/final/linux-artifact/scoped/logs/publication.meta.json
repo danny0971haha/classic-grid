@@ -1,0 +1,16 @@
+{
+  "name": "publication",
+  "command": [
+    "internal:verify-remote-publication"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:03.600789+00:00",
+  "ended_at_utc": "2026-09-08T17:34:03.816128+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/publication.stdout",
+  "stdoutSha256": "4073cad2215e90e5aa3220d6ce7b402a30d36cae877233dbea02cd3099f89e83",
+  "stderr": "logs/publication.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

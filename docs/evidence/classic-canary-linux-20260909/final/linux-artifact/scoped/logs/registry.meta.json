@@ -1,0 +1,25 @@
+{
+  "name": "registry",
+  "command": [
+    "node",
+    "--import",
+    "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/trace-child.mjs",
+    "--import",
+    "/home/runner/work/_temp/classic-canary-target/node_modules/tsx/dist/loader.mjs",
+    "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/run-registry-phase.ts",
+    "--target-root",
+    "/home/runner/work/_temp/classic-canary-target",
+    "--out-dir",
+    "/home/runner/work/_temp/classic-canary-evidence/registry"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:14.508303+00:00",
+  "ended_at_utc": "2026-09-08T17:34:17.936127+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/registry.stdout",
+  "stdoutSha256": "6147b2d302145e9d97c4bb7f9912acd7bbf9a942ecc553aeff2fa1efc9db7d1d",
+  "stderr": "logs/registry.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

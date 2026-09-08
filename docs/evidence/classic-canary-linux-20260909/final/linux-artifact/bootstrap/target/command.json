@@ -1,0 +1,14 @@
+{
+  "command": [
+    "git",
+    "worktree",
+    "add",
+    "--detach",
+    "/home/runner/work/_temp/classic-canary-target",
+    "fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:34:03.138616+00:00",
+  "exitCode": 0,
+  "ended_at_utc": "2026-09-08T17:34:03.202659+00:00"
+}

@@ -1,0 +1,14 @@
+/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/factory.ts:11
+  return new Error(`${CANARY_VENUE_UNAVAILABLE}:${id}`);
+         ^
+
+Error: CANARY_VENUE_UNAVAILABLE:nado
+    at canaryVenueUnavailableError (/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/factory.ts:11:10)
+    at assertCanaryVenueSelection (/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedFactory.ts:56:47)
+    at applyCanaryProfileDefaults (/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedFactory.ts:68:3)
+    at <anonymous> (/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/cli/run-extended-canary.ts:9:1)
+    at ModuleJob.run (node:internal/modules/esm/module_job:343:25)
+    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:681:26)
+    at async <anonymous> (/home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts:90:1)
+
+Node.js v22.23.2

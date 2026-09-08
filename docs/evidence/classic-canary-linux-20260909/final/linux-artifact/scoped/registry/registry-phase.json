@@ -1,0 +1,86 @@
+{
+  "schema": "classic-canary-registry-phase/20260908",
+  "phase": "registry",
+  "started_at_utc": "2026-09-08T17:34:15.353Z",
+  "ended_at_utc": "2026-09-08T17:34:17.075Z",
+  "target_root": "/home/runner/work/_temp/classic-canary-target",
+  "tool_file": "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/run-registry-phase.ts",
+  "identities": {
+    "packed_lockfile_sha256": "f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99",
+    "artifact_sha256": "e1065cf703ea2f738774b6761c27fb7d227d11863c6ea46be47df3d9fa2822f5",
+    "artifact_sha256_second": "e1065cf703ea2f738774b6761c27fb7d227d11863c6ea46be47df3d9fa2822f5",
+    "content_manifest_sha256": "2510544ff839caa5ae82e972ffc2d583a864112eb0e6b86fa1d0a983461d1e84",
+    "entrypoint_relative": "src/cli/run-extended-canary.ts",
+    "entrypoint_sha256": "3301e908c8558317794d66837842aa67c7993429b964fe105d38f91f4b3f6d16",
+    "lockfile_relative": "packages/extended-canary/package-lock.json"
+  },
+  "staged_files": [
+    "content-manifest.json",
+    "file-manifest.json",
+    "package-lock.json",
+    "package.json",
+    "public/index.html",
+    "README.md",
+    "src/botControl.ts",
+    "src/cli/run-extended-canary.ts",
+    "src/config.ts",
+    "src/dashboard.ts",
+    "src/experimentKillSwitch.ts",
+    "src/experimentReduction.ts",
+    "src/experimentRisk.ts",
+    "src/experimentStorage.ts",
+    "src/experimentTelemetry.ts",
+    "src/extendedNetwork.ts",
+    "src/grid.ts",
+    "src/ledger.ts",
+    "src/loadEnv.ts",
+    "src/loop.ts",
+    "src/runtimeLease.ts",
+    "src/softResume.ts",
+    "src/strategyExecutionLedger.ts",
+    "src/telegram.ts",
+    "src/types.ts",
+    "src/venues/extended.ts",
+    "src/venues/extendedAccountStream.ts",
+    "src/venues/extendedFactory.ts",
+    "src/venues/extendedObservation.ts",
+    "src/venues/extendedStrictApi.ts",
+    "src/venues/factory.ts",
+    "src/venues/types.ts",
+    "vendor/extended/exchange/extended.js",
+    "vendor/extended/exchange/index.js",
+    "vendor/extended/exchange/starkcrypto.js",
+    "vendor/extended/exchange/types.js"
+  ],
+  "forbidden_in_lockfile_existing_tool": [],
+  "lockfile_install": {
+    "started_at_utc": "2026-09-08T17:34:15.525Z",
+    "ended_at_utc": "2026-09-08T17:34:16.171Z",
+    "dir": "/home/runner/work/_temp/classic-canary-evidence/registry/lock-install"
+  },
+  "tarball_install": {
+    "started_at_utc": "2026-09-08T17:34:16.566Z",
+    "ended_at_utc": "2026-09-08T17:34:17.074Z",
+    "dir": "/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install",
+    "installed_names": [
+      "@esbuild/linux-x64",
+      "esbuild",
+      "tsx",
+      "undici",
+      "ws"
+    ]
+  },
+  "audit": {
+    "queried_at_utc_start": "2026-09-08T17:34:16.171Z",
+    "queried_at_utc_end": "2026-09-08T17:34:16.566Z",
+    "exitCode": 0,
+    "counts": {
+      "info": 0,
+      "low": 0,
+      "moderate": 0,
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  }
+}

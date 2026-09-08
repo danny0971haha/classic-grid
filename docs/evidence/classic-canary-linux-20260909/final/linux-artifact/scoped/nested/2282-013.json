@@ -1,0 +1,17 @@
+{
+  "command": [
+    "npm",
+    "ci",
+    "--omit=dev",
+    "--no-fund",
+    "--ignore-scripts"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install",
+  "started_at_utc": "2026-09-08T17:34:16.575Z",
+  "ended_at_utc": "2026-09-08T17:34:17.074Z",
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "2282-013.stdout",
+  "stderr": "2282-013.stderr"
+}

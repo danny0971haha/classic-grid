@@ -1,0 +1,16 @@
+{
+  "command": [
+    "git",
+    "ls-files",
+    "-z",
+    "--stage"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:19.712Z",
+  "ended_at_utc": "2026-09-08T17:34:19.719Z",
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "2441-001.stdout",
+  "stderr": "2441-001.stderr"
+}

@@ -1,0 +1,16 @@
+{
+  "command": [
+    "npm",
+    "audit",
+    "--omit=dev",
+    "--json"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-evidence/registry/lock-install",
+  "started_at_utc": "2026-09-08T17:34:16.171Z",
+  "ended_at_utc": "2026-09-08T17:34:16.565Z",
+  "exitCode": 0,
+  "signal": null,
+  "error": null,
+  "stdout": "2282-011.stdout",
+  "stderr": "2282-011.stderr"
+}

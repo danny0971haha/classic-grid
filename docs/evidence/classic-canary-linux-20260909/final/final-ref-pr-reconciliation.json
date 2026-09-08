@@ -1,0 +1,95 @@
+[
+  {
+    "command": [
+      "git",
+      "ls-remote",
+      "origin"
+    ],
+    "started_at_utc": "2026-09-08T17:39:47.967957+00:00",
+    "ended_at_utc": "2026-09-08T17:39:48.525935+00:00",
+    "exitCode": 0,
+    "stdout": "69494206fffdc84aeb4d845d6bf3d05c1d4b677e\tHEAD\n14859d20084d109ee71f46a265f112fd52295649\trefs/heads/chore/current-candidate-verification-20260905-dc6fcc\na80bcca7f1a0b997456308f5a42962129375b208\trefs/heads/docs/classic-agent-autonomy-20260905\ne420b317dc7f7166f70d24701763c0ab15364c68\trefs/heads/docs/classic-dependency-prereq-20260908\na168c487e210306aab17cf428dec67d8168b68fe\trefs/heads/experiment/classic-v0.1\n990a790706e17b52e04d0d1957505cdad5d45862\trefs/heads/experiment/classic-v0.2-100u-safety\n39bf3a797b58f7fd91babf9f2d608cfd28e04487\trefs/heads/experiment/classic-v0.2-r2-extended-sepolia\n53892592a1dad5d0a091448a6b2eb2a4c8aba113\trefs/heads/fix/classic-audit-diagnostics-20260905\ne723f4c1596ab1e2348b67f2a8218578e06ef841\trefs/heads/fix/classic-audit-identity-v2-20260905\nfd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\trefs/heads/fix/classic-audit-output-path-20260906\n40223bb5e106668e2d5a2c8971579b41e7a9dbfa\trefs/heads/fix/classic-canary-driver-20260909\n69494206fffdc84aeb4d845d6bf3d05c1d4b677e\trefs/heads/main\n0bc82eef94b15ad7a5e48371e62d4a1ecaa9f656\trefs/heads/review/classic-v0.2-corrective6-cloud-gate\n04a72a44b74651f9720c627a7f438365ecdb4ac6\trefs/heads/review/classic-v0.2-final-canary-r1-gate\ne08991ce318d0bd2c22714034499794fb374200c\trefs/heads/review/classic-v0.2-release-boundary-cloud-gate\n3ca01ae046f27aa4ca74e9e8370928a48d0c7810\trefs/heads/tooling/classic-canary-review-20260908\na168c487e210306aab17cf428dec67d8168b68fe\trefs/pull/1/head\n1c06779a4e939da46fb47c4f7cb54ea4c652613b\trefs/pull/1/merge\n53892592a1dad5d0a091448a6b2eb2a4c8aba113\trefs/pull/10/head\ndfb2413013ac394932d6aeac772a0b3d5b6e61b1\trefs/pull/10/merge\ne723f4c1596ab1e2348b67f2a8218578e06ef841\trefs/pull/11/head\n165fac44b040a8077d1b133f3731a38c36da73d8\trefs/pull/11/merge\nfd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\trefs/pull/12/head\nd5508293655a62077821aabe82f5a2e16eb082bc\trefs/pull/12/merge\ne420b317dc7f7166f70d24701763c0ab15364c68\trefs/pull/13/head\n2d499416209ccc3412851f62fa2fe24f5ee317e6\trefs/pull/13/merge\n40223bb5e106668e2d5a2c8971579b41e7a9dbfa\trefs/pull/14/head\n0f29dd8ab0fd564e38f30c0f9357e4daa5e0ac4a\trefs/pull/14/merge\n990a790706e17b52e04d0d1957505cdad5d45862\trefs/pull/3/head\n72e4bfea7c3011d14ec5da754d14d99e6a47cc7a\trefs/pull/3/merge\n0bc82eef94b15ad7a5e48371e62d4a1ecaa9f656\trefs/pull/5/head\ne08991ce318d0bd2c22714034499794fb374200c\trefs/pull/6/head\n04a72a44b74651f9720c627a7f438365ecdb4ac6\trefs/pull/7/head\n39bf3a797b58f7fd91babf9f2d608cfd28e04487\trefs/pull/8/head\n03132db6ac2d71171ff48b7994bd060eb075dff1\trefs/pull/8/merge\na80bcca7f1a0b997456308f5a42962129375b208\trefs/pull/9/head\n3d2a11d8f5da1f3ba3dfb3490c3a88d98a06f5c9\trefs/pull/9/merge\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "gh",
+      "pr",
+      "view",
+      "14",
+      "--repo",
+      "danny0971haha/classic-grid",
+      "--json",
+      "number,isDraft,baseRefName,baseRefOid,headRefName,headRefOid,url"
+    ],
+    "started_at_utc": "2026-09-08T17:39:48.526005+00:00",
+    "ended_at_utc": "2026-09-08T17:39:49.032982+00:00",
+    "exitCode": 0,
+    "stdout": "{\"baseRefName\":\"fix/classic-audit-output-path-20260906\",\"baseRefOid\":\"fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\",\"headRefName\":\"fix/classic-canary-driver-20260909\",\"headRefOid\":\"40223bb5e106668e2d5a2c8971579b41e7a9dbfa\",\"isDraft\":true,\"number\":14,\"url\":\"https://github.com/danny0971haha/classic-grid/pull/14\"}\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "gh",
+      "pr",
+      "view",
+      "12",
+      "--repo",
+      "danny0971haha/classic-grid",
+      "--json",
+      "number,isDraft,baseRefName,headRefOid"
+    ],
+    "started_at_utc": "2026-09-08T17:39:49.033013+00:00",
+    "ended_at_utc": "2026-09-08T17:39:49.544891+00:00",
+    "exitCode": 0,
+    "stdout": "{\"baseRefName\":\"fix/classic-audit-identity-v2-20260905\",\"headRefOid\":\"fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\",\"isDraft\":true,\"number\":12}\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "gh",
+      "pr",
+      "view",
+      "13",
+      "--repo",
+      "danny0971haha/classic-grid",
+      "--json",
+      "number,isDraft,baseRefName,headRefOid"
+    ],
+    "started_at_utc": "2026-09-08T17:39:49.544929+00:00",
+    "ended_at_utc": "2026-09-08T17:39:50.026482+00:00",
+    "exitCode": 0,
+    "stdout": "{\"baseRefName\":\"docs/classic-agent-autonomy-20260905\",\"headRefOid\":\"e420b317dc7f7166f70d24701763c0ab15364c68\",\"isDraft\":true,\"number\":13}\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "-C",
+      "/Users/apple/classic-grid",
+      "status",
+      "--short",
+      "--branch"
+    ],
+    "started_at_utc": "2026-09-08T17:39:50.026553+00:00",
+    "ended_at_utc": "2026-09-08T17:39:50.052723+00:00",
+    "exitCode": 0,
+    "stdout": "## experiment/classic-v0.2-r2-extended-sepolia...origin/experiment/classic-v0.2-r2-extended-sepolia [ahead 3]\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "-C",
+      "/private/tmp/classic-grid-canary-driver-20260909",
+      "status",
+      "--short",
+      "--branch"
+    ],
+    "started_at_utc": "2026-09-08T17:39:50.052756+00:00",
+    "ended_at_utc": "2026-09-08T17:39:50.080256+00:00",
+    "exitCode": 0,
+    "stdout": "## fix/classic-canary-driver-20260909...origin/fix/classic-canary-driver-20260909\n",
+    "stderr": ""
+  }
+]

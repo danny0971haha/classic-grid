@@ -1,0 +1,20 @@
+{
+  "name": "dependency-preparation",
+  "command": [
+    "npm",
+    "ci",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.731617+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.731758+00:00",
+  "exitCode": null,
+  "status": "NOT_RUN",
+  "reason": "DEPENDENCY_NOT_SUCCESS:pins",
+  "stdout": "logs/dependency-preparation.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/dependency-preparation.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

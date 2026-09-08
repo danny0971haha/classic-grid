@@ -1,0 +1,16 @@
+{
+  "name": "registry-inputs",
+  "command": [
+    "internal:validate-fresh-registry-inputs"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:17.936661+00:00",
+  "ended_at_utc": "2026-09-08T17:34:17.937773+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/registry-inputs.stdout",
+  "stdoutSha256": "5274cef4029d3d93a6173ddeb89c4e8efc3cda3f99aba9f656333fd4eaa39971",
+  "stderr": "logs/registry-inputs.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

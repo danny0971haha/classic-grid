@@ -1,0 +1,21 @@
+{
+  "name": "isolation",
+  "command": [
+    "/usr/bin/python3",
+    "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/check-isolation.py",
+    "--target-root",
+    "/home/runner/work/_temp/classic-canary-target",
+    "--report",
+    "/home/runner/work/_temp/classic-canary-evidence/offline/isolation-check.json"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:34:03.486015+00:00",
+  "ended_at_utc": "2026-09-08T17:34:03.600247+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/isolation.stdout",
+  "stdoutSha256": "6e3dd226173120af15e07a0e7d6e3b5577b1f4f5f11775ad2e47c80e1e87276a",
+  "stderr": "logs/isolation.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "tool-resolution",
+  "command": [
+    "internal:resolve-target-loader"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.731937+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.732074+00:00",
+  "exitCode": null,
+  "status": "NOT_RUN",
+  "reason": "DEPENDENCY_NOT_SUCCESS:dependency-preparation",
+  "stdout": "logs/tool-resolution.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/tool-resolution.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

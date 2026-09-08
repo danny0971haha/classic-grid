@@ -1,0 +1,1154 @@
+[
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "tsx",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./get-pipe-path-_tAJyU_v.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./esm/index.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./temporary-directory-BDDVQOvU.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/temporary-directory-BDDVQOvU.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:worker_threads",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:worker_threads"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./node-features-JeyyvQz6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/node-features-JeyyvQz6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./register-C4vWVmug.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./register-C9AniqUt.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./index-DQtFPMc2.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "esbuild",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/esbuild/lib/main.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./client-D_mPDF5S.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/client-D_mPDF5S.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:net",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:net"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:util",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:util"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./index-gbaejti9.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-gbaejti9.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs/promises",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "node:fs/promises"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./require-CywAB2e6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/loader.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/require-CywAB2e6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./temporary-directory-BDDVQOvU.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/temporary-directory-BDDVQOvU.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:worker_threads",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:worker_threads"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../node-features-JeyyvQz6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/node-features-JeyyvQz6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../register-C4vWVmug.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../get-pipe-path-_tAJyU_v.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../register-C9AniqUt.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "esbuild",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/esbuild/lib/main.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../index-DQtFPMc2.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../client-D_mPDF5S.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/client-D_mPDF5S.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../require-CywAB2e6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/require-CywAB2e6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs/promises",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:fs/promises"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../temporary-directory-BDDVQOvU.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/temporary-directory-BDDVQOvU.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:util",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:util"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../index-gbaejti9.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-gbaejti9.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:net",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/esm/index.mjs",
+    "resolvedURL": "node:net"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:worker_threads",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:worker_threads"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./node-features-JeyyvQz6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/node-features-JeyyvQz6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./register-C9AniqUt.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs/promises",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:fs/promises"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./index-DQtFPMc2.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./client-D_mPDF5S.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/client-D_mPDF5S.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C4vWVmug.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./get-pipe-path-_tAJyU_v.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:module",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:module"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./index-DQtFPMc2.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./client-D_mPDF5S.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/client-D_mPDF5S.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:util",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "node:util"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./index-gbaejti9.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-gbaejti9.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./node-features-JeyyvQz6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/node-features-JeyyvQz6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/temporary-directory-BDDVQOvU.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/temporary-directory-BDDVQOvU.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "esbuild",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/esbuild/lib/main.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./node-features-JeyyvQz6.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/node-features-JeyyvQz6.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./temporary-directory-BDDVQOvU.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/temporary-directory-BDDVQOvU.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:net",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/client-D_mPDF5S.mjs",
+    "resolvedURL": "node:net"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./get-pipe-path-_tAJyU_v.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/client-D_mPDF5S.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./get-pipe-path-_tAJyU_v.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/require-CywAB2e6.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/get-pipe-path-_tAJyU_v.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./register-C9AniqUt.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/require-CywAB2e6.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/register-C9AniqUt.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lexer-DQCqS3nf.mjs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/index-DQtFPMc2.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/tsx/dist/lexer-DQCqS3nf.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "parentURL": null,
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:http",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "node:http"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:https",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "node:https"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:net",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "node:net"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/cli/run-extended-canary.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/cli/run-extended-canary.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../loop.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/cli/run-extended-canary.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../venues/extendedFactory.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/cli/run-extended-canary.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedFactory.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./config.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/config.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./extendedNetwork.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/extendedNetwork.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentKillSwitch.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentKillSwitch.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentReduction.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentReduction.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentRisk.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentTelemetry.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./softResume.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/softResume.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./runtimeLease.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./dashboard.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./botControl.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/botControl.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./grid.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/grid.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./strategyExecutionLedger.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/strategyExecutionLedger.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./ledger.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/ledger.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./telegram.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loop.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/telegram.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./extended.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedFactory.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./factory.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedFactory.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/factory.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./extendedNetwork.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/config.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/extendedNetwork.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./loadEnv.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/config.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loadEnv.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentRisk.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentKillSwitch.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./runtimeLease.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentKillSwitch.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentRisk.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentReduction.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./runtimeLease.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentReduction.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentStorage.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:child_process",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts",
+    "resolvedURL": "node:child_process"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentRisk.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentStorage.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/softResume.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/softResume.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./loadEnv.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/softResume.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loadEnv.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentStorage.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/softResume.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:net",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts",
+    "resolvedURL": "node:net"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:os",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts",
+    "resolvedURL": "node:os"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentStorage.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/runtimeLease.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:http",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts",
+    "resolvedURL": "node:http"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./ledger.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/ledger.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./botControl.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/dashboard.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/botControl.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/botControl.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/botControl.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/strategyExecutionLedger.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentStorage.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/strategyExecutionLedger.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentRisk.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/strategyExecutionLedger.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentRisk.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./grid.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/strategyExecutionLedger.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/grid.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./experimentTelemetry.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/strategyExecutionLedger.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/ledger.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/ledger.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/telegram.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/telegram.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./loadEnv.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/telegram.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loadEnv.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:url",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "node:url"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../experimentReduction.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentReduction.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../config.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/config.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../extendedNetwork.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/extendedNetwork.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../loadEnv.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loadEnv.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./extendedAccountStream.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./extendedObservation.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedObservation.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./extendedStrictApi.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedStrictApi.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./types.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extended.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/types.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loadEnv.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/loadEnv.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentStorage.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:events",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts",
+    "resolvedURL": "node:events"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:fs",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts",
+    "resolvedURL": "node:fs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:path",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts",
+    "resolvedURL": "node:path"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "ws",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "../experimentTelemetry.ts",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedAccountStream.ts",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/experimentTelemetry.ts"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "node:crypto",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/src/venues/extendedObservation.ts",
+    "resolvedURL": "node:crypto"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/stream.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/stream.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/extension.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/extension.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/permessage-deflate.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/permessage-deflate.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/receiver.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/receiver.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/sender.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/sender.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/subprotocol.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/subprotocol.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/websocket.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/websocket.js"
+  },
+  {
+    "schemaVersion": "classic-v0.2-extended-canary-module-graph/1",
+    "specifier": "./lib/websocket-server.js",
+    "parentURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/wrapper.mjs",
+    "resolvedURL": "file:///home/runner/work/_temp/classic-canary-evidence/registry/tarball-install/node_modules/ws/lib/websocket-server.js"
+  }
+]

@@ -1,0 +1,47 @@
+[
+  {
+    "command": [
+      "gh",
+      "run",
+      "view",
+      "34257856526",
+      "--repo",
+      "danny0971haha/classic-grid",
+      "--json",
+      "headSha,status,conclusion,url,jobs,event,createdAt,updatedAt"
+    ],
+    "stdout": "run.json",
+    "stderr": "run.json.stderr",
+    "started_at_utc": "2026-09-08T17:35:56.901989+00:00",
+    "ended_at_utc": "2026-09-08T17:35:58.228142+00:00",
+    "exitCode": 0
+  },
+  {
+    "command": [
+      "gh",
+      "api",
+      "repos/danny0971haha/classic-grid/actions/runs/34257856526/artifacts"
+    ],
+    "stdout": "artifacts.json",
+    "stderr": "artifacts.json.stderr",
+    "started_at_utc": "2026-09-08T17:35:58.228188+00:00",
+    "ended_at_utc": "2026-09-08T17:35:58.684990+00:00",
+    "exitCode": 0
+  },
+  {
+    "command": [
+      "gh",
+      "run",
+      "view",
+      "34257856526",
+      "--repo",
+      "danny0971haha/classic-grid",
+      "--log"
+    ],
+    "stdout": "job.log",
+    "stderr": "job.log.stderr",
+    "started_at_utc": "2026-09-08T17:35:58.685027+00:00",
+    "ended_at_utc": "2026-09-08T17:36:01.822330+00:00",
+    "exitCode": 0
+  }
+]

@@ -1,0 +1,10 @@
+{
+  "command": [
+    "uname",
+    "-a"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:33:53.884736+00:00",
+  "ended_at_utc": "2026-09-08T17:33:53.886296+00:00",
+  "exitCode": 0
+}

@@ -1,0 +1,16 @@
+{
+  "name": "pins",
+  "command": [
+    "internal:compare-node-npm-pins"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:03.362652+00:00",
+  "ended_at_utc": "2026-09-08T17:34:03.485594+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/pins.stdout",
+  "stdoutSha256": "aac4637cc147843635d47675ac6f785c801b355892c84befa65cd3ad3123fb6a",
+  "stderr": "logs/pins.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

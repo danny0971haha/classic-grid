@@ -1,0 +1,21 @@
+{
+  "name": "git-014",
+  "command": [
+    "git",
+    "-C",
+    "/private/tmp/classic-canary-fixed-target-20260909",
+    "status",
+    "--porcelain",
+    "--untracked-files=all"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.817503+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.894946+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/git-014.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/git-014.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

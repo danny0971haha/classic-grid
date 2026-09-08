@@ -1,0 +1,16 @@
+{
+  "name": "pins",
+  "command": [
+    "internal:compare-node-npm-pins"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:09.883739+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.050350+00:00",
+  "exitCode": 1,
+  "status": "BLOCKED",
+  "reason": null,
+  "stdout": "logs/pins.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/pins.stderr",
+  "stderrSha256": "af60c431e3d72d7e3a544a235ff39e381933fa9086ff084597bd0ac1221e95f5"
+}

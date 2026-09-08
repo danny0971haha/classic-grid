@@ -1,0 +1,16 @@
+{
+  "name": "tool-resolution",
+  "command": [
+    "internal:resolve-target-loader"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:14.507405+00:00",
+  "ended_at_utc": "2026-09-08T17:34:14.507813+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/tool-resolution.stdout",
+  "stdoutSha256": "76bbc27dd206644f36517b08756ce9746422fb28572fc198d24c3d770b3d6599",
+  "stderr": "logs/tool-resolution.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

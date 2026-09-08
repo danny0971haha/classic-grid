@@ -1,0 +1,21 @@
+{
+  "command": [
+    "env",
+    "-i",
+    "PATH=/home/runner/work/_temp/node-v22.23.2-linux-x64/bin:/snap/bin:/home/runner/.local/bin:/opt/pipx_bin:/home/runner/.cargo/bin:/home/runner/.config/composer/vendor/bin:/usr/local/.ghcup/bin:/home/runner/.dotnet/tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin",
+    "HOME=/home/runner/work/_temp/canary-bootstrap-home",
+    "npm_config_userconfig=/dev/null",
+    "npm_config_globalconfig=/home/runner/work/_temp/canary-bootstrap-home/global.npmrc",
+    "npm",
+    "install",
+    "-g",
+    "npm@10.9.8",
+    "--ignore-scripts",
+    "--no-audit",
+    "--no-fund"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:33:56.881048+00:00",
+  "exitCode": 0,
+  "ended_at_utc": "2026-09-08T17:34:00.908197+00:00"
+}

@@ -1,0 +1,841 @@
+{"system": "Linux", "machine": "x86_64", "kernel_isolation": "LINUX_SECCOMP_AF_UNIX_ONLY", "checks": ["AF_UNIX_BIND_LISTEN_CONNECT_DATA_SOCKETPAIR", "socket:AF_INET:EPERM", "socketpair:AF_INET:EPERM", "socket:AF_INET6:EPERM", "socketpair:AF_INET6:EPERM", "socket:AF_PACKET:EPERM", "socketpair:AF_PACKET:EPERM", "EXEC_CHILD_AF_INET_EPERM"]}
+TAP version 13
+# Subtest: canary artifact content manifest
+    # Subtest: PASS_BLOCKED: extra tar file is rejected
+    ok 1 - PASS_BLOCKED: extra tar file is rejected
+      ---
+      duration_ms: 5.772262
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: missing tar file is rejected
+    ok 2 - PASS_BLOCKED: missing tar file is rejected
+      ---
+      duration_ms: 1.267508
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: changed file hash is rejected
+    ok 3 - PASS_BLOCKED: changed file hash is rejected
+      ---
+      duration_ms: 1.506086
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: duplicate tar entry is rejected
+    ok 4 - PASS_BLOCKED: duplicate tar entry is rejected
+      ---
+      duration_ms: 3.407303
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: symlink entry is rejected
+    ok 5 - PASS_BLOCKED: symlink entry is rejected
+      ---
+      duration_ms: 1.089986
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: hardlink entry is rejected
+    ok 6 - PASS_BLOCKED: hardlink entry is rejected
+      ---
+      duration_ms: 1.348862
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: absolute path entry is rejected
+    ok 7 - PASS_BLOCKED: absolute path entry is rejected
+      ---
+      duration_ms: 0.758814
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: traversal entry is rejected
+    ok 8 - PASS_BLOCKED: traversal entry is rejected
+      ---
+      duration_ms: 0.823165
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: stale content manifest hashes are rejected
+    ok 9 - PASS_BLOCKED: stale content manifest hashes are rejected
+      ---
+      duration_ms: 1.179573
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: canary-origin parent resolving into the root repository is rejected
+    ok 10 - PASS_BLOCKED: canary-origin parent resolving into the root repository is rejected
+      ---
+      duration_ms: 3.735309
+      type: 'test'
+      ...
+    1..10
+ok 1 - canary artifact content manifest
+  ---
+  duration_ms: 23.191888
+  type: 'suite'
+  ...
+# Subtest: strict canary manifest schema
+    # Subtest: PASS_ALLOWED: committed schema 2 manifest parses
+    ok 1 - PASS_ALLOWED: committed schema 2 manifest parses
+      ---
+      duration_ms: 28.035167
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: unknown field is rejected
+    ok 2 - PASS_BLOCKED: unknown field is rejected
+      ---
+      duration_ms: 0.707748
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: duplicate runtime file is rejected
+    ok 3 - PASS_BLOCKED: duplicate runtime file is rejected
+      ---
+      duration_ms: 0.554752
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: path case collision is rejected
+    ok 4 - PASS_BLOCKED: path case collision is rejected
+      ---
+      duration_ms: 0.862238
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: absolute path is rejected
+    ok 5 - PASS_BLOCKED: absolute path is rejected
+      ---
+      duration_ms: 0.32516
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: ../ escape is rejected
+    ok 6 - PASS_BLOCKED: ../ escape is rejected
+      ---
+      duration_ms: 0.338566
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: backslash-equivalent path is rejected
+    ok 7 - PASS_BLOCKED: backslash-equivalent path is rejected
+      ---
+      duration_ms: 0.745038
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: missing required field is rejected
+    ok 8 - PASS_BLOCKED: missing required field is rejected
+      ---
+      duration_ms: 0.434235
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: missing file is rejected
+    ok 9 - PASS_BLOCKED: missing file is rejected
+      ---
+      duration_ms: 0.395001
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: symlink source is rejected
+    ok 10 - PASS_BLOCKED: symlink source is rejected
+      ---
+      duration_ms: 1.750816
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: untracked file is rejected against the git index
+    ok 11 - PASS_BLOCKED: untracked file is rejected against the git index
+      ---
+      duration_ms: 18.598095
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: executable extension not scanned is rejected
+    ok 12 - PASS_BLOCKED: executable extension not scanned is rejected
+      ---
+      duration_ms: 0.776217
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: unlisted imported local file is rejected
+    ok 13 - PASS_BLOCKED: unlisted imported local file is rejected
+      ---
+      duration_ms: 1801.223366
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: stale approved exception is rejected
+    ok 14 - PASS_BLOCKED: stale approved exception is rejected
+      ---
+      duration_ms: 545.57638
+      type: 'test'
+      ...
+    1..14
+ok 2 - strict canary manifest schema
+  ---
+  duration_ms: 2402.630978
+  type: 'suite'
+  ...
+# Subtest: extended canary dependency boundary (unit)
+    # Subtest: fails closed when a canary factory is asked for an uninstalled venue
+    ok 1 - fails closed when a canary factory is asked for an uninstalled venue
+      ---
+      duration_ms: 1.334224
+      type: 'test'
+      ...
+    # Subtest: fails closed on VENUES selection and never remaps to extended
+    ok 2 - fails closed on VENUES selection and never remaps to extended
+      ---
+      duration_ms: 0.899257
+      type: 'test'
+      ...
+    # Subtest: does not statically import unselected venue adapters from the canary entry or loop
+    ok 3 - does not statically import unselected venue adapters from the canary entry or loop
+      ---
+      duration_ms: 0.632748
+      type: 'test'
+      ...
+    # Subtest: keeps global/root High packages in the repository manifest and not in the canary manifest
+    ok 4 - keeps global/root High packages in the repository manifest and not in the canary manifest
+      ---
+      duration_ms: 15.340308
+      type: 'test'
+      ...
+    # Subtest: canary lockfile does not contain forbidden High package paths
+    ok 5 - canary lockfile does not contain forbidden High package paths
+      ---
+      duration_ms: 0.612429
+      type: 'test'
+      ...
+    # Subtest: module specifier matcher treats nested viem ws as forbidden and direct ws as allowed
+    ok 6 - module specifier matcher treats nested viem ws as forbidden and direct ws as allowed
+      ---
+      duration_ms: 5.103456
+      type: 'test'
+      ...
+    # Subtest: does not convert canary isolation into global clearance text
+    ok 7 - does not convert canary isolation into global clearance text
+      ---
+      duration_ms: 0.455675
+      type: 'test'
+      ...
+    # Subtest: Checkpoint E and F evidence identity rules remain intact
+    ok 8 - Checkpoint E and F evidence identity rules remain intact
+      ---
+      duration_ms: 0.358704
+      type: 'test'
+      ...
+    1..8
+ok 3 - extended canary dependency boundary (unit)
+  ---
+  duration_ms: 26.083758
+  type: 'suite'
+  ...
+# Subtest: extended canary boundary adversarial checks
+    # Subtest: PASS_BLOCKED: dynamic import literal of a forbidden venue file is rejected
+    ok 1 - PASS_BLOCKED: dynamic import literal of a forbidden venue file is rejected
+      ---
+      duration_ms: 1.594612
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: loop.ts keeps the fail-closed literal fallback import of venues/index.js
+    ok 2 - PASS_ALLOWED: loop.ts keeps the fail-closed literal fallback import of venues/index.js
+      ---
+      duration_ms: 0.791865
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: non-literal import concatenation of n1.js is rejected
+    ok 3 - PASS_BLOCKED: non-literal import concatenation of n1.js is rejected
+      ---
+      duration_ms: 0.312336
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: Extended vendor import(pathToFileURL(vendor).href) stays allowed
+    ok 4 - PASS_ALLOWED: Extended vendor import(pathToFileURL(vendor).href) stays allowed
+      ---
+      duration_ms: 0.206708
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: require, require.resolve, and module.createRequire of viem are rejected
+    ok 5 - PASS_BLOCKED: require, require.resolve, and module.createRequire of viem are rejected
+      ---
+      duration_ms: 0.230463
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: non-literal require concat, template, and comment forms of viem are rejected
+    ok 6 - PASS_BLOCKED: non-literal require concat, template, and comment forms of viem are rejected
+      ---
+      duration_ms: 0.433794
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: aliased createRequire import is rejected
+    ok 7 - PASS_BLOCKED: aliased createRequire import is rejected
+      ---
+      duration_ms: 0.242605
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: path tricks that previously bypassed the matcher now resolve to viem
+    ok 8 - PASS_BLOCKED: path tricks that previously bypassed the matcher now resolve to viem
+      ---
+      duration_ms: 0.509376
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: direct ws and node builtins are not High-package forbidden specifiers
+    ok 9 - PASS_ALLOWED: direct ws and node builtins are not High-package forbidden specifiers
+      ---
+      duration_ms: 0.160682
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: symlink canary sources that resolve to a different path are rejected
+    ok 10 - PASS_BLOCKED: symlink canary sources that resolve to a different path are rejected
+      ---
+      duration_ms: 1.530752
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: production canary tree has no tls/dgram imports, eval, or Function constructor
+    ok 11 - PASS_BLOCKED: production canary tree has no tls/dgram imports, eval, or Function constructor
+      ---
+      duration_ms: 1700.17144
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: node:net (lease) and node:http (dashboard) remain in the canary tree
+    ok 12 - PASS_ALLOWED: node:net (lease) and node:http (dashboard) remain in the canary tree
+      ---
+      duration_ms: 0.353724
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: process.env reads in canary config/loadEnv are expected and not treated as High-package loads
+    ok 13 - PASS_ALLOWED: process.env reads in canary config/loadEnv are expected and not treated as High-package loads
+      ---
+      duration_ms: 0.385804
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: eval, Function constructor, and (0, eval) forms are rejected in canary source text
+    ok 14 - PASS_BLOCKED: eval, Function constructor, and (0, eval) forms are rejected in canary source text
+      ---
+      duration_ms: 0.256531
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: executable Function() without new and globalThis.Function forms are rejected
+    ok 15 - PASS_BLOCKED: executable Function() without new and globalThis.Function forms are rejected
+      ---
+      duration_ms: 0.225353
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: TypeScript Function type annotations are not treated as constructor calls
+    ok 16 - PASS_ALLOWED: TypeScript Function type annotations are not treated as constructor calls
+      ---
+      duration_ms: 0.173175
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: canary source may not import tls, dgram, or https
+    ok 17 - PASS_BLOCKED: canary source may not import tls, dgram, or https
+      ---
+      duration_ms: 0.520647
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: node:http and node:net remain allowed in canary source text
+    ok 18 - PASS_ALLOWED: node:http and node:net remain allowed in canary source text
+      ---
+      duration_ms: 0.355126
+      type: 'test'
+      ...
+    1..18
+ok 4 - extended canary boundary adversarial checks
+  ---
+  duration_ms: 1709.330707
+  type: 'suite'
+  ...
+# Subtest: source-policy dynamic loaders
+    # Subtest: PASS_BLOCKED: import(process.env) is rejected even when the env value is absent
+    ok 1 - PASS_BLOCKED: import(process.env) is rejected even when the env value is absent
+      ---
+      duration_ms: 16.031445
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: require(process.env) is rejected
+    ok 2 - PASS_BLOCKED: require(process.env) is rejected
+      ---
+      duration_ms: 2.356983
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: aliased require('viem') is rejected
+    ok 3 - PASS_BLOCKED: aliased require('viem') is rejected
+      ---
+      duration_ms: 2.055617
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: computed globalThis require alias of viem is rejected
+    ok 4 - PASS_BLOCKED: computed globalThis require alias of viem is rejected
+      ---
+      duration_ms: 2.071687
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: module.require(process.env) is rejected
+    ok 5 - PASS_BLOCKED: module.require(process.env) is rejected
+      ---
+      duration_ms: 1.255856
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: process.getBuiltinModule('child_process') is rejected
+    ok 6 - PASS_BLOCKED: process.getBuiltinModule('child_process') is rejected
+      ---
+      duration_ms: 0.672412
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: concatenated specifier import(name) is rejected
+    ok 7 - PASS_BLOCKED: concatenated specifier import(name) is rejected
+      ---
+      duration_ms: 2.172917
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import(process.env.MODULE_NAME) is rejected
+    ok 8 - PASS_BLOCKED: import(process.env.MODULE_NAME) is rejected
+      ---
+      duration_ms: 0.812174
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: createRequire alias from node:module is rejected
+    ok 9 - PASS_BLOCKED: createRequire alias from node:module is rejected
+      ---
+      duration_ms: 4.486468
+      type: 'test'
+      ...
+    1..9
+ok 5 - source-policy dynamic loaders
+  ---
+  duration_ms: 34.241405
+  type: 'suite'
+  ...
+# Subtest: source-policy constructor and process escapes
+    # Subtest: PASS_BLOCKED: computed Function constructor is rejected
+    ok 1 - PASS_BLOCKED: computed Function constructor is rejected
+      ---
+      duration_ms: 1.227313
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: Reflect.construct(Function) is rejected
+    ok 2 - PASS_BLOCKED: Reflect.construct(Function) is rejected
+      ---
+      duration_ms: 0.905539
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: arrow function .constructor is rejected
+    ok 3 - PASS_BLOCKED: arrow function .constructor is rejected
+      ---
+      duration_ms: 1.712634
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import('node:child_process') is rejected
+    ok 4 - PASS_BLOCKED: import('node:child_process') is rejected
+      ---
+      duration_ms: 0.49526
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import('node:vm') is rejected
+    ok 5 - PASS_BLOCKED: import('node:vm') is rejected
+      ---
+      duration_ms: 0.401002
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import('node:worker_threads') is rejected
+    ok 6 - PASS_BLOCKED: import('node:worker_threads') is rejected
+      ---
+      duration_ms: 0.425108
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: TypeScript Function type annotations are not constructor calls
+    ok 7 - PASS_ALLOWED: TypeScript Function type annotations are not constructor calls
+      ---
+      duration_ms: 2.237118
+      type: 'test'
+      ...
+    1..7
+ok 6 - source-policy constructor and process escapes
+  ---
+  duration_ms: 7.849279
+  type: 'suite'
+  ...
+# Subtest: source-policy approved vendor import
+    # Subtest: PASS_ALLOWED: exact Extended vendor import is accepted
+    ok 1 - PASS_ALLOWED: exact Extended vendor import is accepted
+      ---
+      duration_ms: 5.416083
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: current src/venues/extended.ts matches the approved vendor AST
+    ok 2 - PASS_ALLOWED: current src/venues/extended.ts matches the approved vendor AST
+      ---
+      duration_ms: 1713.39366
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import(pathToFileURL(other).href) is rejected
+    ok 3 - PASS_BLOCKED: import(pathToFileURL(other).href) is rejected
+      ---
+      duration_ms: 1.040973
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import(pathToFileURL(vendor + suffix).href) is rejected
+    ok 4 - PASS_BLOCKED: import(pathToFileURL(vendor + suffix).href) is rejected
+      ---
+      duration_ms: 1.088833
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import(pathToFileURL(process.env.VENDOR).href) is rejected
+    ok 5 - PASS_BLOCKED: import(pathToFileURL(process.env.VENDOR).href) is rejected
+      ---
+      duration_ms: 1.026306
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: changed vendor path literal is rejected
+    ok 6 - PASS_BLOCKED: changed vendor path literal is rejected
+      ---
+      duration_ms: 0.936127
+      type: 'test'
+      ...
+    1..6
+ok 7 - source-policy approved vendor import
+  ---
+  duration_ms: 1723.288136
+  type: 'suite'
+  ...
+# Subtest: source-policy loop binding contract
+    # Subtest: PASS_ALLOWED: current canary entrypoint supplies all three bindings
+    ok 1 - PASS_ALLOWED: current canary entrypoint supplies all three bindings
+      ---
+      duration_ms: 557.987555
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: removing one entrypoint binding fails
+    ok 2 - PASS_BLOCKED: removing one entrypoint binding fails
+      ---
+      duration_ms: 442.640429
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: a second canary file calling runLoop without bindings fails
+    ok 3 - PASS_BLOCKED: a second canary file calling runLoop without bindings fails
+      ---
+      duration_ms: 408.012662
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: moving fallback imports outside bindLoopRuntime fails
+    ok 4 - PASS_BLOCKED: moving fallback imports outside bindLoopRuntime fails
+      ---
+      duration_ms: 0.653647
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: a third fallback import fails
+    ok 5 - PASS_BLOCKED: a third fallback import fails
+      ---
+      duration_ms: 0.684374
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: current loop fallbacks inside bindLoopRuntime are accepted
+    ok 6 - PASS_ALLOWED: current loop fallbacks inside bindLoopRuntime are accepted
+      ---
+      duration_ms: 0.913815
+      type: 'test'
+      ...
+    1..6
+ok 8 - source-policy loop binding contract
+  ---
+  duration_ms: 1411.21089
+  type: 'suite'
+  ...
+# Subtest: source-policy aliased and computed loader escapes
+    # Subtest: PASS_BLOCKED: process.getBuiltinModule one-hop alias is rejected
+    ok 1 - PASS_BLOCKED: process.getBuiltinModule one-hop alias is rejected
+      ---
+      duration_ms: 408.695805
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: Module._load one-hop alias is rejected
+    ok 2 - PASS_BLOCKED: Module._load one-hop alias is rejected
+      ---
+      duration_ms: 409.490751
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: module.require one-hop alias is rejected
+    ok 3 - PASS_BLOCKED: module.require one-hop alias is rejected
+      ---
+      duration_ms: 410.396995
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: import.meta.resolve one-hop alias is rejected
+    ok 4 - PASS_BLOCKED: import.meta.resolve one-hop alias is rejected
+      ---
+      duration_ms: 403.017726
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: Reflect.construct one-hop alias is rejected
+    ok 5 - PASS_BLOCKED: Reflect.construct one-hop alias is rejected
+      ---
+      duration_ms: 408.490238
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: globalThis require destructure alias is rejected
+    ok 6 - PASS_BLOCKED: globalThis require destructure alias is rejected
+      ---
+      duration_ms: 398.152243
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: unresolved computed globalThis dispatch is rejected
+    ok 7 - PASS_BLOCKED: unresolved computed globalThis dispatch is rejected
+      ---
+      duration_ms: 413.975935
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: two-hop globalThis.require alias is rejected
+    ok 8 - PASS_BLOCKED: two-hop globalThis.require alias is rejected
+      ---
+      duration_ms: 400.514828
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: Function constructor alias is rejected
+    ok 9 - PASS_BLOCKED: Function constructor alias is rejected
+      ---
+      duration_ms: 404.802015
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: getBuiltin alias result is still classified
+    ok 10 - PASS_BLOCKED: getBuiltin alias result is still classified
+      ---
+      duration_ms: 398.882804
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: globalThis eval destructure is rejected
+    ok 11 - PASS_BLOCKED: globalThis eval destructure is rejected
+      ---
+      duration_ms: 390.744398
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: globalThis require shorthand destructure is rejected
+    ok 12 - PASS_BLOCKED: globalThis require shorthand destructure is rejected
+      ---
+      duration_ms: 390.214955
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: constant-folded computed globalThis require is rejected
+    ok 13 - PASS_BLOCKED: constant-folded computed globalThis require is rejected
+      ---
+      duration_ms: 391.89592
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: two-hop getBuiltin alias is rejected
+    ok 14 - PASS_BLOCKED: two-hop getBuiltin alias is rejected
+      ---
+      duration_ms: 396.831176
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: unresolved computed process dispatch is rejected
+    ok 15 - PASS_BLOCKED: unresolved computed process dispatch is rejected
+      ---
+      duration_ms: 392.3037
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: ordinary function aliasing is not treated as a loader
+    ok 16 - PASS_ALLOWED: ordinary function aliasing is not treated as a loader
+      ---
+      duration_ms: 0.601689
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: ordinary computed property access on a local object is accepted
+    ok 17 - PASS_ALLOWED: ordinary computed property access on a local object is accepted
+      ---
+      duration_ms: 0.576602
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: process.env reads remain accepted
+    ok 18 - PASS_ALLOWED: process.env reads remain accepted
+      ---
+      duration_ms: 0.418986
+      type: 'test'
+      ...
+    1..18
+ok 9 - source-policy aliased and computed loader escapes
+  ---
+  duration_ms: 6020.898741
+  type: 'suite'
+  ...
+# Subtest: source-policy indirect dangerous callable forwarding
+    # Subtest: PASS_BLOCKED: Function.call/apply/bind invocation is rejected
+    ok 1 - PASS_BLOCKED: Function.call/apply/bind invocation is rejected
+      ---
+      duration_ms: 1191.628163
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: eval.call/apply/bind invocation is rejected
+    ok 2 - PASS_BLOCKED: eval.call/apply/bind invocation is rejected
+      ---
+      duration_ms: 1169.70526
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: Reflect.apply of Function/eval is rejected
+    ok 3 - PASS_BLOCKED: Reflect.apply of Function/eval is rejected
+      ---
+      duration_ms: 783.627481
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: tagged Function invocation is rejected
+    ok 4 - PASS_BLOCKED: tagged Function invocation is rejected
+      ---
+      duration_ms: 400.864273
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: object/array/destructure container forwarding of Function is rejected
+    ok 5 - PASS_BLOCKED: object/array/destructure container forwarding of Function is rejected
+      ---
+      duration_ms: 1174.273691
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: conditional/logical forwarding of Function is rejected
+    ok 6 - PASS_BLOCKED: conditional/logical forwarding of Function is rejected
+      ---
+      duration_ms: 779.099688
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: assignment rebinding of Function is rejected
+    ok 7 - PASS_BLOCKED: assignment rebinding of Function is rejected
+      ---
+      duration_ms: 386.064262
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: constructor-derived call/apply/bind forwarding is rejected
+    ok 8 - PASS_BLOCKED: constructor-derived call/apply/bind forwarding is rejected
+      ---
+      duration_ms: 1167.809177
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: multi-hop object forwarding then .call is rejected
+    ok 9 - PASS_BLOCKED: multi-hop object forwarding then .call is rejected
+      ---
+      duration_ms: 389.123274
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: TypeScript type-only Function references remain accepted
+    ok 10 - PASS_ALLOWED: TypeScript type-only Function references remain accepted
+      ---
+      duration_ms: 778.467096
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: locally shadowed Function and eval parameters remain accepted
+    ok 11 - PASS_ALLOWED: locally shadowed Function and eval parameters remain accepted
+      ---
+      duration_ms: 773.423825
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: Reflect.apply of an ordinary function remains accepted
+    ok 12 - PASS_ALLOWED: Reflect.apply of an ordinary function remains accepted
+      ---
+      duration_ms: 781.876594
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: ordinary tagged-template functions remain accepted
+    ok 13 - PASS_ALLOWED: ordinary tagged-template functions remain accepted
+      ---
+      duration_ms: 787.228336
+      type: 'test'
+      ...
+    1..13
+ok 10 - source-policy indirect dangerous callable forwarding
+  ---
+  duration_ms: 10563.889839
+  type: 'suite'
+  ...
+# Subtest: source-policy Reflect.get extraction
+    # Subtest: PASS_BLOCKED: Reflect.get of Function/eval is rejected
+    ok 1 - PASS_BLOCKED: Reflect.get of Function/eval is rejected
+      ---
+      duration_ms: 1566.767635
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: Reflect.get of loader roots is rejected
+    ok 2 - PASS_BLOCKED: Reflect.get of loader roots is rejected
+      ---
+      duration_ms: 1575.009655
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: unknown computed Reflect.get from a sensitive root is fail-closed
+    ok 3 - PASS_BLOCKED: unknown computed Reflect.get from a sensitive root is fail-closed
+      ---
+      duration_ms: 795.18922
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: wrappers around Reflect.get target and result keep the kind
+    ok 4 - PASS_BLOCKED: wrappers around Reflect.get target and result keep the kind
+      ---
+      duration_ms: 778.164964
+      type: 'test'
+      ...
+    1..4
+ok 11 - source-policy Reflect.get extraction
+  ---
+  duration_ms: 4715.398215
+  type: 'suite'
+  ...
+# Subtest: source-policy catch and for-of pattern extraction
+    # Subtest: PASS_BLOCKED: catch-clause Function/eval/getBuiltin extraction is rejected
+    ok 1 - PASS_BLOCKED: catch-clause Function/eval/getBuiltin extraction is rejected
+      ---
+      duration_ms: 1947.691889
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: nested and rest catch extraction is rejected
+    ok 2 - PASS_BLOCKED: nested and rest catch extraction is rejected
+      ---
+      duration_ms: 1176.742645
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: for-of declaration and assignment extraction is rejected
+    ok 3 - PASS_BLOCKED: for-of declaration and assignment extraction is rejected
+      ---
+      duration_ms: 1986.566823
+      type: 'test'
+      ...
+    1..3
+ok 12 - source-policy catch and for-of pattern extraction
+  ---
+  duration_ms: 5111.211531
+  type: 'suite'
+  ...
+# Subtest: source-policy interprocedural parameter destructuring
+    # Subtest: PASS_BLOCKED: local function/arrow/IIFE parameter extraction is rejected
+    ok 1 - PASS_BLOCKED: local function/arrow/IIFE parameter extraction is rejected
+      ---
+      duration_ms: 2752.311713
+      type: 'test'
+      ...
+    # Subtest: PASS_BLOCKED: nested, rest, aliased, and conditional parameter origins are rejected
+    ok 2 - PASS_BLOCKED: nested, rest, aliased, and conditional parameter origins are rejected
+      ---
+      duration_ms: 3507.549882
+      type: 'test'
+      ...
+    1..2
+ok 13 - source-policy interprocedural parameter destructuring
+  ---
+  duration_ms: 6260.036384
+  type: 'suite'
+  ...
+# Subtest: source-policy remaining binding positive controls
+    # Subtest: PASS_ALLOWED: Reflect.get on ordinary objects is accepted
+    ok 1 - PASS_ALLOWED: Reflect.get on ordinary objects is accepted
+      ---
+      duration_ms: 2322.608822
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: safe catch/for/parameter Function bindings remain accepted
+    ok 2 - PASS_ALLOWED: safe catch/for/parameter Function bindings remain accepted
+      ---
+      duration_ms: 3091.572895
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: locally shadowed sensitive roots remain accepted
+    ok 3 - PASS_ALLOWED: locally shadowed sensitive roots remain accepted
+      ---
+      duration_ms: 3105.057055
+      type: 'test'
+      ...
+    # Subtest: PASS_ALLOWED: ordinary catch/loop/function bindings remain accepted
+    ok 4 - PASS_ALLOWED: ordinary catch/loop/function bindings remain accepted
+      ---
+      duration_ms: 2317.00315
+      type: 'test'
+      ...
+    1..4
+ok 14 - source-policy remaining binding positive controls
+  ---
+  duration_ms: 10836.520114
+  type: 'suite'
+  ...
+1..14
+# tests 122
+# suites 14
+# pass 122
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 48439.848176

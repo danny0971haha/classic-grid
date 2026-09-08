@@ -1,0 +1,1 @@
+{"status": "FAILED", "exitCode": 1, "reason": "[Errno 17] File exists: '/private/tmp/classic-canary-local-driver-evidence-20260909'", "execution": "NOT_RUN", "existingOutputUntouched": true}

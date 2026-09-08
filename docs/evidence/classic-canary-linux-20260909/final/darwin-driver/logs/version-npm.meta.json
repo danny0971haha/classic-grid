@@ -1,0 +1,17 @@
+{
+  "name": "version-npm",
+  "command": [
+    "npm",
+    "--version"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:34:09.922335+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.049585+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/version-npm.stdout",
+  "stdoutSha256": "a38e383f1e9080b0dd9001481f6e56b341000de90a05061b66734350ad3adc41",
+  "stderr": "logs/version-npm.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

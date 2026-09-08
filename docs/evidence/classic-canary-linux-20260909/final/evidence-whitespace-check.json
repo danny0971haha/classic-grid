@@ -1,0 +1,14 @@
+{
+  "command": [
+    "git",
+    "diff",
+    "--cached",
+    "--check"
+  ],
+  "started_at_utc": "2026-09-08T17:40:30.950510+00:00",
+  "ended_at_utc": "2026-09-08T17:40:30.980446+00:00",
+  "exitCode": 2,
+  "stdout": "docs/evidence/classic-canary-linux-20260909/final/linux-artifact/scoped/offline/unavailable-venue.txt:17: new blank line at EOF.\ndocs/evidence/classic-canary-linux-20260909/final/linux-artifact/scoped/registry/canary-audit.json:23: new blank line at EOF.\n",
+  "stderr": "",
+  "reason": "Preserve two exact raw artifact files, including terminal blank lines; code diff check was zero."
+}

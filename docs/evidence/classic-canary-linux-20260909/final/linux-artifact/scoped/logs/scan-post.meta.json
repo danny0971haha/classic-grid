@@ -1,0 +1,25 @@
+{
+  "name": "scan-post",
+  "command": [
+    "/usr/bin/python3",
+    "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/check-isolation.py",
+    "--target-root",
+    "/home/runner/work/_temp/classic-canary-target",
+    "--report",
+    "/home/runner/work/_temp/classic-canary-evidence/offline/scan-post-isolation.json",
+    "--",
+    "/usr/bin/python3",
+    "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/scan-extra-boundaries.py",
+    "/home/runner/work/_temp/classic-canary-evidence/offline"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:35:08.345768+00:00",
+  "ended_at_utc": "2026-09-08T17:35:08.459830+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/scan-post.stdout",
+  "stdoutSha256": "a8c4393b1de23f1877b1023f60ec519e3d3f885c0d3d4cd78ab653f3a1ff835e",
+  "stderr": "logs/scan-post.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

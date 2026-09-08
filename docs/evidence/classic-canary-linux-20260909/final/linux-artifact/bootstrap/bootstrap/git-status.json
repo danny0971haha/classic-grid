@@ -1,0 +1,12 @@
+{
+  "command": [
+    "git",
+    "status",
+    "--porcelain",
+    "--untracked-files=all"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:33:54.419628+00:00",
+  "ended_at_utc": "2026-09-08T17:33:54.451405+00:00",
+  "exitCode": 0
+}

@@ -1,0 +1,56 @@
+{
+  "src": {
+    "originalToolObject": "eb31341e7ed5abf676b0fa7c9f22702bc3ca78d6",
+    "correctiveObject": "eb31341e7ed5abf676b0fa7c9f22702bc3ca78d6",
+    "targetObject": "eb31341e7ed5abf676b0fa7c9f22702bc3ca78d6"
+  },
+  "vendor": {
+    "originalToolObject": "c3a3831d7aac44ba0cbdf768718c560e8db2c5cc",
+    "correctiveObject": "c3a3831d7aac44ba0cbdf768718c560e8db2c5cc",
+    "targetObject": "c3a3831d7aac44ba0cbdf768718c560e8db2c5cc"
+  },
+  "packages": {
+    "originalToolObject": "e510a78504deb9e021d3243e2a8d1c5898eddcf6",
+    "correctiveObject": "e510a78504deb9e021d3243e2a8d1c5898eddcf6",
+    "targetObject": "e510a78504deb9e021d3243e2a8d1c5898eddcf6"
+  },
+  "test": {
+    "originalToolObject": "82c8408a14e341d20ba987b488988a63b4917d72",
+    "correctiveObject": "82c8408a14e341d20ba987b488988a63b4917d72",
+    "targetObject": "82c8408a14e341d20ba987b488988a63b4917d72"
+  },
+  "scripts": {
+    "originalToolObject": "3d61a13d7c6d0406e8ed1e3728415342ca1919d7",
+    "correctiveObject": "3d61a13d7c6d0406e8ed1e3728415342ca1919d7",
+    "targetObject": "3d61a13d7c6d0406e8ed1e3728415342ca1919d7"
+  },
+  ".github/workflows/ci.yml": {
+    "originalToolObject": "621fd280703ea4217dcdbc1bb16a37fac856440f",
+    "correctiveObject": "621fd280703ea4217dcdbc1bb16a37fac856440f",
+    "targetObject": "621fd280703ea4217dcdbc1bb16a37fac856440f"
+  },
+  "package.json": {
+    "originalToolObject": "f0cf54ef5dc5db5f3d1b24667a90e63a620245ae",
+    "correctiveObject": "f0cf54ef5dc5db5f3d1b24667a90e63a620245ae",
+    "targetObject": "f0cf54ef5dc5db5f3d1b24667a90e63a620245ae"
+  },
+  "package-lock.json": {
+    "originalToolObject": "a69469aca073e55bd5011ca45580d14c59bc5c97",
+    "correctiveObject": "a69469aca073e55bd5011ca45580d14c59bc5c97",
+    "targetObject": "a69469aca073e55bd5011ca45580d14c59bc5c97"
+  },
+  "AGENTS.md": {
+    "originalToolObject": "d3d213861bc169ca6852f346b3def977685bc053",
+    "correctiveObject": "d3d213861bc169ca6852f346b3def977685bc053",
+    "targetObject": "d3d213861bc169ca6852f346b3def977685bc053"
+  },
+  "AI_START_HERE.md": {
+    "originalToolObject": "73baf6a7df76293b7af31c732e006103232d5fec",
+    "correctiveObject": "73baf6a7df76293b7af31c732e006103232d5fec",
+    "targetObject": "73baf6a7df76293b7af31c732e006103232d5fec"
+  },
+  "originalEvidence": {
+    "originalToolObject": "463617dcf111cad64351584178d6671f1cbec7e8",
+    "correctiveObject": "463617dcf111cad64351584178d6671f1cbec7e8"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "identity",
+  "command": [
+    "internal:identities"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:03.278498+00:00",
+  "ended_at_utc": "2026-09-08T17:34:03.362336+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/identity.stdout",
+  "stdoutSha256": "11e02a19d5ee65e8e96134436c6b5b2262b242c06812e8d870f2eb24ea6ef722",
+  "stderr": "logs/identity.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

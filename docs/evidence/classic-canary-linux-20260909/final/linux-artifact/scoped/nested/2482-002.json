@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/home/runner/work/_temp/node-v22.23.2-linux-x64/bin/node",
+    "--import",
+    "file:///home/runner/work/_temp/classic-canary-target/scripts/security/register-module-load-hook.mjs",
+    "--import",
+    "tsx",
+    "/home/runner/work/_temp/classic-canary-target/scripts/security/canary-offline-probe.ts"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-evidence/registry/tarball-install",
+  "started_at_utc": "2026-09-08T17:35:07.982Z",
+  "ended_at_utc": "2026-09-08T17:35:08.302Z",
+  "exitCode": 1,
+  "signal": null,
+  "error": null,
+  "stdout": "2482-002.stdout",
+  "stderr": "2482-002.stderr"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "identity",
+  "command": [
+    "internal:identities"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:09.544386+00:00",
+  "ended_at_utc": "2026-09-08T17:34:09.883363+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/identity.stdout",
+  "stdoutSha256": "09c81f50663d59ae4c72d2e12c1454ca63f2b00fff976b08fbd989426a25be13",
+  "stderr": "logs/identity.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "registry-inputs",
+  "command": [
+    "internal:validate-fresh-registry-inputs"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.732529+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.732656+00:00",
+  "exitCode": null,
+  "status": "NOT_RUN",
+  "reason": "DEPENDENCY_NOT_SUCCESS:registry",
+  "stdout": "logs/registry-inputs.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/registry-inputs.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

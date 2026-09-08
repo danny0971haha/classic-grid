@@ -1,0 +1,20 @@
+{
+  "command": [
+    "sh",
+    "tools/review/classic-canary-20260908/run-scoped-verification.sh",
+    "--target-root",
+    "/private/tmp/classic-canary-fixed-target-20260909",
+    "--tool-head",
+    "40223bb5e106668e2d5a2c8971579b41e7a9dbfa",
+    "--tool-tree",
+    "c99180aab2b4cf9b4abb40780c7d2192686d9eec",
+    "--publication-ref",
+    "fix/classic-canary-driver-20260909",
+    "--out",
+    "/private/tmp/classic-canary-local-driver-evidence-20260909"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:35:11.348970+00:00",
+  "exitCode": 1,
+  "ended_at_utc": "2026-09-08T17:35:11.423089+00:00"
+}

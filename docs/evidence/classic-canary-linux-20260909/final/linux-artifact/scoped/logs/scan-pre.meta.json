@@ -1,0 +1,18 @@
+{
+  "name": "scan-pre",
+  "command": [
+    "/usr/bin/python3",
+    "/home/runner/work/classic-grid/classic-grid/tools/review/classic-canary-20260908/scan-extra-boundaries.py",
+    "/home/runner/work/_temp/classic-canary-evidence/registry"
+  ],
+  "cwd": "/home/runner/work/_temp/classic-canary-target",
+  "started_at_utc": "2026-09-08T17:34:17.938136+00:00",
+  "ended_at_utc": "2026-09-08T17:34:17.970122+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/scan-pre.stdout",
+  "stdoutSha256": "f651b3e7c9a9fe393d39378e84b90024853f687bafcd4510dd66cd4bc990bb39",
+  "stderr": "logs/scan-pre.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

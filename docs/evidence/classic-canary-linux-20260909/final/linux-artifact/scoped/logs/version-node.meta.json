@@ -1,0 +1,17 @@
+{
+  "name": "version-node",
+  "command": [
+    "node",
+    "--version"
+  ],
+  "cwd": "/home/runner/work/classic-grid/classic-grid",
+  "started_at_utc": "2026-09-08T17:34:03.362814+00:00",
+  "ended_at_utc": "2026-09-08T17:34:03.370417+00:00",
+  "exitCode": 0,
+  "status": "SUCCESS",
+  "reason": null,
+  "stdout": "logs/version-node.stdout",
+  "stdoutSha256": "c42fcf0db5a550bda2f566fcdc21955df3e5a8ec3aeb90ac533f3776e7fce32a",
+  "stderr": "logs/version-node.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}

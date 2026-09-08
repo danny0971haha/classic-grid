@@ -1,0 +1,25 @@
+{
+  "name": "scan-post",
+  "command": [
+    "/usr/local/bin/python3",
+    "/private/tmp/classic-grid-canary-driver-20260909/tools/review/classic-canary-20260908/check-isolation.py",
+    "--target-root",
+    "/private/tmp/classic-canary-fixed-target-20260909",
+    "--report",
+    "/private/tmp/classic-canary-local-driver-evidence-20260909/offline/scan-post-isolation.json",
+    "--",
+    "/usr/local/bin/python3",
+    "/private/tmp/classic-grid-canary-driver-20260909/tools/review/classic-canary-20260908/scan-extra-boundaries.py",
+    "/private/tmp/classic-canary-local-driver-evidence-20260909/offline"
+  ],
+  "cwd": "/private/tmp/classic-canary-fixed-target-20260909",
+  "started_at_utc": "2026-09-08T17:34:10.734724+00:00",
+  "ended_at_utc": "2026-09-08T17:34:10.734858+00:00",
+  "exitCode": null,
+  "status": "NOT_RUN",
+  "reason": "DEPENDENCY_NOT_SUCCESS:probe",
+  "stdout": "logs/scan-post.stdout",
+  "stdoutSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr": "logs/scan-post.stderr",
+  "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
