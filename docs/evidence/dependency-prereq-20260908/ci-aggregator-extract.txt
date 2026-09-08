@@ -1,0 +1,12 @@
+source=https://github.com/danny0971haha/classic-grid/actions/runs/34004346097/job/101408725478
+run=34004346097 job=101408725478 attempt=1 head_sha=fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf
+note=continue-on-error step conclusions are not outcomes; aggregator uses outcome.
+  "required_19": {
+  "required_20": {
+  "required_22": {
+  "required_23": {
+2026-09-06T01:45:18.5489648Z required_19: failure
+2026-09-06T01:45:18.5490859Z required_20: failure
+aggregator_printed:
+required_19: failure
+required_20: failure

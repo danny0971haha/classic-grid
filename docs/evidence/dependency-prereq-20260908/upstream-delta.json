@@ -1,0 +1,55 @@
+{
+  "schema": "classic-upstream-delta/20260908",
+  "compared_to": "/tmp/classic-pr12-source-prereq-20260907 (2026-09-07 local packet; not GitHub-published)",
+  "result": "NO_NEW_ACTIONABLE_INPUT",
+  "tarball_redownloaded": false,
+  "parser_matrix_rerun": false,
+  "nord_ts": {
+    "public_head": "76ffae09239751b6cc4de51447e2d1591830f1d2",
+    "public_tree": "9fc2536469378455e6e2432bc402782e7cfcd082",
+    "public_head_message": "ts: add generated files",
+    "public_head_date": "2025-12-16T17:51:59Z",
+    "pushed_at": "2025-12-16T17:56:27Z",
+    "tag_count": 0,
+    "version_count": 55,
+    "versions_equal_to_20260907": true,
+    "dist_tags": {"alpha": "0.3.4-alpha.1", "latest": "0.7.4"}
+  },
+  "npm": {
+    "0.3.1": {
+      "gitHead": "6f40eeb96a98dc708d952c9bcf64212ec86b686a",
+      "integrity": "sha512-qxOv0jnQ7MwVuwTG5De+xXfv8GY9uPdEr5HWFGIzXQyBLW4IMfilA/HC6AgGgAxwqI9IwmlsCPLwdrMU4yTTNg=="
+    },
+    "0.6.3": {
+      "gitHead": null,
+      "attestations": null,
+      "integrity": "sha512-Kp0rJHz7Vx8HP6JaHP4YsC1KeV1bDjISIWcGl2XuuaZiXSEuY3n+0sYqztHKf/dkklBIqZRmQgXlpx2LDOMAPw==",
+      "matches_pr12_lock": true
+    },
+    "0.7.4": {
+      "gitHead": null,
+      "attestations": null,
+      "integrity": "sha512-sW6BxxnYigam0LGONJazUjZFcw6ilpXa3RU7hjlv44ECz5WkkUBt0+7GMyLXaEOcznl3xJCgMyzYln7ZYaBaSQ=="
+    }
+  },
+  "parent_build": {
+    "engine_contents_at_76ffae09": "HTTP 404",
+    "flake_nix_at_76ffae09": "HTTP 404",
+    "n1nix_pushed_at": "2026-08-18T19:07:07Z",
+    "n1nix_packages": ["bun-enforce.nix", "cargo-build-static-release.nix"]
+  },
+  "advisories": {
+    "GHSA-82x6-q7mm-w9cf": {
+      "cve": "CVE-2026-77465",
+      "updated_at": "2026-09-03T20:56:14Z",
+      "vulnerable_version_range": "< 4.2.0",
+      "first_patched_version": "4.2.0"
+    },
+    "GHSA-v5mp-jgw5-2x6j": {
+      "cve": "CVE-2026-63376",
+      "updated_at": "2026-09-03T20:55:34Z",
+      "vulnerable_version_range": "< 4.1.2",
+      "first_patched_version": "4.1.2"
+    }
+  }
+}

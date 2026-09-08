@@ -1,0 +1,181 @@
+{
+  "schemaVersion": "classic-v0.2-security-audit-verification/2",
+  "ok": false,
+  "overallPolicyOk": false,
+  "codes": [
+    "ADVISORY_SOURCE_RENUMBERED",
+    "NEW_HIGH",
+    "AFFECTED_PACKAGE_ADDED"
+  ],
+  "existingHighAreNotCleared": true,
+  "lockfile": {
+    "path": "package-lock.json",
+    "sha256": "f278d8b7f0d559839e35ee64e94db9e39c7d6037f5692d0cafa02ba6c6b254ed",
+    "matchesBaseline": true
+  },
+  "metadata": {
+    "info": 0,
+    "low": 0,
+    "moderate": 8,
+    "high": 16,
+    "critical": 0,
+    "total": 24
+  },
+  "observed": {
+    "info": 0,
+    "low": 0,
+    "moderate": 8,
+    "high": 16,
+    "critical": 0,
+    "total": 24
+  },
+  "metadataMatchesObserved": true,
+  "audit": {
+    "auditReportVersion": 2,
+    "info": 0,
+    "low": 0,
+    "moderate": 8,
+    "high": 16,
+    "critical": 0,
+    "total": 24
+  },
+  "matchingHigh": [
+    {
+      "advisoryId": "1153178",
+      "sourceId": "1153178",
+      "ghsaId": "GHSA-gcfj-64vw-6mp9",
+      "package": "axios",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/axios"
+      ],
+      "vulnerableRange": ">=1.15.2 <1.18.0",
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.15.0",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "advisoryId": "1103747",
+      "sourceId": "1103747",
+      "ghsaId": "GHSA-3gc7-fjrx-p6mg",
+      "package": "bigint-buffer",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/bigint-buffer"
+      ],
+      "vulnerableRange": "<=1.1.5",
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "advisoryId": "1123259",
+      "sourceId": "1123259",
+      "ghsaId": "GHSA-96hv-2xvq-fx4p",
+      "package": "ws",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/viem/node_modules/ws"
+      ],
+      "vulnerableRange": ">=8.0.0 <8.21.0",
+      "fixAvailable": {
+        "name": "@nadohq/client",
+        "version": "0.15.0",
+        "isSemVerMajor": true
+      }
+    }
+  ],
+  "resolvedHigh": [],
+  "newHigh": [
+    {
+      "advisoryId": "1164824",
+      "sourceId": "1164824",
+      "ghsaId": "GHSA-82x6-q7mm-w9cf",
+      "package": "toml",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/toml"
+      ],
+      "vulnerableRange": "<4.2.0",
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "advisoryId": "1164825",
+      "sourceId": "1164825",
+      "ghsaId": "GHSA-v5mp-jgw5-2x6j",
+      "package": "toml",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/toml"
+      ],
+      "vulnerableRange": "<4.1.2",
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    }
+  ],
+  "advisoryIdentityMissing": [],
+  "critical": [],
+  "advisoryReplaced": [],
+  "advisorySourceRenumbered": [
+    {
+      "package": "axios",
+      "ghsaId": "GHSA-gcfj-64vw-6mp9",
+      "expectedSourceId": "1123967",
+      "actualSourceId": "1153178"
+    }
+  ],
+  "vulnerableRangeChanged": [],
+  "affectedPackageAdded": [
+    {
+      "package": "@coral-xyz/anchor",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/@coral-xyz/anchor"
+      ],
+      "vulnerableRange": "*",
+      "viaHighAdvisoryIds": [],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    },
+    {
+      "package": "toml",
+      "severity": "high",
+      "isDirect": false,
+      "dependencyPaths": [
+        "node_modules/toml"
+      ],
+      "vulnerableRange": "<=4.1.2",
+      "viaHighAdvisoryIds": [
+        "1164824",
+        "1164825"
+      ],
+      "fixAvailable": {
+        "name": "@n1xyz/nord-ts",
+        "version": "0.0.1",
+        "isSemVerMajor": true
+      }
+    }
+  ],
+  "dependencyPathChanged": [],
+  "packageIdentityChanged": []
+}

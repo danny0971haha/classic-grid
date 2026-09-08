@@ -1,0 +1,51 @@
+{
+  "schema": "classic-canary-boundary/20260908",
+  "route_b_adopted": false,
+  "lockfile": {
+    "r1_blob": "08069e80df73b7995f13a4bf4c73595a7f2d6f4f",
+    "pr12_blob": "08069e80df73b7995f13a4bf4c73595a7f2d6f4f",
+    "identical_r1_and_pr12": true,
+    "root_dependencies": {
+      "tsx": "^4.19.2",
+      "undici": "^6.21.0",
+      "ws": "^8.21.3"
+    },
+    "package_keys": 32,
+    "toml_present": false,
+    "n1xyz_present": false,
+    "nord_ts_present": false,
+    "proton_present": false,
+    "solana_present": false,
+    "anchor_present": false
+  },
+  "canary_tree": {
+    "frozen_r1": "74db4f60560840f2de84cc5ecdd7e80af7d25753",
+    "pr12_docs_r2a_origin": "ff8743f5227f9ed3ae8abb53388fc21b17612d8a",
+    "file_manifest_diff_vs_r1": ["src/extendedNetwork.ts added to runtimeFiles"],
+    "r1_clearance_does_not_rebind_to_pr12": true
+  },
+  "entrypoints": {
+    "canary": "src/cli/run-extended-canary.ts",
+    "root": "src/cli/run.ts",
+    "canary_injects_createExtendedCanaryExecutor": true,
+    "root_injects_canary_bindings": false,
+    "n1_dynamic_import_sites_in_root_src": [
+      "src/venues/n1.ts",
+      "src/officialStats.ts"
+    ],
+    "n1_ts_in_canary_file_manifest": false,
+    "officialStats_in_canary_file_manifest": false
+  },
+  "pr12_ci_verify_extended_canary": {
+    "ok": true,
+    "lockfileSha256": "f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99",
+    "artifactSha256": "4877250df71249778e560b9b0d156ef73ba474f1c4e4f117ec42173d03a96de0",
+    "contentManifestSha256": "2510544ff839caa5ae82e972ffc2d583a864112eb0e6b86fa1d0a983461d1e84",
+    "audit_high": 0,
+    "audit_critical": 0,
+    "audit_total": 0,
+    "forbiddenLoaded": [],
+    "liveExchangeWrite": false,
+    "not_root_clearance": true
+  }
+}

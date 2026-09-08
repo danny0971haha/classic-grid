@@ -1,0 +1,106 @@
+{
+  "schema": "classic-dependency-prereq-status/20260908",
+  "repository": "danny0971haha/classic-grid",
+  "captured_at_utc": "2026-09-08T04:24:36Z",
+  "task_status": "OWNER_DECISION_REQUIRED",
+  "self_declared_overall": "NOT_EMITTED",
+  "PASS": false,
+  "ACCEPT": false,
+  "MERGE_AUTHORIZED": false,
+  "LIVE_AUTHORIZED": false,
+  "identity": {
+    "pr": 12,
+    "pr_state": "OPEN",
+    "pr_draft": true,
+    "merged": false,
+    "head": "fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf",
+    "tree": "7f14f66eac518c4427076f18fbcfdc7d935c79d8",
+    "base_branch": "fix/classic-audit-identity-v2-20260905",
+    "base_sha": "e723f4c1596ab1e2348b67f2a8218578e06ef841",
+    "frozen_r1_branch": "experiment/classic-v0.2-100u-safety",
+    "frozen_r1_head": "990a790706e17b52e04d0d1957505cdad5d45862",
+    "frozen_r1_tree": "c544b6e9d8f8e33a59d12a7d6e1eeeecd0c6cbb8",
+    "remote_r2a_head": "39bf3a797b58f7fd91babf9f2d608cfd28e04487",
+    "remote_r2a_tree": "fb139e4737711602df44636e8186ccc6694de654",
+    "pr12_head_matches_historical_anchor": true,
+    "official_workdir_is_pr12": false,
+    "official_workdir": {
+      "branch": "experiment/classic-v0.2-r2-extended-sepolia",
+      "head": "d3129075d5866d27c79c6d2cba3b4b1128923889",
+      "tree": "ce5de3b01e3506d5e3a7672958696a7acadfce1c",
+      "ahead_of_origin": 3,
+      "clean": true
+    }
+  },
+  "candidate": {
+    "status": "NOT_CREATED",
+    "identity": null,
+    "reason": "source_build_prerequisites_incomplete_and_unchanged"
+  },
+  "upstream": {
+    "status": "NO_NEW_ACTIONABLE_INPUT",
+    "nord_ts_public_head": "76ffae09239751b6cc4de51447e2d1591830f1d2",
+    "nord_ts_public_tree": "9fc2536469378455e6e2432bc402782e7cfcd082",
+    "npm_latest": "0.7.4",
+    "npm_0.6.3_integrity": "sha512-Kp0rJHz7Vx8HP6JaHP4YsC1KeV1bDjISIWcGl2XuuaZiXSEuY3n+0sYqztHKf/dkklBIqZRmQgXlpx2LDOMAPw==",
+    "npm_0.6.3_gitHead": null,
+    "npm_0.7.4_gitHead": null,
+    "public_tags": 0,
+    "engine_on_public_subtree": false,
+    "n1nix_openapi_output": false
+  },
+  "tests": {
+    "parser_harness": {
+      "status": "NOT_RUN",
+      "originals": "INPUT_MISSING",
+      "historical": "承接既有結論，本輪未重驗"
+    },
+    "compatibility": "NOT_RUN",
+    "fresh_root_audit": "NOT_RUN",
+    "candidate_audit": "NOT_RUN",
+    "exchange_access": false
+  },
+  "ci": {
+    "latest_run_on_pr12_branch": 34004346097,
+    "job": 101408725478,
+    "attempt": 1,
+    "conclusion": "failure",
+    "new_run_this_round": false,
+    "aggregator_failures": ["required_19", "required_20"],
+    "required_19": "Dependency audit policy / test:audit-live",
+    "required_20": "Replay captured live audit offline",
+    "canary_clean_install_regression_step_outcome_inherited": "success",
+    "verify_extended_canary_ok_in_log": true,
+    "artifact_security_inventory": "classic-v0.2-security-inventory-fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf"
+  },
+  "root_audit_capture_20260906": {
+    "high": 16,
+    "critical": 0,
+    "total": 24,
+    "existingHighAreNotCleared": true,
+    "newHigh": ["GHSA-82x6-q7mm-w9cf", "GHSA-v5mp-jgw5-2x6j"],
+    "is_fresh_audit_20260908": false
+  },
+  "extended_canary_capture_20260906": {
+    "high": 0,
+    "critical": 0,
+    "total": 0,
+    "ok": true,
+    "forbiddenLoaded": [],
+    "liveExchangeWrite": false,
+    "supports_root_clearance": false
+  },
+  "blockers": [
+    "SOURCE_BUILD_PREREQUISITE for Route A candidate",
+    "INPUT_MISSING original parser harness/qualification reports",
+    "OWNER_DECISION_REQUIRED for whether Classic verification may be canary-scoped (Route B not adopted here)"
+  ],
+  "next_allowed_action": "Owner/independent reviewer decides Route A wait vs separately authorized canary-scoped review at a named identity; do not merge, do not start a trading phase, do not relax audit policy.",
+  "route_b_adopted": false,
+  "adoption": "NOT_PERFORMED",
+  "evidence": {
+    "handoff": "docs/evidence/dependency-prereq-20260908/classic-handoff.md",
+    "status": "docs/evidence/dependency-prereq-20260908/status.json",
+    "ci_run": "https://github.com/danny0971haha/classic-grid/actions/runs/34004346097"
+  }
+}
