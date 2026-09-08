@@ -1,0 +1,16 @@
+{
+  "repository": "classic-grid",
+  "candidate": null,
+  "offlineValidationCompleted": false,
+  "liveExchangeWrites": false,
+  "testnetWrites": false,
+  "authorizationGranted": false,
+  "networkIsolation": null,
+  "checks": [],
+  "blockers": [
+    "OSError"
+  ],
+  "notExecuted": [
+    "verify:extended-canary (registry install/audit)"
+  ]
+}

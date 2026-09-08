@@ -1,0 +1,13 @@
+{
+  "name": "01-root-npm-ci",
+  "command": [
+    "npm",
+    "ci",
+    "--no-fund",
+    "--ignore-scripts"
+  ],
+  "exitCode": 0,
+  "started_at_utc": "2026-09-08T06:19:12Z",
+  "ended_at_utc": "2026-09-08T06:19:21Z",
+  "log": "logs/01-root-npm-ci.log"
+}

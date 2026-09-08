@@ -1,0 +1,17 @@
+{
+  "name": "02-test-security-canary-subset",
+  "command": [
+    "node",
+    "--import",
+    "tsx",
+    "--test",
+    "test/security/extended-canary-boundary.test.ts",
+    "test/security/source-policy.test.ts",
+    "test/security/canary-manifest-strict.test.ts",
+    "test/security/canary-artifact-content.test.ts"
+  ],
+  "exitCode": 0,
+  "started_at_utc": "2026-09-08T06:19:21Z",
+  "ended_at_utc": "2026-09-08T06:19:50Z",
+  "log": "logs/02-test-security-canary-subset.log"
+}

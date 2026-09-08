@@ -1,0 +1,12 @@
+target_root=/private/tmp/classic-grid-pr12-canary-20260908
+-n target_head=
+fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf
+-n target_tree=
+7f14f66eac518c4427076f18fbcfdc7d935c79d8
+target_status_porcelain=0
+node=v26.5.0
+npm=11.17.0
+python=Python 3.13.14
+uname=Darwin appledeMacBook-Pro.local 25.3.0 Darwin Kernel Version 25.3.0: Wed Jan 28 20:54:46 PST 2026; root:xnu-12377.91.3~2/RELEASE_ARM64_T6000 arm64
+ci_node_pin=v22.23.2
+host_node_is_not_ci_pin=YES
