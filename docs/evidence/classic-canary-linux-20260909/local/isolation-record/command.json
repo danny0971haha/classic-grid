@@ -1,0 +1,14 @@
+{
+  "command": [
+    "python3",
+    "tools/review/classic-canary-20260908/check-isolation.py",
+    "--target-root",
+    "/private/tmp/classic-grid-pr12-canary-20260908",
+    "--report",
+    "/private/tmp/classic-grid-canary-driver-20260909/docs/evidence/classic-canary-linux-20260909/local/isolation.json"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:25:26.933633+00:00",
+  "exitCode": 78,
+  "ended_at_utc": "2026-09-08T17:25:27.009850+00:00"
+}

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "sh",
+    "-c",
+    "set -eu\nLOG_DIR=/var/folders/gq/2vz_02hn7qnds3tlfl2j8bym0000gn/T/tmpa3h5wp5b\nlog_cmd() {\n  name=\"$1\"\n  shift\n  start=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n  log=\"$LOG_DIR/${name}.log\"\n  meta=\"$LOG_DIR/${name}.meta.json\"\n  set +e\n  \"$@\" >\"$log\" 2>&1\n  code=$?\n  set -e\n  end=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"\n  python3 -c 'import json,sys; json.dump({\"name\":sys.argv[1],\"command\":sys.argv[6:],\"exitCode\":int(sys.argv[2]),\"started_at_utc\":sys.argv[3],\"ended_at_utc\":sys.argv[4],\"log\":\"logs/\"+sys.argv[1]+\".log\"}, open(sys.argv[5],\"w\"), indent=2); open(sys.argv[5],\"a\").write(\"\\n\")' \\\n    \"$name\" \"$code\" \"$start\" \"$end\" \"$meta\" \"$@\"\n  echo \"$name exit $code\"\n  return \"$code\"\n}\n\nset +e\nlog_cmd failure sh -c 'echo original-out; echo original-err >&2; exit 7'\necho DIAGNOSTIC_AFTER_FAILURE\n"
+  ],
+  "started": "2026-09-08T17:17:20.571946+00:00",
+  "ended": "2026-09-08T17:17:20.618635+00:00",
+  "exitCode": 7,
+  "stdout": "failure exit 7\n",
+  "stderr": "",
+  "later_diagnostic_collected": false,
+  "logs": {
+    "failure.log": "original-out\noriginal-err\n",
+    "failure.meta.json": "{\n  \"name\": \"failure\",\n  \"command\": [\n    \"sh\",\n    \"-c\",\n    \"echo original-out; echo original-err >&2; exit 7\"\n  ],\n  \"exitCode\": 7,\n  \"started_at_utc\": \"2026-09-08T17:17:20Z\",\n  \"ended_at_utc\": \"2026-09-08T17:17:20Z\",\n  \"log\": \"logs/failure.log\"\n}\n"
+  }
+}

@@ -1,0 +1,182 @@
+[
+  {
+    "path": "implementation-handoff.md",
+    "bytes": 6202,
+    "sha256": "57cdad80f7f9f52d4223ce473d32f94f7caa880f0ca363e1ff13404ca723cb91"
+  },
+  {
+    "path": "local/final-workflow-inventory/command.json",
+    "bytes": 376,
+    "sha256": "333118cedd6c9c254f933365b8c982b84c201e84484fea029889c53608ad8ff5"
+  },
+  {
+    "path": "local/final-workflow-inventory/inventory.json",
+    "bytes": 5487,
+    "sha256": "162bd2713d1ffd1bf190fa02a31ee7bc770410970ee109f6413a9ad35e6f1eaf"
+  },
+  {
+    "path": "local/final-workflow-inventory/stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/final-workflow-inventory/stdout",
+    "bytes": 1354,
+    "sha256": "3c804f8c551165b09ed11030fd54660e663480cf44efef315e167de125a7bf4c"
+  },
+  {
+    "path": "local/host-prerequisites.json",
+    "bytes": 383,
+    "sha256": "8b2c81cf5b280bcdd139623ff3fef42723447f0e12bd1ec6d3f86e61348a8c29"
+  },
+  {
+    "path": "local/identity-reconciliation.json",
+    "bytes": 14912,
+    "sha256": "9d1f7239edc9114a1f9ea5cf5e55b51eca6928fb8e6e17dce81998fb87828fc3"
+  },
+  {
+    "path": "local/initial-workflow-inventory.json",
+    "bytes": 5487,
+    "sha256": "162bd2713d1ffd1bf190fa02a31ee7bc770410970ee109f6413a9ad35e6f1eaf"
+  },
+  {
+    "path": "local/inventory-precommit/command.json",
+    "bytes": 376,
+    "sha256": "2214780f7bfd0f2378bf8d57d7cfb1d57739c7011da62053c6a037eed8421ed4"
+  },
+  {
+    "path": "local/inventory-precommit/stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/inventory-precommit/stdout",
+    "bytes": 1354,
+    "sha256": "3c804f8c551165b09ed11030fd54660e663480cf44efef315e167de125a7bf4c"
+  },
+  {
+    "path": "local/isolation-record/command.json",
+    "bytes": 501,
+    "sha256": "d37ca6f43b093e88fd0a2a63fc8af70eb13cb23cdc7dd335d4d3827295d86521"
+  },
+  {
+    "path": "local/isolation-record/stderr",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/isolation-record/stdout",
+    "bytes": 127,
+    "sha256": "33dceffd8db1df690deb9e2f62d1835b25ee312bd30cc8f906724c84319c4047"
+  },
+  {
+    "path": "local/isolation.json",
+    "bytes": 139,
+    "sha256": "4a7e715d730d524ac1b9b5e755018a5a2eac515b69ce30248df59ddfedc024e1"
+  },
+  {
+    "path": "local/legacy-errexit-reproduction.json",
+    "bytes": 1492,
+    "sha256": "3b347e27dfce00afb1acf3ba17780992dffcdc7c4398ca5a6acb0ffbff7c5374"
+  },
+  {
+    "path": "local/legacy-scan-reproduction.json",
+    "bytes": 740,
+    "sha256": "73a7a92b917d209ee5c1cd169cadbcdc2f393093ae9d0453c2d3f5b3207d89b2"
+  },
+  {
+    "path": "local/node-v22.23.2-SHASUMS256.txt",
+    "bytes": 3777,
+    "sha256": "778ac5b2fcdbd68d9c0ae9f4310674faa3af0910bd0d18e7f6597787c40a3e39"
+  },
+  {
+    "path": "local/original-evidence-hashes.json",
+    "bytes": 4828,
+    "sha256": "242d7307d20083763a4b22c3983d7b8cc4868bfca7755874e2b6d81894b9fa01"
+  },
+  {
+    "path": "local/regression-final/command.json",
+    "bytes": 284,
+    "sha256": "8a540a6fbdb7a5e98b0f7a8344e8edf46729ca7064aa3e70c47dbac165ffa57e"
+  },
+  {
+    "path": "local/regression-final/stderr",
+    "bytes": 4058,
+    "sha256": "f8a08bd958c5f76510e00ad6a40c6c923a76a7b9b9d86113b7fc1bce38e49031"
+  },
+  {
+    "path": "local/regression-final/stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/regression-npm-config/command.json",
+    "bytes": 284,
+    "sha256": "fad9fee8e05a0acaf568c6ade36302bb2856dbe0df1c51117ad51ad6d63b37c3"
+  },
+  {
+    "path": "local/regression-npm-config/stderr",
+    "bytes": 4201,
+    "sha256": "1000f610c3cd54a6dbc4f4e759fe80b8e5fff6c4787f71c8e55b0ba51e8571c8"
+  },
+  {
+    "path": "local/regression-npm-config/stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/regression-precommit/command.json",
+    "bytes": 284,
+    "sha256": "8d4ee6d1af74d015f5e2894c70dd98de39e9b4c2230c505a26bf8c0fa3cff1c0"
+  },
+  {
+    "path": "local/regression-precommit/stderr",
+    "bytes": 4525,
+    "sha256": "2bd9e97dd588743c12676cbef733c6287c89b4961ed20112c0d26f16e58f7d9d"
+  },
+  {
+    "path": "local/regression-precommit/stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/regression-record/command.json",
+    "bytes": 284,
+    "sha256": "72ae1c149d8fec590c406d763edc163a935e13372230bf043af1d45f1c8f286b"
+  },
+  {
+    "path": "local/regression-record/stderr",
+    "bytes": 3399,
+    "sha256": "8e92baa0dac3ec3eb3a7228b56b64c2d0e20ae7d240eb71b177f90fa9eab941f"
+  },
+  {
+    "path": "local/regression-record/stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/regression-reviewed/command.json",
+    "bytes": 284,
+    "sha256": "7fd176514038ec9c0cc29ec3fb5a2a46f8a5a612f0f75568a4614f1031d34570"
+  },
+  {
+    "path": "local/regression-reviewed/stderr",
+    "bytes": 4525,
+    "sha256": "bd6845b83c25f47185172857237fbcc4039212f3a4c683f59fe9064daad8849f"
+  },
+  {
+    "path": "local/regression-reviewed/stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "path": "local/regression.stderr",
+    "bytes": 3399,
+    "sha256": "68e7fc87cfd7cb3dd12a6f799db305f2d5c202cb599cf264290c1403eb7f2c76"
+  },
+  {
+    "path": "local/regression.stdout",
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+]

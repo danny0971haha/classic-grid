@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -22,32 +23,35 @@ def load_json(path: Path):
 
 def walk_installed_names(node_modules: Path) -> list[str]:
     names: set[str] = set()
-    if not node_modules.is_dir():
-        return []
+    if not node_modules.is_dir() or node_modules.is_symlink():
+        raise ValueError("CANARY_INSTALLED_GRAPH_REQUIRED")
 
     def walk(directory: Path) -> None:
-        try:
-            entries = list(directory.iterdir())
-        except OSError:
+        if not directory.exists():
             return
+        entries = list(directory.iterdir())
         for entry in entries:
             if entry.name == ".bin":
                 continue
+            if entry.is_symlink():
+                raise ValueError("CANARY_INSTALLED_SYMLINK:" + str(entry))
             if entry.name.startswith("@") and entry.is_dir():
                 walk(entry)
                 continue
-            pkg = directory / entry.name / "package.json" if False else entry / "package.json"
+            pkg = entry / "package.json"
+            if entry.is_dir() and not pkg.is_file():
+                raise ValueError("CANARY_PACKAGE_METADATA_REQUIRED:" + str(entry))
             if entry.is_dir() and pkg.is_file():
-                try:
-                    data = json.loads(pkg.read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    data = {}
+                data = json.loads(pkg.read_text(encoding="utf-8"))
                 name = data.get("name")
-                if isinstance(name, str):
-                    names.add(name)
+                if not isinstance(name, str) or not name:
+                    raise ValueError("CANARY_PACKAGE_NAME_REQUIRED")
+                names.add(name)
                 walk(entry / "node_modules")
 
     walk(node_modules)
+    if not names:
+        raise ValueError("CANARY_INSTALLED_GRAPH_EMPTY")
     return sorted(names)
 
 
@@ -78,7 +82,9 @@ def main() -> int:
 
     lock_raw = lockfile.read_text(encoding="utf-8")
     lock_obj = json.loads(lock_raw)
-    packages = lock_obj.get("packages") or {}
+    packages = lock_obj.get("packages")
+    if not isinstance(packages, dict) or not packages:
+        raise ValueError("CANARY_LOCK_PACKAGES_REQUIRED")
     lock_keys = sorted(packages)
     lock_names = []
     for key, meta in packages.items():
@@ -90,42 +96,30 @@ def main() -> int:
     lock_names = sorted(set(lock_names))
 
     tar_names = [line.strip() for line in tar_list.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not tar_names:
+        raise ValueError("CANARY_TAR_LIST_REQUIRED")
+    if "CANARY_LOAD_LOG" in os.environ and (not load_log.is_file() or not load_log.read_text().strip()):
+        raise ValueError("CANARY_LOAD_LOG_REQUIRED")
     installed = walk_installed_names(install_dir / "node_modules")
 
     loaded_specifiers: list[str] = []
     if load_log.is_file():
-        raw = load_log.read_text(encoding="utf-8").strip()
-        parsed_whole = None
-        try:
-            parsed_whole = json.loads(raw)
-        except json.JSONDecodeError:
-            parsed_whole = None
-        if isinstance(parsed_whole, list):
-            for row in parsed_whole:
-                if isinstance(row, dict):
-                    if isinstance(row.get("specifier"), str):
-                        loaded_specifiers.append(row["specifier"])
-                    if isinstance(row.get("resolvedURL"), str):
-                        loaded_specifiers.append(row["resolvedURL"])
-                elif isinstance(row, str):
-                    loaded_specifiers.append(row)
-        else:
-            for line in raw.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    row = json.loads(line)
-                    if isinstance(row.get("specifier"), str):
-                        loaded_specifiers.append(row["specifier"])
-                    if isinstance(row.get("resolvedURL"), str):
-                        loaded_specifiers.append(row["resolvedURL"])
-                except json.JSONDecodeError:
-                    loaded_specifiers.append(line)
+        rows = json.loads(load_log.read_text(encoding="utf-8"))
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("CANARY_LOAD_GRAPH_REQUIRED")
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("specifier"), str) or not isinstance(row.get("resolvedURL"), str):
+                raise ValueError("CANARY_LOAD_GRAPH_MALFORMED")
+            loaded_specifiers.extend([row["specifier"], row["resolvedURL"]])
+
+    if "CANARY_LOAD_LOG" in os.environ and not loaded_specifiers:
+        raise ValueError("CANARY_LOAD_GRAPH_EMPTY")
 
     def match_names(items: list[str]) -> list[str]:
         found = []
         for item in items:
+            if re.search(r"(?:^|/)node_modules/(toml|@coral-xyz/anchor)(?:/|$)", item):
+                found.append(item)
             if item in EXTRA_NAMES or item == "toml" or item == "@coral-xyz/anchor":
                 found.append(item)
             if item.startswith("@n1xyz/") or item == "@n1xyz/nord-ts" or item == "@n1xyz/proton":
@@ -162,7 +156,7 @@ def main() -> int:
     out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     json.dump({"wrote": str(out), "hits": payload["hits"]}, sys.stdout, indent=2)
     sys.stdout.write("\n")
-    return 0
+    return 1 if any(payload["hits"].values()) else 0
 
 
 if __name__ == "__main__":

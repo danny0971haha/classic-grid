@@ -1,0 +1,7 @@
+{
+  "system": "Darwin",
+  "machine": "arm64",
+  "kernel_isolation": "BLOCKED",
+  "checks": [],
+  "reason": "RuntimeError:LINUX_REQUIRED"
+}

@@ -1,11 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  canaryPackageRootFromInstall,
-  runCanaryOfflineProbe,
-} from "../../../scripts/security/extended-canary-boundary.js";
-import { assertCanaryModuleGraph } from "../../../scripts/security/module-graph.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 
 function arg(name: string): string {
   const index = process.argv.indexOf(name);
@@ -17,6 +13,10 @@ function arg(name: string): string {
 const targetRoot = path.resolve(arg("--target-root"));
 const installDir = path.resolve(arg("--install-dir"));
 const outDir = path.resolve(arg("--out-dir"));
+const { canaryPackageRootFromInstall, runCanaryOfflineProbe } = await import(
+  pathToFileURL(path.join(targetRoot, "scripts/security/extended-canary-boundary.ts")).href);
+const { assertCanaryModuleGraph } = await import(
+  pathToFileURL(path.join(targetRoot, "scripts/security/module-graph.ts")).href);
 fs.mkdirSync(outDir, { recursive: true });
 
 const canaryRoot = canaryPackageRootFromInstall(installDir);
@@ -77,3 +77,14 @@ const payload = {
 };
 fs.writeFileSync(path.join(outDir, "userspace-probe.json"), `${JSON.stringify(payload, null, 2)}\n`);
 process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+
+const errors = [
+  ...probe.forbiddenLoaded, ...probe.unexpectedNetwork, ...moduleGraphHits,
+  ...(moduleGraphError ? [moduleGraphError] : []),
+];
+if (probe.exitCode !== 0 || probe.liveExchangeWrite || probe.productionCredentialUsed ||
+    probe.moduleGraph.length === 0 || errors.length || unavailable.exitCode === 0 ||
+    !`${unavailable.stdout}\n${unavailable.stderr}`.includes("CANARY_VENUE_UNAVAILABLE:nado")) {
+  console.error(JSON.stringify({ code: "CANARY_PROBE_FAILED", errors }));
+  process.exitCode = 1;
+}

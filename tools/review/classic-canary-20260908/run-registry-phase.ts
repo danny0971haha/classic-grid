@@ -1,18 +1,8 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
-import {
-  CANARY_ENTRYPOINT_RELATIVE,
-  CANARY_LOCKFILE_RELATIVE,
-  collectInstalledPackageNames,
-  copyCanaryLockfileInstall,
-  forbiddenPackagesPresentInLockfile,
-  installCanaryTarball,
-  packExtendedCanary,
-  runNpmAuditOmitDev,
-  sha256File,
-} from "../../../scripts/security/extended-canary-boundary.js";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
 
 function arg(name: string): string {
   const index = process.argv.indexOf(name);
@@ -23,6 +13,19 @@ function arg(name: string): string {
 
 const targetRoot = path.resolve(arg("--target-root"));
 const outDir = path.resolve(arg("--out-dir"));
+const {
+  CANARY_ENTRYPOINT_RELATIVE,
+  CANARY_LOCKFILE_RELATIVE,
+  collectInstalledPackageNames,
+  copyCanaryLockfileInstall,
+  forbiddenPackagesPresentInLockfile,
+  installCanaryTarball,
+  packExtendedCanary,
+  runNpmAuditOmitDev,
+  sha256File,
+  scanCanaryTree,
+  findSecretLikeFiles,
+} = await import(pathToFileURL(path.join(targetRoot, "scripts/security/extended-canary-boundary.ts")).href);
 fs.mkdirSync(outDir, { recursive: true });
 
 const started = new Date().toISOString();
@@ -39,7 +42,7 @@ if (fs.existsSync(stagingManifest)) {
 
 const lockRaw = fs.readFileSync(path.join(targetRoot, CANARY_LOCKFILE_RELATIVE), "utf8");
 const lockInstallStarted = new Date().toISOString();
-const lockInstallDir = copyCanaryLockfileInstall(targetRoot);
+const lockInstallDir = copyCanaryLockfileInstall(targetRoot, path.join(outDir, "lock-install"));
 const lockInstallEnded = new Date().toISOString();
 const auditStarted = new Date().toISOString();
 const audit = runNpmAuditOmitDev(lockInstallDir);
@@ -60,7 +63,7 @@ fs.writeFileSync(
 );
 
 const tarballInstallStarted = new Date().toISOString();
-const installDir = installCanaryTarball(packed.tarballPath);
+const installDir = installCanaryTarball(packed.tarballPath, path.join(outDir, "tarball-install"));
 const tarballInstallEnded = new Date().toISOString();
 const installedNames = collectInstalledPackageNames(installDir);
 fs.writeFileSync(path.join(outDir, "installed-package-names.json"), `${JSON.stringify(installedNames, null, 2)}\n`);
@@ -109,3 +112,17 @@ const payload = {
 };
 fs.writeFileSync(path.join(outDir, "registry-phase.json"), `${JSON.stringify(payload, null, 2)}\n`);
 process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+
+// The existing canary policy permits no high or critical findings; root policy is separate.
+const { FORBIDDEN_CANARY_PACKAGES, FORBIDDEN_NESTED_WS_PATH } = await import(
+  pathToFileURL(path.join(targetRoot, "scripts/security/forbidden-specifiers.ts")).href);
+const hits = [
+  ...forbiddenPackagesPresentInLockfile(lockRaw), ...scanCanaryTree(targetRoot),
+  ...findSecretLikeFiles(packed.stagedFiles),
+  ...installedNames.filter((name: string) => FORBIDDEN_CANARY_PACKAGES.includes(name)),
+];
+if (fs.existsSync(path.join(installDir, FORBIDDEN_NESTED_WS_PATH))) hits.push("FORBIDDEN_NESTED_WS");
+if (![0, 1].includes(audit.exitCode) || audit.counts.high !== 0 || audit.counts.critical !== 0 || hits.length) {
+  console.error(JSON.stringify({ code: "CANARY_REGISTRY_POLICY_FAILED", hits, audit }));
+  process.exitCode = 1;
+}

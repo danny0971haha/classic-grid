@@ -1,73 +1,89 @@
 #!/usr/bin/env python3
-"""Report whether Classic's documented Linux seccomp AF_UNIX-only filter can be installed.
+"""Apply the TARGET's unchanged filter, exercise it, then run an offline child.
 
-Does not weaken or substitute the filter. Exit 0 always; status is in JSON.
+Exit 78 means an environment blocker. No command runs without real kernel/IPC checks.
 """
-from __future__ import annotations
-
-import ctypes
+import argparse
+import errno
+import importlib.util
 import json
 import os
+from pathlib import Path
 import platform
-import shutil
 import socket
+import subprocess
 import sys
-
-result = {
-    "schema": "classic-canary-isolation-check/20260908",
-    "platform": platform.platform(),
-    "system": platform.system(),
-    "release": platform.release(),
-    "machine": platform.machine(),
-    "python": sys.version,
-    "libseccomp": {"status": "NOT_RUN", "detail": None},
-    "unix_socket": {"status": "NOT_RUN", "detail": None},
-    "docker": {"status": "NOT_RUN", "path": None},
-    "kernel_isolation": "NOT_RUN",
-    "reason": None,
-}
+import tempfile
 
 
-def main() -> int:
-    docker = shutil.which("docker")
-    result["docker"]["path"] = docker
-    result["docker"]["status"] = "OBSERVED_AVAILABLE" if docker else "OBSERVED_UNAVAILABLE"
-
+def apply_and_check(target):
+    result = {"system": platform.system(), "machine": platform.machine(),
+              "kernel_isolation": "NOT_RUN", "checks": []}
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.close()
-        result["unix_socket"]["status"] = "OBSERVED"
-        result["unix_socket"]["detail"] = "AF_UNIX socket() succeeded"
-    except OSError as exc:
-        result["unix_socket"]["status"] = "BLOCKED"
-        result["unix_socket"]["detail"] = str(exc)
+        if platform.system() != "Linux":
+            raise RuntimeError("LINUX_REQUIRED")
+        spec = importlib.util.spec_from_file_location(
+            "target_isolation", target / "scripts/verify-current-candidate.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.deny_network()
+        # Full local IPC, not just socket construction.
+        with tempfile.TemporaryDirectory(prefix="canary-ipc-") as tmp:
+            with socket.socket(socket.AF_UNIX) as server, socket.socket(socket.AF_UNIX) as client:
+                server.settimeout(5)
+                client.settimeout(5)
+                address = str(Path(tmp) / "s")
+                server.bind(address)
+                server.listen(1)
+                client.connect(address)
+                peer, _ = server.accept()
+                with peer:
+                    client.sendall(b"ipc")
+                    if peer.recv(3) != b"ipc":
+                        raise RuntimeError("AF_UNIX_IPC_FAILED")
+        a, b = socket.socketpair(socket.AF_UNIX)
+        a.close()
+        b.close()
+        result["checks"].append("AF_UNIX_BIND_LISTEN_CONNECT_DATA_SOCKETPAIR")
+        for family in (socket.AF_INET, socket.AF_INET6, socket.AF_PACKET):
+            for operation in (socket.socket, socket.socketpair):
+                try:
+                    opened = operation(family, socket.SOCK_STREAM)
+                except OSError as error:
+                    if error.errno != errno.EPERM:
+                        raise
+                else:
+                    for item in opened if isinstance(opened, tuple) else (opened,):
+                        item.close()
+                    raise RuntimeError("INTERNET_SOCKET_NOT_DENIED")
+                result["checks"].append(f"{operation.__name__}:{family.name}:EPERM")
+        # Explicit exec inheritance, not only the parent process.
+        child = subprocess.run([sys.executable, "-c", "import socket,errno\ntry: socket.socket(socket.AF_INET)\nexcept OSError as e: assert e.errno == errno.EPERM\nelse: raise AssertionError('inherited filter missing')"], check=True)
+        result["checks"].append("EXEC_CHILD_AF_INET_EPERM")
+        result["kernel_isolation"] = "LINUX_SECCOMP_AF_UNIX_ONLY"
+    except Exception as error:
+        result.update(kernel_isolation="BLOCKED", reason=f"{type(error).__name__}:{error}")
+    return result
 
-    try:
-        lib = ctypes.CDLL("libseccomp.so.2", use_errno=True)
-        result["libseccomp"]["status"] = "OBSERVED"
-        result["libseccomp"]["detail"] = f"loaded {lib}"
-    except OSError as exc:
-        result["libseccomp"]["status"] = "BLOCKED"
-        result["libseccomp"]["detail"] = str(exc)
 
-    if result["libseccomp"]["status"] != "OBSERVED":
-        result["kernel_isolation"] = "BLOCKED"
-        result["reason"] = (
-            "libseccomp.so.2 is required by scripts/verify-current-candidate.py "
-            "deny_network(); this host cannot install LINUX_SECCOMP_AF_UNIX_ONLY. "
-            "No substitute filter was applied."
-        )
-    elif result["unix_socket"]["status"] != "OBSERVED":
-        result["kernel_isolation"] = "BLOCKED"
-        result["reason"] = "Unix socket is required for local IPC and is unavailable."
-    else:
-        result["kernel_isolation"] = "OBSERVED_AVAILABLE"
-        result["reason"] = "Filter library present; caller may apply deny_network()."
-
-    json.dump(result, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    return 0
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target-root", required=True, type=Path)
+    parser.add_argument("--report", required=True, type=Path)
+    parser.add_argument("command", nargs=argparse.REMAINDER)
+    args = parser.parse_args()
+    result = apply_and_check(args.target_root)
+    args.report.write_text(json.dumps(result, indent=2) + "\n")
+    print(json.dumps(result), flush=True)
+    if result["kernel_isolation"] != "LINUX_SECCOMP_AF_UNIX_ONLY":
+        return 78
+    command = args.command[1:] if args.command[:1] == ["--"] else args.command
+    if not command:
+        return 0
+    env = dict(os.environ, npm_config_offline="true", npm_config_audit="false",
+               npm_config_fetch_retries="0", GIT_NO_LAZY_FETCH="1")
+    return subprocess.run(command, env=env).returncode
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

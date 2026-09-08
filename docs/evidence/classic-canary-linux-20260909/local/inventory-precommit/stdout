@@ -1,0 +1,60 @@
+{
+  "ok": true,
+  "overallPolicyOk": true,
+  "codes": [
+    "PASS"
+  ],
+  "trackedManifests": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/classic-canary-scoped.yml"
+  ],
+  "scannedFiles": [
+    ".github/workflows/ci.yml",
+    ".github/workflows/classic-canary-scoped.yml"
+  ],
+  "actionUsesTotal": 7,
+  "dockerActionCount": 0,
+  "graphCycles": 0,
+  "checks": [
+    {
+      "ok": true,
+      "message": "independent git ls-files manifests equal inventory.trackedManifests"
+    },
+    {
+      "ok": true,
+      "message": "every tracked workflow/action manifest is in inventory.scannedFiles"
+    },
+    {
+      "ok": true,
+      "message": "inventory has no extra untracked scan roots"
+    },
+    {
+      "ok": true,
+      "message": "no missed tracked manifests"
+    },
+    {
+      "ok": true,
+      "message": "every passing external Action matches an exact allowlist tuple"
+    },
+    {
+      "ok": true,
+      "message": "allowlist tuples are exact identity+SHA"
+    },
+    {
+      "ok": true,
+      "message": "local Action/reusable workflow graph is complete and reports cycles"
+    },
+    {
+      "ok": true,
+      "message": "no Docker Actions"
+    },
+    {
+      "ok": true,
+      "message": "passing inventory has an acyclic local graph"
+    },
+    {
+      "ok": true,
+      "message": "passing inventory codes are PASS"
+    }
+  ]
+}
