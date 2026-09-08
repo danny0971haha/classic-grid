@@ -1,0 +1,7 @@
+{
+  "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+  "docker": null,
+  "podman": null,
+  "libseccomp": "dlopen(libseccomp.so.2, 0x0006): tried: 'libseccomp.so.2' (no such file), '/System/Volumes/Preboot/Cryptexes/OSlibseccomp.so.2' (no such file), '/usr/lib/libseccomp.so.2' (no such file, not in dyld cache), 'libseccomp.so.2' (no such file)",
+  "AF_UNIX_socket": "AVAILABLE"
+}

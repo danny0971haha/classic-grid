@@ -1,0 +1,5 @@
+{
+  "name": "00-verify-current-candidate",
+  "exitCode": 1,
+  "log": "logs/00-verify-current-candidate.log"
+}

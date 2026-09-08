@@ -1,0 +1,74 @@
+test_credentials_not_inherited (__main__.DriverTests.test_credentials_not_inherited) ... ok
+test_dirty_target_is_rejected (__main__.DriverTests.test_dirty_target_is_rejected) ... ok
+test_failed_registry_never_uses_partial_inputs_but_tests_continue (__main__.DriverTests.test_failed_registry_never_uses_partial_inputs_but_tests_continue) ... identity: SUCCESS exit=0
+pins: SUCCESS exit=0
+isolation: BLOCKED exit=78
+publication: SUCCESS exit=0
+dependency-preparation: SUCCESS exit=0
+tool-resolution: SUCCESS exit=0
+registry: FAILED exit=9
+registry-inputs: NOT_RUN exit=None
+scan-pre: NOT_RUN exit=None
+security-tests: NOT_RUN exit=None
+probe: NOT_RUN exit=None
+scan-post: NOT_RUN exit=None
+identity-after: SUCCESS exit=0
+ok
+test_isolation_unavailable_blocks_execution (__main__.DriverTests.test_isolation_unavailable_blocks_execution) ... isolation: BLOCKED exit=78
+ok
+test_missing_executable_is_not_success (__main__.DriverTests.test_missing_executable_is_not_success) ... missing: FAILED exit=127
+later: SUCCESS exit=0
+ok
+test_nonzero_retains_both_streams_and_diagnostics (__main__.DriverTests.test_nonzero_retains_both_streams_and_diagnostics) ... failure: FAILED exit=7
+dependent: NOT_RUN exit=None
+diagnostic: SUCCESS exit=0
+identity: NOT_RUN exit=None
+pins: NOT_RUN exit=None
+isolation: NOT_RUN exit=None
+publication: NOT_RUN exit=None
+dependency-preparation: NOT_RUN exit=None
+tool-resolution: NOT_RUN exit=None
+registry: NOT_RUN exit=None
+registry-inputs: NOT_RUN exit=None
+scan-pre: NOT_RUN exit=None
+security-tests: NOT_RUN exit=None
+probe: NOT_RUN exit=None
+scan-post: NOT_RUN exit=None
+identity-after: NOT_RUN exit=None
+ok
+test_old_output_is_untouched (__main__.DriverTests.test_old_output_is_untouched) ... ok
+test_pin_comparison_is_actual (__main__.DriverTests.test_pin_comparison_is_actual) ... version-node: SUCCESS exit=0
+version-npm: SUCCESS exit=0
+version-node: SUCCESS exit=0
+version-npm: SUCCESS exit=0
+version-node: SUCCESS exit=0
+version-npm: SUCCESS exit=0
+ok
+test_registry_missing_input_fails_even_if_helper_exit_zero (__main__.DriverTests.test_registry_missing_input_fails_even_if_helper_exit_zero) ... ok
+test_registry_rejects_external_stale_install (__main__.DriverTests.test_registry_rejects_external_stale_install) ... ok
+test_scan_failure_blocks_probe_but_not_independent_tests (__main__.DriverTests.test_scan_failure_blocks_probe_but_not_independent_tests) ... identity: SUCCESS exit=0
+pins: SUCCESS exit=0
+isolation: SUCCESS exit=0
+publication: SUCCESS exit=0
+dependency-preparation: SUCCESS exit=0
+tool-resolution: SUCCESS exit=0
+registry: SUCCESS exit=0
+registry-inputs: SUCCESS exit=0
+scan-pre: FAILED exit=6
+security-tests: SUCCESS exit=0
+probe: NOT_RUN exit=None
+scan-post: NOT_RUN exit=None
+identity-after: SUCCESS exit=0
+ok
+test_target_sha_mismatch (__main__.DriverTests.test_target_sha_mismatch) ... ok
+test_clean_graph (__main__.ScanTests.test_clean_graph) ... ok
+test_empty_load_graph (__main__.ScanTests.test_empty_load_graph) ... ok
+test_forbidden_hit_is_nonzero (__main__.ScanTests.test_forbidden_hit_is_nonzero) ... ok
+test_malformed_package (__main__.ScanTests.test_malformed_package) ... ok
+test_missing_install (__main__.ScanTests.test_missing_install) ... ok
+test_missing_requested_load_log (__main__.ScanTests.test_missing_requested_load_log) ... ok
+
+----------------------------------------------------------------------
+Ran 18 tests in 1.737s
+
+OK

@@ -1,0 +1,17 @@
+
+--- stderr ---
+/private/tmp/classic-grid-canary-review-20260908/docs/evidence/classic-canary-review-20260908/offline/tarball-install-rerun/src/venues/factory.ts:11
+  return new Error(`${CANARY_VENUE_UNAVAILABLE}:${id}`);
+         ^
+
+Error: CANARY_VENUE_UNAVAILABLE:nado
+    at canaryVenueUnavailableError (/private/tmp/classic-grid-canary-review-20260908/docs/evidence/classic-canary-review-20260908/offline/tarball-install-rerun/src/venues/factory.ts:11:10)
+    at assertCanaryVenueSelection (/private/tmp/classic-grid-canary-review-20260908/docs/evidence/classic-canary-review-20260908/offline/tarball-install-rerun/src/venues/extendedFactory.ts:56:47)
+    at applyCanaryProfileDefaults (/private/tmp/classic-grid-canary-review-20260908/docs/evidence/classic-canary-review-20260908/offline/tarball-install-rerun/src/venues/extendedFactory.ts:68:3)
+    at <anonymous> (/private/tmp/classic-grid-canary-review-20260908/docs/evidence/classic-canary-review-20260908/offline/tarball-install-rerun/src/cli/run-extended-canary.ts:9:1)
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:650:26
+    at async <anonymous> (/private/tmp/classic-grid-pr12-canary-20260908/scripts/security/canary-offline-probe.ts:90:1)
+
+Node.js v26.5.0
+

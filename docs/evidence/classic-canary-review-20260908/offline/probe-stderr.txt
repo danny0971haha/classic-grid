@@ -1,0 +1,3 @@
+(node:72503) [DEP0205] DeprecationWarning: `module.register()` is deprecated. Use `module.registerHooks()` instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[experiment] HALTED HALT_FAILED reasons=RISK_STATE_ACK_DURABLE_PAIR_UNPROVEN,RISK_STATE_PRIMARY_MISSING,RISK_STATE_BACKUP_MISSING; set EXPERIMENT_HALT_ACK=6943500e-b517-4b7c-a129-9d6af8c6fdbf once to resume

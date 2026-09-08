@@ -1,0 +1,11 @@
+{
+  "command": [
+    "python3",
+    "tools/review/classic-canary-20260908/scan-extra-boundaries.py",
+    "/var/folders/gq/2vz_02hn7qnds3tlfl2j8bym0000gn/T/tmpa3h5wp5b/scan"
+  ],
+  "exitCode": 0,
+  "stdout": "{\n  \"wrote\": \"/var/folders/gq/2vz_02hn7qnds3tlfl2j8bym0000gn/T/tmpa3h5wp5b/scan/extra-boundary-scan.json\",\n  \"hits\": {\n    \"lockfile_text\": [\n      \"toml\"\n    ],\n    \"lockfile_names\": [\n      \"toml\"\n    ],\n    \"installed_names\": [],\n    \"tarball_entries\": [\n      \"package/src/officialStats.ts\",\n      \"src/officialStats.ts\"\n    ],\n    \"loaded_specifiers\": [],\n    \"loaded_text\": []\n  }\n}\n",
+  "stderr": "",
+  "input": "forbidden toml/source with missing install; scanner returns zero"
+}

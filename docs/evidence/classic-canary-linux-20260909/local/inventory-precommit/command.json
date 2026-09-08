@@ -1,0 +1,12 @@
+{
+  "command": [
+    "node",
+    "--import",
+    "/private/tmp/classic-grid-pr12-canary-20260908/node_modules/tsx/dist/loader.mjs",
+    "scripts/security/verify-action-inventory.ts"
+  ],
+  "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+  "started_at_utc": "2026-09-08T17:32:03.704968+00:00",
+  "exitCode": 0,
+  "ended_at_utc": "2026-09-08T17:32:03.938825+00:00"
+}

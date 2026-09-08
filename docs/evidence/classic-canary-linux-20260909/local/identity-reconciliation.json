@@ -1,0 +1,134 @@
+[
+  {
+    "command": [
+      "git",
+      "ls-remote",
+      "origin"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:16.096122+00:00",
+    "ended_at_utc": "2026-09-08T17:27:16.698389+00:00",
+    "exitCode": 0,
+    "stdout": "69494206fffdc84aeb4d845d6bf3d05c1d4b677e\tHEAD\n14859d20084d109ee71f46a265f112fd52295649\trefs/heads/chore/current-candidate-verification-20260905-dc6fcc\na80bcca7f1a0b997456308f5a42962129375b208\trefs/heads/docs/classic-agent-autonomy-20260905\ne420b317dc7f7166f70d24701763c0ab15364c68\trefs/heads/docs/classic-dependency-prereq-20260908\na168c487e210306aab17cf428dec67d8168b68fe\trefs/heads/experiment/classic-v0.1\n990a790706e17b52e04d0d1957505cdad5d45862\trefs/heads/experiment/classic-v0.2-100u-safety\n39bf3a797b58f7fd91babf9f2d608cfd28e04487\trefs/heads/experiment/classic-v0.2-r2-extended-sepolia\n53892592a1dad5d0a091448a6b2eb2a4c8aba113\trefs/heads/fix/classic-audit-diagnostics-20260905\ne723f4c1596ab1e2348b67f2a8218578e06ef841\trefs/heads/fix/classic-audit-identity-v2-20260905\nfd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\trefs/heads/fix/classic-audit-output-path-20260906\n69494206fffdc84aeb4d845d6bf3d05c1d4b677e\trefs/heads/main\n0bc82eef94b15ad7a5e48371e62d4a1ecaa9f656\trefs/heads/review/classic-v0.2-corrective6-cloud-gate\n04a72a44b74651f9720c627a7f438365ecdb4ac6\trefs/heads/review/classic-v0.2-final-canary-r1-gate\ne08991ce318d0bd2c22714034499794fb374200c\trefs/heads/review/classic-v0.2-release-boundary-cloud-gate\n3ca01ae046f27aa4ca74e9e8370928a48d0c7810\trefs/heads/tooling/classic-canary-review-20260908\na168c487e210306aab17cf428dec67d8168b68fe\trefs/pull/1/head\n1c06779a4e939da46fb47c4f7cb54ea4c652613b\trefs/pull/1/merge\n53892592a1dad5d0a091448a6b2eb2a4c8aba113\trefs/pull/10/head\ndfb2413013ac394932d6aeac772a0b3d5b6e61b1\trefs/pull/10/merge\ne723f4c1596ab1e2348b67f2a8218578e06ef841\trefs/pull/11/head\n165fac44b040a8077d1b133f3731a38c36da73d8\trefs/pull/11/merge\nfd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\trefs/pull/12/head\nd5508293655a62077821aabe82f5a2e16eb082bc\trefs/pull/12/merge\ne420b317dc7f7166f70d24701763c0ab15364c68\trefs/pull/13/head\n2d499416209ccc3412851f62fa2fe24f5ee317e6\trefs/pull/13/merge\n990a790706e17b52e04d0d1957505cdad5d45862\trefs/pull/3/head\n72e4bfea7c3011d14ec5da754d14d99e6a47cc7a\trefs/pull/3/merge\n0bc82eef94b15ad7a5e48371e62d4a1ecaa9f656\trefs/pull/5/head\ne08991ce318d0bd2c22714034499794fb374200c\trefs/pull/6/head\n04a72a44b74651f9720c627a7f438365ecdb4ac6\trefs/pull/7/head\n39bf3a797b58f7fd91babf9f2d608cfd28e04487\trefs/pull/8/head\n03132db6ac2d71171ff48b7994bd060eb075dff1\trefs/pull/8/merge\na80bcca7f1a0b997456308f5a42962129375b208\trefs/pull/9/head\n3d2a11d8f5da1f3ba3dfb3490c3a88d98a06f5c9\trefs/pull/9/merge\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "worktree",
+      "list"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:16.698435+00:00",
+    "ended_at_utc": "2026-09-08T17:27:16.719446+00:00",
+    "exitCode": 0,
+    "stdout": "/Users/apple/classic-grid                            d312907 [experiment/classic-v0.2-r2-extended-sepolia]\n/private/tmp/classic-grid-canary-driver-20260909     3ca01ae [fix/classic-canary-driver-20260909]\n/private/tmp/classic-grid-canary-review-20260908     3ca01ae [tooling/classic-canary-review-20260908]\n/private/tmp/classic-grid-docs-20260908              e420b31 [docs/classic-dependency-prereq-20260908]\n/private/tmp/classic-grid-f-review                   8f602af (detached HEAD) prunable\n/private/tmp/classic-grid-gate0.NdJI40/gate0-repair  a168c48 [gate0-lockfile-repair] prunable\n/private/tmp/classic-grid-gate0.NdJI40/gate0-verify  a168c48 (detached HEAD) prunable\n/private/tmp/classic-grid-pr12-canary-20260908       fd9c1e0 (detached HEAD)\n/private/tmp/classic-grid-r2a-snapshot-20260908      d312907 [review/classic-r2a-local-snapshot-20260908]\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "-C",
+      "/Users/apple/classic-grid",
+      "status",
+      "--short",
+      "--branch"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:16.719483+00:00",
+    "ended_at_utc": "2026-09-08T17:27:16.740758+00:00",
+    "exitCode": 0,
+    "stdout": "## experiment/classic-v0.2-r2-extended-sepolia...origin/experiment/classic-v0.2-r2-extended-sepolia [ahead 3]\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "-C",
+      "/Users/apple/classic-grid",
+      "rev-parse",
+      "HEAD",
+      "HEAD^{tree}"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:16.740801+00:00",
+    "ended_at_utc": "2026-09-08T17:27:16.759856+00:00",
+    "exitCode": 0,
+    "stdout": "d3129075d5866d27c79c6d2cba3b4b1128923889\nce5de3b01e3506d5e3a7672958696a7acadfce1c\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "gh",
+      "pr",
+      "list",
+      "--repo",
+      "danny0971haha/classic-grid",
+      "--state",
+      "all",
+      "--limit",
+      "20",
+      "--json",
+      "number,title,baseRefName,headRefName,headRefOid,isDraft,state,url"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:16.759889+00:00",
+    "ended_at_utc": "2026-09-08T17:27:17.320936+00:00",
+    "exitCode": 0,
+    "stdout": "[{\"baseRefName\":\"docs/classic-agent-autonomy-20260905\",\"headRefName\":\"docs/classic-dependency-prereq-20260908\",\"headRefOid\":\"e420b317dc7f7166f70d24701763c0ab15364c68\",\"isDraft\":true,\"number\":13,\"state\":\"OPEN\",\"title\":\"docs: 2026-09-08 dependency prerequisite reconcilation\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/13\"},{\"baseRefName\":\"fix/classic-audit-identity-v2-20260905\",\"headRefName\":\"fix/classic-audit-output-path-20260906\",\"headRefOid\":\"fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf\",\"isDraft\":true,\"number\":12,\"state\":\"OPEN\",\"title\":\"fix(security): honor audit output directories before policy evaluation\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/12\"},{\"baseRefName\":\"fix/classic-audit-diagnostics-20260905\",\"headRefName\":\"fix/classic-audit-identity-v2-20260905\",\"headRefOid\":\"e723f4c1596ab1e2348b67f2a8218578e06ef841\",\"isDraft\":true,\"number\":11,\"state\":\"OPEN\",\"title\":\"fix(ci): use stable GHSA identities and retain fail-closed audit evidence\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/11\"},{\"baseRefName\":\"docs/classic-agent-autonomy-20260905\",\"headRefName\":\"fix/classic-audit-diagnostics-20260905\",\"headRefOid\":\"53892592a1dad5d0a091448a6b2eb2a4c8aba113\",\"isDraft\":true,\"number\":10,\"state\":\"OPEN\",\"title\":\"fix(ci): retain audit failure diagnostics without relaxing policy\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/10\"},{\"baseRefName\":\"chore/current-candidate-verification-20260905-dc6fcc\",\"headRefName\":\"docs/classic-agent-autonomy-20260905\",\"headRefOid\":\"a80bcca7f1a0b997456308f5a42962129375b208\",\"isDraft\":true,\"number\":9,\"state\":\"OPEN\",\"title\":\"docs: add bounded agent autonomy and current-task entrypoints\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/9\"},{\"baseRefName\":\"experiment/classic-v0.2-100u-safety\",\"headRefName\":\"experiment/classic-v0.2-r2-extended-sepolia\",\"headRefOid\":\"39bf3a797b58f7fd91babf9f2d608cfd28e04487\",\"isDraft\":true,\"number\":8,\"state\":\"OPEN\",\"title\":\"R2-A: Extended Sepolia sandbox boundary (review candidate)\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/8\"},{\"baseRefName\":\"experiment/classic-v0.2-100u-safety\",\"headRefName\":\"review/classic-v0.2-final-canary-r1-gate\",\"headRefOid\":\"04a72a44b74651f9720c627a7f438365ecdb4ac6\",\"isDraft\":true,\"number\":7,\"state\":\"CLOSED\",\"title\":\"ci(review): final canary R1 offline qualification gate\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/7\"},{\"baseRefName\":\"experiment/classic-v0.2-100u-safety\",\"headRefName\":\"review/classic-v0.2-release-boundary-cloud-gate\",\"headRefOid\":\"e08991ce318d0bd2c22714034499794fb374200c\",\"isDraft\":true,\"number\":6,\"state\":\"CLOSED\",\"title\":\"ci(review): cloud-only release boundary gate\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/6\"},{\"baseRefName\":\"experiment/classic-v0.2-100u-safety\",\"headRefName\":\"review/classic-v0.2-corrective6-cloud-gate\",\"headRefOid\":\"0bc82eef94b15ad7a5e48371e62d4a1ecaa9f656\",\"isDraft\":true,\"number\":5,\"state\":\"CLOSED\",\"title\":\"[CLOSED \u2014 REVIEW ONLY] cloud-only Corrective 6 gate\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/5\"},{\"baseRefName\":\"experiment/classic-v0.1\",\"headRefName\":\"experiment/classic-v0.2-100u-safety\",\"headRefOid\":\"990a790706e17b52e04d0d1957505cdad5d45862\",\"isDraft\":true,\"number\":3,\"state\":\"OPEN\",\"title\":\"Draft: Classic Grid v0.2 100U safety canary\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/3\"},{\"baseRefName\":\"main\",\"headRefName\":\"experiment/classic-v0.1\",\"headRefOid\":\"a168c487e210306aab17cf428dec67d8168b68fe\",\"isDraft\":true,\"number\":1,\"state\":\"OPEN\",\"title\":\"Add Classic Grid experiment safety mode\",\"url\":\"https://github.com/danny0971haha/classic-grid/pull/1\"}]\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "diff",
+      "--name-status",
+      "fd9c1e0",
+      "3ca01ae"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:17.320981+00:00",
+    "ended_at_utc": "2026-09-08T17:27:17.341392+00:00",
+    "exitCode": 0,
+    "stdout": "A\tdocs/evidence/classic-canary-review-20260908/.gitignore\nA\tdocs/evidence/classic-canary-review-20260908/SHA256SUMS\nA\tdocs/evidence/classic-canary-review-20260908/classic-canary-review-handoff.md\nA\tdocs/evidence/classic-canary-review-20260908/extra-boundary-scan.json\nA\tdocs/evidence/classic-canary-review-20260908/git-object-identities.txt\nA\tdocs/evidence/classic-canary-review-20260908/github-sha-pinned-index.md\nA\tdocs/evidence/classic-canary-review-20260908/identities.json\nA\tdocs/evidence/classic-canary-review-20260908/identity-after-packet.txt\nA\tdocs/evidence/classic-canary-review-20260908/local-r2a-publication.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/00-verify-current-candidate.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/00-verify-current-candidate.meta.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/01-root-npm-ci.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/01-root-npm-ci.meta.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/02-test-security-canary-subset.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/02-test-security-canary-subset.meta.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/03-registry-phase.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/03-registry-phase.meta.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/04-extra-boundary-pre-probe.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/05-userspace-probe.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/05-userspace-probe.meta.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/05a-tarball-reinstall.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/06-extra-boundary-post-probe.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/07-test-canary-live-audit.json\nA\tdocs/evidence/classic-canary-review-20260908/logs/07-test-canary-live.log\nA\tdocs/evidence/classic-canary-review-20260908/logs/07-test-canary-live.meta.json\nA\tdocs/evidence/classic-canary-review-20260908/official-workdir-identity.txt\nA\tdocs/evidence/classic-canary-review-20260908/offline/isolation-check.json\nA\tdocs/evidence/classic-canary-review-20260908/offline/loaded-modules.txt\nA\tdocs/evidence/classic-canary-review-20260908/offline/probe-module-graph.json\nA\tdocs/evidence/classic-canary-review-20260908/offline/probe-stderr.txt\nA\tdocs/evidence/classic-canary-review-20260908/offline/probe-stdout.txt\nA\tdocs/evidence/classic-canary-review-20260908/offline/unavailable-venue.txt\nA\tdocs/evidence/classic-canary-review-20260908/offline/userspace-probe.json\nA\tdocs/evidence/classic-canary-review-20260908/offline/verify-current-candidate.json\nA\tdocs/evidence/classic-canary-review-20260908/r2a-secret-scan.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/canary-audit-meta.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/canary-audit.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/canary-package-lock.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/classic-grid-extended-canary-0.2.0.tgz\nA\tdocs/evidence/classic-canary-review-20260908/registry/content-manifest.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/extra-boundary-scan.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/install-dirs.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/installed-package-names.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/registry-phase.json\nA\tdocs/evidence/classic-canary-review-20260908/registry/tarball-list.txt\nA\tdocs/evidence/classic-canary-review-20260908/status.json\nA\tdocs/evidence/classic-canary-review-20260908/target-identity.txt\nA\ttools/review/classic-canary-20260908/check-isolation.py\nA\ttools/review/classic-canary-20260908/run-registry-phase.ts\nA\ttools/review/classic-canary-20260908/run-scoped-verification.sh\nA\ttools/review/classic-canary-20260908/run-userspace-probe.ts\nA\ttools/review/classic-canary-20260908/scan-extra-boundaries.py\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "git",
+      "log",
+      "--oneline",
+      "39bf3a7..d312907"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:17.341433+00:00",
+    "ended_at_utc": "2026-09-08T17:27:17.360908+00:00",
+    "exitCode": 0,
+    "stdout": "d312907 docs(r2a): record Corrective 3 result HEAD and tree\n1687c4a docs(r2a): bind Corrective 3 candidate identity\n1fce4d1 fix(r2a): reject non-exact SANDBOX_CONFIRM and sandbox proxy tokens\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "node",
+      "--version"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:17.360991+00:00",
+    "ended_at_utc": "2026-09-08T17:27:17.386741+00:00",
+    "exitCode": 0,
+    "stdout": "v26.5.0\n",
+    "stderr": ""
+  },
+  {
+    "command": [
+      "npm",
+      "--version"
+    ],
+    "cwd": "/private/tmp/classic-grid-canary-driver-20260909",
+    "started_at_utc": "2026-09-08T17:27:17.386777+00:00",
+    "ended_at_utc": "2026-09-08T17:27:17.489856+00:00",
+    "exitCode": 0,
+    "stdout": "11.17.0\n",
+    "stderr": ""
+  }
+]

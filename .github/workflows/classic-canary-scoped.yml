@@ -1,0 +1,162 @@
+name: Classic canary scoped Linux evidence
+
+on:
+  pull_request:
+    branches: [fix/classic-audit-output-path-20260906]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  canary-scoped-evidence:
+    if: github.repository == 'danny0971haha/classic-grid' && github.head_ref == 'fix/classic-canary-driver-20260909'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      # Existing policy permits exactly one checkout/setup-node Action repository-wide.
+      # Preserve that policy: explicit public Git + checksum-bound official Node bootstrap.
+      - name: Bootstrap exact tool checkout and checksum-pinned Node
+        id: node
+        env:
+          TOOL_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PYBOOT'
+          import datetime, hashlib, json, os, pathlib, platform, re, subprocess
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          logs = root / 'canary-bootstrap' / 'bootstrap'
+          logs.mkdir(parents=True)
+          home = root / 'canary-git-home'
+          home.mkdir()
+          env = {'PATH': os.environ['PATH'], 'HOME': str(home), 'GIT_TERMINAL_PROMPT': '0',
+                 'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null'}
+          def run(name, command):
+              started = datetime.datetime.now(datetime.timezone.utc).isoformat()
+              with (logs / (name+'.stdout')).open('wb') as out, (logs / (name+'.stderr')).open('wb') as err:
+                  result = subprocess.run(command, env=env, stdout=out, stderr=err, timeout=300)
+              (logs / (name+'.json')).write_text(json.dumps({'command':command, 'cwd':os.getcwd(),
+                  'started_at_utc':started, 'ended_at_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  'exitCode':result.returncode}, indent=2)+'\n')
+              if result.returncode:
+                  raise SystemExit(result.returncode)
+          run('host', ['uname','-a'])
+          if platform.system() != 'Linux' or platform.machine() != 'x86_64':
+              raise SystemExit('LINUX_X86_64_REQUIRED')
+          head = os.environ['TOOL_HEAD']
+          if not re.fullmatch('[0-9a-f]{40}', head):
+              raise SystemExit('FULL_TOOL_HEAD_REQUIRED')
+          run('git-clone', ['git','clone','--no-checkout','https://github.com/danny0971haha/classic-grid.git','.'])
+          run('git-checkout', ['git','checkout','--detach',head])
+          run('git-identity', ['git','rev-parse','HEAD','HEAD^{tree}'])
+          run('git-status', ['git','status','--porcelain','--untracked-files=all'])
+          archive = root / 'node-v22.23.2-linux-x64.tar.xz'
+          url = 'https://nodejs.org/dist/v22.23.2/' + archive.name
+          run('node-download', ['curl','--fail','--silent','--show-error','--proto','=https','--tlsv1.2',url,'-o',str(archive)])
+          expected = 'd60acfe00a2932254bb0ad20e01b0d74397a0875595de719654b214f4b03f307'
+          actual = hashlib.sha256(archive.read_bytes()).hexdigest()
+          (logs / 'node-checksum.json').write_text(json.dumps({'url':url, 'expected':expected,
+              'actual':actual, 'matches':actual==expected}, indent=2)+'\n')
+          if actual != expected:
+              raise SystemExit('NODE_ARCHIVE_SHA256_MISMATCH')
+          run('node-extract', ['tar','-xJf',str(archive),'-C',str(root)])
+          with open(os.environ['GITHUB_PATH'], 'a') as stream:
+              stream.write(str(root / 'node-v22.23.2-linux-x64/bin')+'\n')
+          PYBOOT
+
+      - name: Pin npm without caller credentials
+        id: npm
+        if: always() && steps.node.outcome == 'success'
+        continue-on-error: true
+        run: |
+          mkdir -p "$RUNNER_TEMP/canary-bootstrap-home"
+          python3 tools/review/classic-canary-20260908/record-command.py --out "$RUNNER_TEMP/canary-bootstrap/npm" -- \
+            env -i PATH="$PATH" HOME="$RUNNER_TEMP/canary-bootstrap-home" npm_config_userconfig=/dev/null \
+            npm_config_globalconfig="$RUNNER_TEMP/canary-bootstrap-home/global.npmrc" npm install -g npm@10.9.8 --ignore-scripts --no-audit --no-fund
+
+      - name: Offline driver regressions
+        id: regressions
+        if: always()
+        continue-on-error: true
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 tools/review/classic-canary-20260908/record-command.py \
+            --out "$RUNNER_TEMP/canary-bootstrap/regressions" -- \
+            python3 tools/review/classic-canary-20260908/test_driver.py
+
+      - name: Create fixed target worktree
+        id: target
+        if: always()
+        continue-on-error: true
+        run: |
+          python3 tools/review/classic-canary-20260908/record-command.py --out "$RUNNER_TEMP/canary-bootstrap/target" -- \
+            git worktree add --detach "$RUNNER_TEMP/classic-canary-target" fd9c1e0bbe920bce6e06dd39d364f0e2e82456cf
+
+      - name: Split registry and kernel-isolated canary verification
+        id: scoped
+        if: always() && steps.target.outcome == 'success' && steps.node.outcome == 'success' && steps.npm.outcome == 'success'
+        continue-on-error: true
+        env:
+          TOOL_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUBLICATION_REF: ${{ github.head_ref }}
+        run: |
+          sh tools/review/classic-canary-20260908/run-scoped-verification.sh \
+            --target-root "$RUNNER_TEMP/classic-canary-target" \
+            --tool-head "$TOOL_HEAD" --tool-tree "$(git rev-parse "$TOOL_HEAD^{tree}")" \
+            --publication-ref "$PUBLICATION_REF" --out "$RUNNER_TEMP/classic-canary-evidence"
+
+      - name: Collect portable evidence and bootstrap outcomes
+        if: always()
+        env:
+          NODE_OUTCOME: ${{ steps.node.outcome }}
+          NPM_OUTCOME: ${{ steps.npm.outcome }}
+          REGRESSIONS_OUTCOME: ${{ steps.regressions.outcome }}
+          TARGET_OUTCOME: ${{ steps.target.outcome }}
+          SCOPED_OUTCOME: ${{ steps.scoped.outcome }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil
+          root = pathlib.Path(os.environ['RUNNER_TEMP'])
+          bundle = root / 'classic-canary-bundle'
+          bundle.mkdir()
+          evidence = root / 'classic-canary-evidence'
+          if (evidence / 'artifact-manifest.json').is_file():
+              paths = [row['path'] for row in json.loads((evidence / 'artifact-manifest.json').read_text())]
+              for rel in paths + ['artifact-manifest.json', 'SHA256SUMS']:
+                  dest = bundle / 'scoped' / rel
+                  dest.parent.mkdir(parents=True, exist_ok=True)
+                  shutil.copyfile(evidence / rel, dest)
+          elif evidence.exists():
+              shutil.copytree(evidence / 'logs', bundle / 'partial-logs')
+          if (root / 'canary-bootstrap').exists():
+              shutil.copytree(root / 'canary-bootstrap', bundle / 'bootstrap')
+          (bundle / 'workflow-outcomes.json').write_text(json.dumps({k: os.environ[k] for k in
+              ['NODE_OUTCOME','NPM_OUTCOME','REGRESSIONS_OUTCOME','TARGET_OUTCOME','SCOPED_OUTCOME']}, indent=2)+'\n')
+          files = sorted(p for p in bundle.rglob('*') if p.is_file())
+          (bundle / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(bundle)}\n' for p in files))
+          PY
+
+      - name: Upload raw scoped evidence
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: classic-canary-linux-${{ github.event.pull_request.head.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/classic-canary-bundle/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Settle original outcomes
+        if: always()
+        env:
+          NODE_OUTCOME: ${{ steps.node.outcome }}
+          NPM_OUTCOME: ${{ steps.npm.outcome }}
+          REGRESSIONS_OUTCOME: ${{ steps.regressions.outcome }}
+          TARGET_OUTCOME: ${{ steps.target.outcome }}
+          SCOPED_OUTCOME: ${{ steps.scoped.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          names = ['NODE_OUTCOME','NPM_OUTCOME','REGRESSIONS_OUTCOME','TARGET_OUTCOME','SCOPED_OUTCOME','UPLOAD_OUTCOME']
+          print({name: os.environ[name] for name in names})
+          sys.exit(0 if all(os.environ[name] == 'success' for name in names) else 1)
+          PY

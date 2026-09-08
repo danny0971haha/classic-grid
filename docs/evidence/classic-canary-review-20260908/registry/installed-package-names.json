@@ -1,0 +1,8 @@
+[
+  "@esbuild/darwin-arm64",
+  "esbuild",
+  "fsevents",
+  "tsx",
+  "undici",
+  "ws"
+]
