@@ -1,0 +1,11 @@
+▶ extended canary clean artifact
+  ✔ clean temporary install, audit, module-load, and offline dry-run (2821.3525ms)
+✔ extended canary clean artifact (2821.93575ms)
+ℹ tests 1
+ℹ suites 1
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3347.783833
