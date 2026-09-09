@@ -259,7 +259,24 @@ jobs:
     const inventory = inventoryGitRepository(process.cwd(), { requireProductionPins: true });
     assert.equal(inventory.overallPolicyOk, true);
     assert.deepEqual(inventory.codes, ["PASS"]);
-    assert.deepEqual(inventory.trackedManifests, [".github/workflows/ci.yml"]);
+    assert.deepEqual(inventory.trackedManifests, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/classic-canary-scoped.yml",
+    ]);
+    assert.deepEqual(inventory.scannedFiles, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/classic-canary-scoped.yml",
+    ]);
+    // Explicit occurrence inventory: six in ci.yml and one in the scoped workflow.
+    assert.deepEqual(inventory.occurrences.map((row) => [row.file, row.identity, row.ref]), [
+      [".github/workflows/ci.yml", "actions/checkout", CHECKOUT],
+      [".github/workflows/ci.yml", "actions/setup-node", SETUP_NODE],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/classic-canary-scoped.yml", "actions/upload-artifact", UPLOAD],
+    ]);
     assert.ok(inventory.scannedFiles.includes(".github/workflows/ci.yml"));
     const tuples = new Set(inventory.occurrences.filter((row) => row.kind === "external").map((row) => `${row.identity}@${row.ref}`));
     assert.ok(tuples.has(`actions/checkout@${CHECKOUT}`));
