@@ -341,10 +341,53 @@ jobs:
     assert.ok(inventory.codes.includes("ACTION_PATH_CASE_COLLISION"));
   });
 
+  for (const badRef of ["v4", OTHER_SHA]) {
+    it(`rejects the actual scoped workflow upload Action changed to ${badRef}`, () => {
+      const root = tempRepo();
+      const scopedPath = ".github/workflows/classic-canary-scoped.yml";
+      const scoped = fs.readFileSync(scopedPath, "utf8");
+      const approved = `actions/upload-artifact@${UPLOAD}`;
+      assert.equal(scoped.split(approved).length - 1, 1);
+      writeTracked(root, ".github/workflows/ci.yml", fs.readFileSync(".github/workflows/ci.yml", "utf8"));
+      writeTracked(root, scopedPath, scoped);
+      assert.equal(inventoryGitRepository(root, { requireProductionPins: true }).overallPolicyOk, true);
+
+      writeTracked(root, scopedPath, scoped.replace(approved, `actions/upload-artifact@${badRef}`));
+      const inventory = inventoryGitRepository(root, { requireProductionPins: true });
+      assert.deepEqual(inventory.trackedManifests, [".github/workflows/ci.yml", scopedPath]);
+      assert.deepEqual(inventory.scannedFiles, [".github/workflows/ci.yml", scopedPath]);
+      assert.equal(inventory.overallPolicyOk, false);
+      assert.ok(inventory.codes.includes("ACTION_NOT_ALLOWLISTED"));
+      if (badRef === "v4") assert.ok(inventory.codes.includes("ACTION_REF_NOT_IMMUTABLE"));
+      const occurrence = inventory.occurrences.find((row) => row.file === scopedPath);
+      assert.equal(occurrence?.identity, "actions/upload-artifact");
+      assert.equal(occurrence?.ref, badRef);
+      assert.equal(occurrence?.allowlisted, false);
+      assert.equal(occurrence?.immutablePin, badRef !== "v4");
+    });
+  }
+
   it("accepts the current official repository via git ls-files", () => {
     const inventory = inventoryGitRepository(process.cwd(), { requireProductionPins: true });
     assert.equal(inventory.overallPolicyOk, true);
-    assert.deepEqual(inventory.trackedManifests, [".github/workflows/ci.yml"]);
+    assert.deepEqual(inventory.trackedManifests, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/classic-canary-scoped.yml",
+    ]);
+    assert.deepEqual(inventory.scannedFiles, [
+      ".github/workflows/ci.yml",
+      ".github/workflows/classic-canary-scoped.yml",
+    ]);
+    // Explicit occurrence inventory: six in ci.yml and one in the scoped workflow.
+    assert.deepEqual(inventory.occurrences.map((row) => [row.file, row.identity, row.ref]), [
+      [".github/workflows/ci.yml", "actions/checkout", CHECKOUT],
+      [".github/workflows/ci.yml", "actions/setup-node", SETUP_NODE],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/ci.yml", "actions/upload-artifact", UPLOAD],
+      [".github/workflows/classic-canary-scoped.yml", "actions/upload-artifact", UPLOAD],
+    ]);
     assert.equal(inventory.occurrences.every((row) => row.kind === "external" && row.allowlisted), true);
     const tuples = inventory.occurrences.map((row) => `${row.identity}@${row.ref}`);
     assert.ok(tuples.includes(`actions/checkout@${CHECKOUT}`));

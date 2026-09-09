@@ -1,0 +1,339 @@
+{
+  "schemaVersion": 1,
+  "sourceRepository": "https://github.com/danny0971haha/classic-grid",
+  "sourceCommit": "40223bb5e106668e2d5a2c8971579b41e7a9dbfa",
+  "sourceTree": "c99180aab2b4cf9b4abb40780c7d2192686d9eec",
+  "pathPrefix": "docs/evidence/classic-canary-review-20260908/",
+  "archive": "original-evidence.tar.gz",
+  "files": [
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/.gitignore",
+      "mode": "100644",
+      "gitBlob": "5f832673c0e60ee33aed6644a981aa0f2d30f05e",
+      "size": 110,
+      "sha256": "73ee4a590a272556255abad53c5d452eb20459cc16e0734b230a106f0d3833a5"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/SHA256SUMS",
+      "mode": "100644",
+      "gitBlob": "0547c7e0f328b8df2755e483456682c83e19c6ee",
+      "size": 4327,
+      "sha256": "7633b30eaac2fc047cbdcfa792a31691de35f5f8810efeef8450698fb670efa8"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/classic-canary-review-handoff.md",
+      "mode": "100644",
+      "gitBlob": "825e2cb7ded352b3f1035cb5f06f0319a8b0567b",
+      "size": 10299,
+      "sha256": "47d8ceb2580f3aefe612b2e837efd4146835386de8522615c7b029f2931e7370"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/extra-boundary-scan.json",
+      "mode": "100644",
+      "gitBlob": "94c1b6f1a7b819d6ba8c1d427d3d15c63fe2650f",
+      "size": 4162,
+      "sha256": "0d15a1aba26cdd955e4711f6693d6eeb1996f3d033a77f0db350f3ed21a98045"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/git-object-identities.txt",
+      "mode": "100644",
+      "gitBlob": "cc88f9abc47e60019fe6f018a8bc281b28579985",
+      "size": 451,
+      "sha256": "cc9d3c0263abd8a58c4acafd7fd00f8a254e78d6b6777a69714c047591929bd7"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/github-sha-pinned-index.md",
+      "mode": "100644",
+      "gitBlob": "1daf3799ef55ff9615bc08e89ff394107edcdd07",
+      "size": 2068,
+      "sha256": "475e8aff4ff36a7aacd875b6757987d782c51f8a1ba669605b83f7dae8c03cc7"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/identities.json",
+      "mode": "100644",
+      "gitBlob": "8620aa202f4b6f67ffe45f3968838cc2dbbfbe34",
+      "size": 4091,
+      "sha256": "697a939470123fa1c9b782e85d247a9883ad9a5b5cf9ac5e74fc78554aa2a125"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/identity-after-packet.txt",
+      "mode": "100644",
+      "gitBlob": "e19d10802096bf97ee36d8b29de4365cb92b3da3",
+      "size": 156,
+      "sha256": "21d8908724a96e8fec0ece5e520ac2cece583c275aacd413022f9c3b199267a5"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/local-r2a-publication.json",
+      "mode": "100644",
+      "gitBlob": "738fc9368b5285c3306c5bb86a02018437abc776",
+      "size": 2203,
+      "sha256": "be7b9d5532efae9f5e12eae16795369e7fe8914e916c7a5a501d870865f81329"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/00-verify-current-candidate.log",
+      "mode": "100644",
+      "gitBlob": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/00-verify-current-candidate.meta.json",
+      "mode": "100644",
+      "gitBlob": "b4cfc15717224c18bd022e580c7baa4b7c69f445",
+      "size": 109,
+      "sha256": "23b3aae381db1f9a310dd3709f0db0b984066bb7207bd35499851c4401f0f1cd"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/01-root-npm-ci.log",
+      "mode": "100644",
+      "gitBlob": "9fbd53366e41f1bbf0c897be704556729928722b",
+      "size": 849,
+      "sha256": "ed78ff2098e9cf4fb45220047b16c5bee9f5852f6f61399661ea86896a87704f"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/01-root-npm-ci.meta.json",
+      "mode": "100644",
+      "gitBlob": "7fa7cee68fc5fc7cdf4a62af81b9f5ce26e6f1a1",
+      "size": 251,
+      "sha256": "be0b166d9f2fdbfe8ad570f4d8b04bcf6d24b1eab8fe62039ce53cdd33133ee6"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/02-test-security-canary-subset.log",
+      "mode": "100644",
+      "gitBlob": "9d468d82a560a3fbc11dbb81d83d072627223cdb",
+      "size": 11748,
+      "sha256": "23a09f93fb80a97edd424f49d578c33c6e1f97bbf037209425ae88c68477080f"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/02-test-security-canary-subset.meta.json",
+      "mode": "100644",
+      "gitBlob": "9580b2af5d53626efe899074750b5ae7beed3dc0",
+      "size": 476,
+      "sha256": "caedfc85b72108c1ca64787d4058b43deb0d7c70f4b4d635a81e418a0cc7983c"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/03-registry-phase.log",
+      "mode": "100644",
+      "gitBlob": "f013c07554ecbe87ab437d7e657133c37c8523f1",
+      "size": 3005,
+      "sha256": "d8362bde3f5c72bc51a772f65c6c652fe5894059f57c62fb5405df99950552e5"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/03-registry-phase.meta.json",
+      "mode": "100644",
+      "gitBlob": "9795c696724e7c0084dfac6e2a58b1b5592c4471",
+      "size": 348,
+      "sha256": "375afab8e0f9d7b7a07e537c1e3ae01f58e8adc6f78335e939cd571712b31182"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/04-extra-boundary-pre-probe.log",
+      "mode": "100644",
+      "gitBlob": "714a8671e72b5b6a6e4fabf2399e92e7d8e362db",
+      "size": 318,
+      "sha256": "24fc218b49dd34299735111f1003c2fa3e5f42933c3c3c63fb1765d5a5fe1f25"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/05-userspace-probe.log",
+      "mode": "100644",
+      "gitBlob": "8b959ce851eea3f02f19d4406b78bed5ef2c35b1",
+      "size": 4433,
+      "sha256": "db4eda4fec84e1a5035fba2cea5dfce7ad72f0d7f154d9f87c1527ea788d53a9"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/05-userspace-probe.meta.json",
+      "mode": "100644",
+      "gitBlob": "2de6a9fc88319a63ae186afb6e986f6b80ba0dfc",
+      "size": 322,
+      "sha256": "0fbf4796d0d2b2fa56b2d3c1b0aaf7f0d8821d301208444e6cd51a94c14b35cd"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/05a-tarball-reinstall.log",
+      "mode": "100644",
+      "gitBlob": "9fa907eb9e9d491b2a6ce3a795e1df566073a763",
+      "size": 222,
+      "sha256": "20cef3f15769cb7db1552312a3cc8fdd7520cff65188d36b727d54bad5b49613"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/06-extra-boundary-post-probe.log",
+      "mode": "100644",
+      "gitBlob": "16eee06bb9cbeeb65580f6d9831801bc80843a44",
+      "size": 309,
+      "sha256": "f8576c9dab41a5c98e4a05d59d402467f70d6972e2e15b716be6a7339c469b91"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/07-test-canary-live-audit.json",
+      "mode": "100644",
+      "gitBlob": "814f9cc20ece29ed6268f6b60a9003a563566e51",
+      "size": 740,
+      "sha256": "1ea8abc82fbf98b9843dfa8c2b627f496b1ab1784de3b4ffb22f1d45dc5ab93a"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/07-test-canary-live.log",
+      "mode": "100644",
+      "gitBlob": "5af2232e25d0ab104a55ac0bcae2cb08309494b5",
+      "size": 286,
+      "sha256": "b2834b07170c9a75d97af9e48c7a9d077461f684429c6f03792b3f1dc407f162"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/logs/07-test-canary-live.meta.json",
+      "mode": "100644",
+      "gitBlob": "30af9d6717f2e207483e04881db6c92689b24413",
+      "size": 217,
+      "sha256": "8d446079ecd6570a92e7dc79292d976c156dcbacbb09017e99fad4e487e75b3e"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/official-workdir-identity.txt",
+      "mode": "100644",
+      "gitBlob": "0fabf9a7fbf7ef0044d96e487e05e7ebdbdb7ca3",
+      "size": 523,
+      "sha256": "7db1c08415c3e612bcd00f25601d25a276e90957872cdb9b54452b66d4d853d5"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/isolation-check.json",
+      "mode": "100644",
+      "gitBlob": "e6f80666b02a701c19657d387ab90dfc06a95282",
+      "size": 971,
+      "sha256": "2c05619485a39a3c1c5dee17e050d11fda46313dbdd534f2c7fa1a2e293e672e"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/loaded-modules.txt",
+      "mode": "100644",
+      "gitBlob": "e7f3bbf97ab566415d5637eed8d06b958e6ef699",
+      "size": 1671,
+      "sha256": "48b77aa9f2e234ca6c7aeefb87904c3301b047ea17c7720bf229cedcf382af61"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/probe-module-graph.json",
+      "mode": "100644",
+      "gitBlob": "58e0833886881241d4e384f70c57fd2c35e8eb81",
+      "size": 76588,
+      "sha256": "0807b4abff1fabc257f0d13ba90970d04f1097f1014bbec26a50fb55e5da3196"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/probe-stderr.txt",
+      "mode": "100644",
+      "gitBlob": "606f039b1cc29d8a3b8af624dd495869ab8469a0",
+      "size": 398,
+      "sha256": "d6d50d226aa0f4a23a7bd34bd52a926bb0e147537efd279db8bd2de3e546d88e"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/probe-stdout.txt",
+      "mode": "100644",
+      "gitBlob": "7075c89a805b5a114c4dbe437ed3f540a5ccc1e1",
+      "size": 232,
+      "sha256": "89d8037f99b6988513e121b489d954d753319994d34c50b2d43eb8ceeb897a20"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/unavailable-venue.txt",
+      "mode": "100644",
+      "gitBlob": "7677e85b2bc388eab3204e6e8c0e48f14dc97191",
+      "size": 1289,
+      "sha256": "78cd70515ea9ec4363aa29d5ff8a935822a382f53a90307357a2ca08f09c8d00"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/userspace-probe.json",
+      "mode": "100644",
+      "gitBlob": "8b959ce851eea3f02f19d4406b78bed5ef2c35b1",
+      "size": 4433,
+      "sha256": "db4eda4fec84e1a5035fba2cea5dfce7ad72f0d7f154d9f87c1527ea788d53a9"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/offline/verify-current-candidate.json",
+      "mode": "100644",
+      "gitBlob": "a7e773e7b3575415a3dbc16b4304e5f0de2b8c54",
+      "size": 342,
+      "sha256": "1bd2cbcb070598843d178abfa5b509296755cec3f3cc9071eff713f4e74d9869"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/r2a-secret-scan.json",
+      "mode": "100644",
+      "gitBlob": "0e9a38338d17698d4a969b0d52d8d2805e88011f",
+      "size": 802,
+      "sha256": "d303a9afb4baa4e10db3adc9fa20052eddfe2ae7245f9637d4c309d6dd79ab7b"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/canary-audit-meta.json",
+      "mode": "100644",
+      "gitBlob": "cc73becff413d1eae9dfdf7a2f716516b9adc568",
+      "size": 478,
+      "sha256": "097d887bd02cd93d36d788a2d840739e3bbb1bdc783b41c3f5472819bca8300b"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/canary-audit.json",
+      "mode": "100644",
+      "gitBlob": "43e8bcf78fac694d0c94ead5f768ebfd479bcc50",
+      "size": 361,
+      "sha256": "7c6369d5621583356a634c6f2e2ccb5205b991720df5801cbccb180685f0a3f0"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/canary-package-lock.json",
+      "mode": "100644",
+      "gitBlob": "08069e80df73b7995f13a4bf4c73595a7f2d6f4f",
+      "size": 15986,
+      "sha256": "f66f1a14e91ca293d499b74420b1c669c9b11d0806cf87830d3ca59e64763f99"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/classic-grid-extended-canary-0.2.0.tgz",
+      "mode": "100644",
+      "gitBlob": "f8ecc62fd063409c96cabd576ad753464a2d4cce",
+      "size": 137935,
+      "sha256": "f5f364c129b75ccd1e7a502736c36c529169c4e9f00c49ce8f2578e5033f3fb5"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/content-manifest.json",
+      "mode": "100644",
+      "gitBlob": "5a746f069db320caf436dfd6b07500c17f01a673",
+      "size": 6855,
+      "sha256": "2510544ff839caa5ae82e972ffc2d583a864112eb0e6b86fa1d0a983461d1e84"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/extra-boundary-scan.json",
+      "mode": "100644",
+      "gitBlob": "881b930ffb3055b1395180ba85a3a2b9bc9f46c2",
+      "size": 4160,
+      "sha256": "7e9be004c7366ade10dc19b26f9aa7dc19e192939e452561dd7ac515a279c4a1"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/install-dirs.json",
+      "mode": "100644",
+      "gitBlob": "715323942298fd5742df7426edabf7509a929d61",
+      "size": 216,
+      "sha256": "36efc133872adc8f603324bcb9369f351c71cff446e7a1c81e5f49c510dfde58"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/installed-package-names.json",
+      "mode": "100644",
+      "gitBlob": "4fe4c294125b84fb0e08fad9e4ca535f8fbe366e",
+      "size": 86,
+      "sha256": "f8456e2263fdb5b0115c91a6f2297f653e0e889acb9fe324abe4acf5de6f7bcf"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/registry-phase.json",
+      "mode": "100644",
+      "gitBlob": "f013c07554ecbe87ab437d7e657133c37c8523f1",
+      "size": 3005,
+      "sha256": "d8362bde3f5c72bc51a772f65c6c652fe5894059f57c62fb5405df99950552e5"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/registry/tarball-list.txt",
+      "mode": "100644",
+      "gitBlob": "9cf33b2a0c0aee4fad14f3b9d24cae9114884090",
+      "size": 1263,
+      "sha256": "3bf7aac61a7b9435b00dd306f451f04d033ab3656c3e3f271925fb3514b0e68d"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/status.json",
+      "mode": "100644",
+      "gitBlob": "9bfa0c26975208997c16b95c736b62f57d879a6f",
+      "size": 3841,
+      "sha256": "93a027880b391f99ad7093b1efe04506c5a0fb8be66374a2b54cdc29855f00ce"
+    },
+    {
+      "path": "docs/evidence/classic-canary-review-20260908/target-identity.txt",
+      "mode": "100644",
+      "gitBlob": "508a7ac7e3af112a74af78b162be4e528be99b74",
+      "size": 448,
+      "sha256": "5ecd5c480cccd56d1dab11e29748e028a2feae440c4b710991bd272b5da59fc2"
+    }
+  ]
+}
