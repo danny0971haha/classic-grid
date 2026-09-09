@@ -1,4 +1,11 @@
 import type { GridParams, VenueId } from "./types.js";
+import {
+  parseExecutionBoundary,
+  qualifySandboxNetworkProfile,
+  type ExecutionTarget,
+  type ExtendedNetworkId,
+  type ExtendedNetworkProfile,
+} from "./extendedNetwork.js";
 import { loadEnv } from "./loadEnv.js";
 
 /**
@@ -190,6 +197,11 @@ function truthy(v: string | undefined): boolean {
 export type RuntimeConfig = {
   dryRun: boolean;
   liveConfirm: boolean;
+  executionTarget: ExecutionTarget;
+  sandboxConfirm: boolean;
+  extendedNetwork: ExtendedNetworkId | null;
+  extendedNetworkExplicit: boolean;
+  extendedProfile: ExtendedNetworkProfile | null;
   venues: VenueId[];
   markets: string[];
   tickMs: number;
@@ -372,10 +384,9 @@ function equityFor(venue: VenueId, experiment: ExperimentConfig): number {
 export function loadRuntimeConfig(): RuntimeConfig {
   loadEnv();
   const experiment = parseExperimentConfig();
-  const dryRaw = process.env.DRY_RUN;
-  const dryRun =
-    dryRaw == null || String(dryRaw).trim() === "" ? true : truthy(dryRaw);
-  const liveConfirm = truthy(process.env.LIVE_CONFIRM);
+  const boundary = parseExecutionBoundary();
+  const dryRun = boundary.dryRun;
+  const liveConfirm = boundary.liveConfirm;
   const venues = String(process.env.VENUES || "extended,risex,decibel,n1")
     .split(",")
     .map((s) => s.trim().toLowerCase())
@@ -484,6 +495,11 @@ export function loadRuntimeConfig(): RuntimeConfig {
   return {
     dryRun,
     liveConfirm,
+    executionTarget: boundary.executionTarget,
+    sandboxConfirm: boundary.sandboxConfirm,
+    extendedNetwork: boundary.extendedNetwork,
+    extendedNetworkExplicit: boundary.extendedNetworkExplicit,
+    extendedProfile: boundary.profile,
     venues: venues.length ? venues : [...ALL_VENUES],
     markets: markets.length ? markets : ["BTC"],
     tickMs,
@@ -491,6 +507,19 @@ export function loadRuntimeConfig(): RuntimeConfig {
     grids,
     experiment,
   };
+}
+
+export function assertExecutionAllowed(cfg: RuntimeConfig): void {
+  if (cfg.executionTarget === "dry-run") return;
+  if (cfg.executionTarget === "sandbox") {
+    if (!cfg.extendedProfile) throw new Error("EXTENDED_NETWORK_REQUIRED");
+    qualifySandboxNetworkProfile(cfg.extendedProfile);
+    if (cfg.liveConfirm || !cfg.sandboxConfirm) {
+      throw new Error("EXECUTION_CONFIRMATION_CONFLICT");
+    }
+    return;
+  }
+  assertLiveAllowed(cfg);
 }
 
 export function assertLiveAllowed(cfg: RuntimeConfig): void {

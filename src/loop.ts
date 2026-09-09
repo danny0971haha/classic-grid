@@ -1,11 +1,16 @@
 import {
   anchorGrid,
-  assertLiveAllowed,
+  assertExecutionAllowed,
   formatExperimentBanner,
   gridFor,
   loadRuntimeConfig,
   type RuntimeConfig,
 } from "./config.js";
+import {
+  assertSandboxWriteAllowed,
+  bindNetworkScopeKey,
+  networkIdentityForBinding,
+} from "./extendedNetwork.js";
 import { runExperimentKillSwitch } from "./experimentKillSwitch.js";
 import { createVenueReductionTransport, runActualNotionalHardHalt } from "./experimentReduction.js";
 import {
@@ -1046,10 +1051,21 @@ export async function runLoop(opts?: {
 }): Promise<void> {
   await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
-  assertLiveAllowed(cfg);
-  const accountScope = String(process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.dryRun ? "dry-run" : "")).trim();
-  experimentScopeKey = `${accountScope}:${cfg.venues.join("+")}:${cfg.markets.join("+")}`;
-  experimentOwnershipPrefix = `cg:${cfg.experiment.id}:`;
+  assertExecutionAllowed(cfg);
+  const accountScope = String(
+    process.env.EXPERIMENT_ACCOUNT_SCOPE || (cfg.executionTarget === "dry-run" ? "dry-run" : "")
+  ).trim();
+  const networkId = networkIdentityForBinding(cfg);
+  experimentScopeKey = bindNetworkScopeKey(
+    `${accountScope}:${cfg.venues.join("+")}:${cfg.markets.join("+")}`,
+    networkId
+  );
+  experimentOwnershipPrefix = networkId
+    ? `cg:${cfg.experiment.id}:${networkId}:`
+    : `cg:${cfg.experiment.id}:`;
+  if (cfg.executionTarget === "sandbox") {
+    assertSandboxWriteAllowed();
+  }
   experimentSessionAllowsTrading = false;
   const abortController = new AbortController();
   let leaseHeartbeat: RuntimeLeaseHeartbeat | null = null;
@@ -1465,6 +1481,9 @@ export async function runLoop(opts?: {
 export async function runStatus(opts?: LoopRuntimeBindings): Promise<void> {
   await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
+  if (cfg.executionTarget === "sandbox") {
+    assertSandboxWriteAllowed();
+  }
   const dry = cfg.dryRun;
   if (dry) {
     console.log("status: DRY_RUN=1 → 假 snapshot（设 DRY_RUN=0 可读实盘，仍不下单）");
@@ -1503,7 +1522,10 @@ export async function runStatus(opts?: LoopRuntimeBindings): Promise<void> {
 export async function runFlat(opts?: LoopRuntimeBindings): Promise<void> {
   await bindLoopRuntime(opts);
   const cfg = loadRuntimeConfig();
-  assertLiveAllowed(cfg);
+  assertExecutionAllowed(cfg);
+  if (cfg.executionTarget === "sandbox") {
+    assertSandboxWriteAllowed();
+  }
   if (cfg.dryRun) {
     console.log("flat: DRY_RUN=1 → 只打印，不撤单/清仓");
   }

@@ -8,6 +8,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { VenueId } from "./types.js";
 import { loadEnv } from "./loadEnv.js";
+import {
+  EXTENDED_NETWORK_PROFILES,
+  createExchangeProfileArgs,
+  parseExecutionBoundary,
+} from "./extendedNetwork.js";
 import { DecibelLive } from "./venues/decibelLive.js";
 
 export type OfficialVenueDay = {
@@ -70,6 +75,19 @@ function empty(venue: VenueId, note: string): OfficialVenueDay {
 /** Extended 成交分页：只累加当日，跨日即停（假设新→旧），避免拉全历史撑爆堆 */
 async function fetchExtended(since: number): Promise<OfficialVenueDay> {
   try {
+    let profile = EXTENDED_NETWORK_PROFILES.mainnet;
+    try {
+      const boundary = parseExecutionBoundary();
+      if (boundary.executionTarget === "sandbox" || boundary.profile?.network === "sepolia") {
+        return empty("extended", "TESTNET_NETWORK_WRITE_UNAUTHORIZED");
+      }
+      if (boundary.profile) profile = boundary.profile;
+    } catch (e: any) {
+      return empty("extended", String(e?.message || e).slice(0, 80));
+    }
+    if (profile.network !== "mainnet") {
+      return empty("extended", "TESTNET_NETWORK_WRITE_UNAUTHORIZED");
+    }
     const vendor = path.resolve("vendor/extended/exchange/index.js");
     const mod = await import(pathToFileURL(vendor).href);
     const ex = mod.createExchange({
@@ -77,10 +95,7 @@ async function fetchExtended(since: number): Promise<OfficialVenueDay> {
       vault: process.env.EXTENDED_VAULT || process.env.EXTENDED_VAULT_ID,
       starkPrivateKey: process.env.EXTENDED_STARK_PRIVATE_KEY,
       starkPublicKey: process.env.EXTENDED_STARK_PUBLIC_KEY,
-      apiUrl: (process.env.EXTENDED_API_URL || "https://api.starknet.extended.exchange").replace(
-        /\/$/,
-        ""
-      ),
+      ...createExchangeProfileArgs(profile),
     });
     await ex.init();
     let volume = 0;

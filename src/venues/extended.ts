@@ -14,6 +14,11 @@ import {
   type ReductionResult,
 } from "../experimentReduction.js";
 import { readExperimentLeverage } from "../config.js";
+import {
+  assertSandboxWriteAllowed,
+  createExchangeProfileArgs,
+  parseExecutionBoundary,
+} from "../extendedNetwork.js";
 import { loadEnv } from "../loadEnv.js";
 import { ExtendedAccountStream, ExtendedAccountStreamState } from "./extendedAccountStream.js";
 import {
@@ -179,6 +184,13 @@ export class ExtendedExecutor implements VenueExecutor {
   async connect(): Promise<void> {
     if (this.dryRun) return;
     loadEnv();
+    const boundary = parseExecutionBoundary();
+    if (boundary.executionTarget === "sandbox" || boundary.profile?.network === "sepolia") {
+      assertSandboxWriteAllowed();
+    }
+    if (!boundary.profile || boundary.profile.network !== "mainnet") {
+      throw new Error("EXTENDED_PROFILE_MIXED");
+    }
     if (
       ["1", "true", "yes"].includes(String(process.env.EXTENDED_USE_PROXY || "").toLowerCase()) &&
       process.env.EXTENDED_PROXY
@@ -189,9 +201,7 @@ export class ExtendedExecutor implements VenueExecutor {
     const vault = Number(process.env.EXTENDED_VAULT || process.env.EXTENDED_VAULT_ID || 0);
     const starkPrivateKey = process.env.EXTENDED_STARK_PRIVATE_KEY?.trim();
     const starkPublicKey = process.env.EXTENDED_STARK_PUBLIC_KEY?.trim() || null;
-    const apiUrl = (
-      process.env.EXTENDED_API_URL || "https://api.starknet.extended.exchange"
-    ).replace(/\/$/, "");
+    const profileArgs = createExchangeProfileArgs(boundary.profile);
     if (!apiKey || !vault || !starkPrivateKey) {
       throw new Error("缺少 EXTENDED_API_KEY / EXTENDED_VAULT / EXTENDED_STARK_PRIVATE_KEY");
     }
@@ -205,11 +215,11 @@ export class ExtendedExecutor implements VenueExecutor {
       vault,
       starkPrivateKey,
       starkPublicKey,
-      apiUrl,
+      ...profileArgs,
     }) as ExtendedExchange;
     await this.ex.init();
     this.accountStream = new ExtendedAccountStream(
-      { apiUrl, apiKey },
+      { apiUrl: profileArgs.apiUrl, apiKey, websocketBase: profileArgs.websocketBase },
       new ExtendedAccountStreamState(Date.now, this.executionCursorPath ? {
         cursorPath: this.executionCursorPath,
         cursorIdentity: this.executionCursorBind

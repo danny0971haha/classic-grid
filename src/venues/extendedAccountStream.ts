@@ -927,6 +927,7 @@ export class ExtendedAccountStreamState extends EventEmitter {
 export type ExtendedAccountStreamOptions = {
   apiUrl: string;
   apiKey: string;
+  websocketBase: string;
   userAgent?: string;
   initializeTimeoutMs?: number;
   reconnectDelayMs?: number;
@@ -946,8 +947,9 @@ export class ExtendedAccountStream {
   }
 
   private url(): string {
-    const base = this.options.apiUrl.replace(/\/$/, "").replace(/^http/, "ws");
-    return `${base}/stream.extended.exchange/v1/account`;
+    const base = this.options.websocketBase.replace(/\/$/, "");
+    if (!base) throw new Error("EXTENDED_WS_BASE_REQUIRED");
+    return `${base}/account`;
   }
 
   async connect(): Promise<void> {

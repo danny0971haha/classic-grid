@@ -12,6 +12,10 @@ import type {
   ReductionWriteOutcome,
 } from "../../src/experimentReduction.js";
 import { createLocalTransportNotSent, reductionClientOrderId } from "../../src/experimentReduction.js";
+import {
+  EXTENDED_NETWORK_PROFILES,
+  createExchangeProfileArgs,
+} from "../../src/extendedNetwork.js";
 
 const BYTE_WORKER = fileURLToPath(new URL("../fixtures/experiment-risk-byte-worker.ts", import.meta.url));
 
@@ -192,6 +196,7 @@ export async function createOfflineExtendedVendor(): Promise<{
   ).href;
   const { ExtendedExchange } = await import(vendorHref) as {
     ExtendedExchange: new (opts: Record<string, unknown>) => OfflineExtendedVendor & {
+      apiUrl: string;
       markets: Map<number, Record<string, unknown>>;
       _pos: Map<number, { sizeBase: number; entryPrice: number }>;
       _prices: Map<number, number>;
@@ -199,13 +204,15 @@ export async function createOfflineExtendedVendor(): Promise<{
     };
   };
   const submittedPayloads: OfflineVendorSubmit[] = [];
+  const profile = EXTENDED_NETWORK_PROFILES.mainnet;
   const exchange = new ExtendedExchange({
     apiKey: "offline-test-not-a-live-key",
     vault: 10002,
     privateKey: "0x7a7ff6fd3cab02ccdcd4a572563f5976f8976899b03a39773795a3c486d4986",
     publicKey: "0x61c5e7e8339b7d56f197f54ea91b776776690e3232313de0f2ecbd0ef76f466",
-    apiUrl: "http://127.0.0.1:1",
+    ...createExchangeProfileArgs(profile),
   });
+  exchange.apiUrl = "http://127.0.0.1:1";
   exchange.markets.set(1, {
     marketId: 1,
     name: "BTC-USD",
