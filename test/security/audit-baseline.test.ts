@@ -596,24 +596,27 @@ describe("audit adversarial metadata and identity cases", () => {
   it("A-10 accepts the current real audit baseline without clearing existing highs", () => {
     const committed = JSON.parse(fs.readFileSync(BASELINE_RELATIVE_PATH, "utf8")) as AuditBaseline;
     assert.equal(committed.policy.existingHighAreNotCleared, true);
-    assert.equal(committed.highPackages.length, 5);
     const outDir = path.join("artifacts", `security-a10-${process.pid}`);
-    const result = runAuditBaseline(process.cwd(), { outDir });
-    assert.equal(result.ok, true);
-    assert.deepEqual(result.codes, ["PASS"]);
-    assert.equal(result.metadataMatchesObserved, true);
-    assert.equal(result.metadata.high, 5);
-    assert.equal(result.metadata.critical, 0);
-    assert.equal(result.metadata.total, 13);
-    assert.deepEqual(result.observed, result.metadata);
-    assert.equal(result.resolvedHigh.length, 0);
-    const document = verificationDocument(result);
-    assert.equal(document.schemaVersion, "classic-v0.2-security-audit-verification/2");
-    assert.equal(document.existingHighAreNotCleared, true);
-    assert.equal(document.metadataMatchesObserved, true);
-    assert.equal(document.ok, true);
-    const dumped = JSON.stringify(document);
-    assert.equal(dumped.includes(os.homedir()), false);
-    fs.rmSync(outDir, { recursive: true, force: true });
+    try {
+      const result = runAuditBaseline(process.cwd(), { outDir });
+      assert.equal(result.ok, true);
+      assert.deepEqual(result.codes, ["PASS"]);
+      assert.equal(result.metadataMatchesObserved, true);
+      // Bound by the committed baseline, not live registry totals: moderate/low
+      // advisories may appear upstream without failing this check.
+      assert.equal(result.metadata.high, committed.highPackages.length);
+      assert.equal(result.metadata.critical, 0);
+      assert.deepEqual(result.observed, result.metadata);
+      assert.equal(result.resolvedHigh.length, 0);
+      const document = verificationDocument(result);
+      assert.equal(document.schemaVersion, "classic-v0.2-security-audit-verification/2");
+      assert.equal(document.existingHighAreNotCleared, true);
+      assert.equal(document.metadataMatchesObserved, true);
+      assert.equal(document.ok, true);
+      const dumped = JSON.stringify(document);
+      assert.equal(dumped.includes(os.homedir()), false);
+    } finally {
+      fs.rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });
