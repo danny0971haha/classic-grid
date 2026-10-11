@@ -596,15 +596,15 @@ describe("audit adversarial metadata and identity cases", () => {
   it("A-10 accepts the current real audit baseline without clearing existing highs", () => {
     const committed = JSON.parse(fs.readFileSync(BASELINE_RELATIVE_PATH, "utf8")) as AuditBaseline;
     assert.equal(committed.policy.existingHighAreNotCleared, true);
-    assert.equal(committed.highPackages.length, 14);
+    assert.equal(committed.highPackages.length, 5);
     const outDir = path.join("artifacts", `security-a10-${process.pid}`);
     const result = runAuditBaseline(process.cwd(), { outDir });
     assert.equal(result.ok, true);
     assert.deepEqual(result.codes, ["PASS"]);
     assert.equal(result.metadataMatchesObserved, true);
-    assert.equal(result.metadata.high, 14);
+    assert.equal(result.metadata.high, 5);
     assert.equal(result.metadata.critical, 0);
-    assert.equal(result.metadata.total, 22);
+    assert.equal(result.metadata.total, 13);
     assert.deepEqual(result.observed, result.metadata);
     assert.equal(result.resolvedHigh.length, 0);
     const document = verificationDocument(result);

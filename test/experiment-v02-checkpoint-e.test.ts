@@ -1104,7 +1104,7 @@ describe("Checkpoint E integrated dry-run and fault campaign", () => {
     const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
     assert.equal(pkg.version, "0.2.0");
     assert.equal(pkg.dependencies.tsx, "^4.19.2");
-    assert.equal(pkg.dependencies.undici, "^6.21.0");
+    assert.equal(pkg.dependencies.undici, "^6.28.1");
     assert.equal(pkg.devDependencies.typescript, "^5.7.2");
     const lock = fs.readFileSync(new URL("../package-lock.json", import.meta.url), "utf8");
     assert.ok(lock.includes("\"name\": \"classic-grid-master\""));

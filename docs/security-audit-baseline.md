@@ -3,7 +3,7 @@
 **Status:** known high findings remain vulnerabilities. This document is not a clearance.
 **Date:** 2026-08-25
 **Lockfile:** `package-lock.json`
-**Lockfile SHA-256:** `f278d8b7f0d559839e35ee64e94db9e39c7d6037f5692d0cafa02ba6c6b254ed`
+**Lockfile SHA-256:** `122e43c9cf851ad4933f41ac41e8cd874a714e544ed1e80823a35a0a4014d649`
 **Machine-readable baseline:** `scripts/security/npm-audit-baseline.json`
 **Audit command:** `npm audit --omit=dev --json`
 **Verification schema:** `classic-v0.2-security-audit-verification/2`
@@ -29,7 +29,24 @@ LIVE_EXCHANGE_WRITE_AUTHORIZED=NO
 REAL_FUND_TESTING_AUTHORIZED=NO
 ```
 
-Current `npm audit --omit=dev` known baseline: **14 high / 0 critical / 22 total** package rows. That match is "consistent with the known baseline", not "vulnerabilities cleared". Existing High findings are not repaired and not treated as safe. This corrective does not enlarge the committed npm-audit baseline, does not add advisories or package paths to manufacture PASS, and does not run `npm audit fix --force`.
+Current `npm audit --omit=dev` known baseline: **5 high / 0 critical / 13 total** package rows (after the 2026-10-11 dependency remediation below; the 2026-08-25 baseline was 14 high / 0 critical / 22 total). That match is "consistent with the known baseline", not "vulnerabilities cleared". Existing High findings are not repaired and not treated as safe. This corrective does not enlarge the committed npm-audit baseline, does not add advisories or package paths to manufacture PASS, and does not run `npm audit fix --force`.
+
+## 2026-10-11 dependency remediation
+
+Advisories published after the 2026-08-25 baseline (axios, undici, toml, http-cache-semantics, nested `ws`) made the root A-10 audit and the Extended canary install audit fail. Remediation used in-range bumps and npm `overrides` only (no `npm audit fix --force`, no major downgrades, no venue adapter edits):
+
+| package | before | after | mechanism |
+|---|---|---|---|
+| `axios` (via `@nadohq/*` exact pin) | 1.16.1 | 1.20.0 | `overrides.axios = ^1.20.0` |
+| `ws` nested under `viem` (exact pin) | 8.20.1 | deduped to root `ws` 8.22.0 | `overrides.viem.ws = $ws` (scoped; `jayson`/`ethers` keep their own `ws`) |
+| `toml` (via `@coral-xyz/anchor` → `@n1xyz/proton`) | 3.0.0 | 4.3.0 | `overrides.toml = ^4.3.0` |
+| `http-cache-semantics` | 4.2.0 | 4.3.0 | `overrides.http-cache-semantics = ^4.3.0` |
+| `undici` (root direct) | 6.27.0 | 6.29.0 | `^6.28.1` |
+| `undici` (Extended canary lockfile) | 6.28.0 | 6.29.0 | `^6.28.1` |
+
+Result: root `npm audit --omit=dev` went from 18 high / 25 total (pre-remediation, live registry) to **5 high / 8 moderate / 0 critical / 13 total**. The committed baseline was regenerated with `buildBaseline()`; it is a strict subset of the 2026-08-25 baseline (no new advisory, package, or path). GHSA-gcfj-64vw-6mp9 (`axios`) and GHSA-96hv-2xvq-fx4p (`ws`) and the inherited `@nadohq/*` / `viem` rows are resolved. The only remaining high chain is GHSA-3gc7-fjrx-p6mg (`bigint-buffer`, no patched release) via `@solana/*` → `@n1xyz/proton` → `@n1xyz/nord-ts`. Extended canary audit: 0 vulnerabilities.
+
+Verification: `npm run check` green; all affected SDKs (`@nadohq/*`, `@n1xyz/nord-ts`, `@aptos-labs/ts-sdk`, `viem`) load; `ws` round trip and `toml@4` Buffer parsing (anchor call shape) checked. Nado HTTP interceptor/proxy paths remain without runtime tests. Regenerate `package-lock.json` with the CI-pinned `npm@10.9.8` (`npx npm@10.9.8 install --package-lock-only`): npm 11 drops the optional peer entry `node_modules/jayson/node_modules/utf-8-validate`, which makes CI `npm ci` fail as out of sync. The advisory and remediation tables below describe the 2026-08-25 state and are kept as history.
 
 Existing high findings are **not** treated as safe. CI fails closed on any critical, any high advisory or high package that is not in the baseline, any high advisory ID replacement, any high dependency-path or package-identity change, metadata/row count mismatch, invalid severity counts, missing advisory identity while a package remains high, lockfile hash mismatch, unreadable audit output, or a GitHub Actions trust-boundary violation. Moderate findings are stored in the CI `audit.json` artifact and do not pass this gate by themselves.
 
@@ -168,4 +185,4 @@ npm run test:security
 npm run verify:action-inventory
 ```
 
-Generated `audit.json` is a CI artifact and is not committed. A metadata match of 14 high / 0 critical / 22 total only means the report still matches the known baseline. It is not a remediation or clearance statement.
+Generated `audit.json` is a CI artifact and is not committed. A metadata match of 5 high / 0 critical / 13 total only means the report still matches the known baseline. It is not a remediation or clearance statement.
