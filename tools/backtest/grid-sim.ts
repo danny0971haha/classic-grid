@@ -2,10 +2,12 @@
  * Candle-driven simulator for the classic-grid strategy (research only, no venue I/O).
  *
  * Two order-management models share the same grid, fills and risk rules:
- * - "bot":     what planFromFillsAndSeed does today: replacement for each fill if its
- *              level is empty, then every empty level is re-seeded by side of mid
+ * - "reseed":  planFromFillsAndSeed default (non-experiment mode, and experiment mode
+ *              before the seedEmptyLevels fix): replacement for each fill if its level is
+ *              empty, then every empty level is re-seeded by side of mid
  *              (buy below / sell above, skipping |level - mid| < skipBand * spacing).
- * - "classic": textbook grid: seed once at anchor, afterwards only replacements.
+ * - "classic": textbook grid: seed once at anchor, afterwards only replacements
+ *              (experiment mode: planFromFillsAndSeed with seedEmptyLevels false).
  *
  * Fill model (one bot tick per 1m candle): orders resting at candle open fill when the
  * candle trades through them (buy: low < price, sell: high > price). Orders placed at a
@@ -17,7 +19,7 @@ import type { GridParams, Side } from "../../src/types.js";
 
 export type Candle = { t: number; o: number; h: number; l: number; c: number };
 export type FundingRow = { t: number; rate: number };
-export type Strategy = "bot" | "classic";
+export type Strategy = "reseed" | "classic";
 export type Placement = { levelIndex: number; side: Side };
 
 export type SimConfig = {
@@ -76,8 +78,8 @@ export type SimResult = {
 const DAY_MS = 86_400_000;
 const EPS = 1e-12;
 
-/** Bot model: same placement rule as planFromFillsAndSeed with replacements consumed at once. */
-export function botPlacements(p: {
+/** Reseed model: same placement rule as planFromFillsAndSeed with replacements consumed at once. */
+export function reseedPlacements(p: {
   levels: number[];
   spacing: number;
   skipBand: number;
@@ -236,8 +238,8 @@ export function simulate(candles: Candle[], funding: FundingRow[], cfg: SimConfi
       else if (reasons.includes("DAILY_LOSS")) pausedUntil = (d + 1) * DAY_MS;
     } else if (grid) {
       const occupied = new Set(orders.keys());
-      const rows = cfg.strategy === "bot"
-        ? botPlacements({ levels: grid.levels, spacing: grid.spacing, skipBand: cfg.skipBand, mid, occupied, filled })
+      const rows = cfg.strategy === "reseed"
+        ? reseedPlacements({ levels: grid.levels, spacing: grid.spacing, skipBand: cfg.skipBand, mid, occupied, filled })
         : classicPlacements({ levels: grid.levels, occupied, filled });
       // loop.ts POST_BATCH_NOTIONAL_CAP: drop all places and cancel owned orders.
       let buyQty = 0;

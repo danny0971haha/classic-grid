@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { expectedOwnedClientOrderId, planFromFillsAndSeed, replacementFor } from "../src/grid.js";
 import type { LiveOrder, PlannerReplacementObligation, Side } from "../src/types.js";
-import { anchorFor, botPlacements, simulate, V01_PROFILE, type Candle, type SimConfig } from "../tools/backtest/grid-sim.js";
+import { anchorFor, classicPlacements, reseedPlacements, simulate, V01_PROFILE, type Candle, type SimConfig } from "../tools/backtest/grid-sim.js";
 
 const CFG: SimConfig = { ...V01_PROFILE, strategy: "classic", makerFee: 0, takerFee: 0 };
 
@@ -20,7 +20,7 @@ function rng(seed: number): () => number {
 const candle = (t: number, o: number, h: number, l: number, c: number): Candle => ({ t: t * 60_000, o, h, l, c });
 
 describe("backtest grid-sim", () => {
-  it("bot placement model matches planFromFillsAndSeed on random states", () => {
+  it("reseed and classic placement models match planFromFillsAndSeed on random states", () => {
     const grid = anchorFor(CFG, 83_000);
     const prefix = "cgx-";
     const epoch = 7;
@@ -64,33 +64,36 @@ describe("backtest grid-sim", () => {
         }
       }
 
-      const plan = planFromFillsAndSeed({
-        market: "BTC-USD",
-        mid,
-        levels: grid.levels,
-        spacing: grid.spacing,
-        mode: "neutral",
-        sizeBase: grid.size,
-        openOrders: open,
-        prevActive: new Map(),
-        maxWrites: 40,
-        seeded: true,
-        skipBand: CFG.skipBand,
-        ownershipPrefix: prefix,
-        anchorEpoch: epoch,
-        replacementObligations: obligations,
-      });
-      assert.equal(plan.plannerDisposition, "CLEAR");
-      const real = plan.intents
-        .map((i) => {
-          assert.equal(i.type, "place");
-          return i.type === "place" ? `${i.order.side}@${i.order.level}` : "";
-        })
-        .sort();
-      const model = botPlacements({ levels: grid.levels, spacing: grid.spacing, skipBand: CFG.skipBand, mid, occupied, filled })
-        .map((r) => `${r.side}@${r.levelIndex}`)
-        .sort();
-      assert.deepEqual(model, real, `trial ${trial} mid=${mid}`);
+      const real = (seedEmptyLevels?: boolean): string[] => {
+        const plan = planFromFillsAndSeed({
+          market: "BTC-USD",
+          mid,
+          levels: grid.levels,
+          spacing: grid.spacing,
+          mode: "neutral",
+          sizeBase: grid.size,
+          openOrders: open,
+          prevActive: new Map(),
+          maxWrites: 40,
+          seeded: true,
+          seedEmptyLevels,
+          skipBand: CFG.skipBand,
+          ownershipPrefix: prefix,
+          anchorEpoch: epoch,
+          replacementObligations: obligations,
+        });
+        assert.equal(plan.plannerDisposition, "CLEAR");
+        return plan.intents
+          .map((i) => {
+            assert.equal(i.type, "place");
+            return i.type === "place" ? `${i.order.side}@${i.order.level}` : "";
+          })
+          .sort();
+      };
+      const key = (rows: Array<{ side: Side; levelIndex: number }>): string[] => rows.map((r) => `${r.side}@${r.levelIndex}`).sort();
+      const reseed = reseedPlacements({ levels: grid.levels, spacing: grid.spacing, skipBand: CFG.skipBand, mid, occupied, filled });
+      assert.deepEqual(key(reseed), real(), `reseed trial ${trial} mid=${mid}`);
+      assert.deepEqual(key(classicPlacements({ levels: grid.levels, occupied, filled })), real(false), `classic trial ${trial} mid=${mid}`);
     }
   });
 

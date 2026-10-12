@@ -350,6 +350,11 @@ export function planFromFillsAndSeed(p: {
   prevActive: Map<string, { levelIndex: number; side: Side; price: number; size: number }>;
   maxWrites: number;
   seeded: boolean;
+  /**
+   * false: textbook grid after the first seed — only replacement obligations place orders.
+   * Re-seeding empty levels by side of mid every tick lets inventory drift (see tools/backtest).
+   */
+  seedEmptyLevels?: boolean;
   /** 达限后不再 place（如 RISEx 50/市场） */
   maxOpenOrders?: number;
   skipBand?: number;
@@ -564,22 +569,24 @@ export function planFromFillsAndSeed(p: {
     }, parsed?.replacementToken || obl.obligationId);
   }
 
-  const seeds = seedOrders({
-    levels: p.levels,
-    price: p.mid,
-    mode: p.mode,
-    spacing: p.spacing,
-    skipBand: p.skipBand,
-  });
-  for (const s of seeds) {
-    const placed = pushPlace({
-      market: p.market,
-      side: s.side,
-      price: s.price,
-      size: p.sizeBase,
-      level: s.levelIndex,
+  if (p.seedEmptyLevels !== false) {
+    const seeds = seedOrders({
+      levels: p.levels,
+      price: p.mid,
+      mode: p.mode,
+      spacing: p.spacing,
+      skipBand: p.skipBand,
     });
-    if (!placed && (intents.length >= p.maxWrites || placeSlots <= 0)) break;
+    for (const s of seeds) {
+      const placed = pushPlace({
+        market: p.market,
+        side: s.side,
+        price: s.price,
+        size: p.sizeBase,
+        level: s.levelIndex,
+      });
+      if (!placed && (intents.length >= p.maxWrites || placeSlots <= 0)) break;
+    }
   }
 
   diagnostics.sort(compareDiagnostic);

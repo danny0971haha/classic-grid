@@ -57,6 +57,7 @@ import {
   assertMarginOk,
   buildGrid,
   computeRisk,
+  parseOwnedClientOrderId,
   planFromFillsAndSeed,
   type BuiltGrid,
 } from "./grid.js";
@@ -784,6 +785,16 @@ async function tickOne(
       rt.ex.acknowledgeExecutionJournal?.(published);
     }
   }
+  // Experiment mode runs a textbook grid: seed only while no current-epoch grid order rests on
+  // the venue (first anchor, or after a halt cancelled everything); otherwise only fill
+  // replacements place orders. Re-seeding empty levels by mid lets inventory drift.
+  const seedEmptyLevels =
+    !cfg.experiment.enabled ||
+    !snap.openOrders.some(
+      (o) =>
+        parseOwnedClientOrderId(String(o.clientOrderId || ""), experimentOwnershipPrefix)?.epoch ===
+        rt.anchorEpoch
+    );
   const plan = applyPlannerIntentGate(
     planFromFillsAndSeed({
       market,
@@ -796,6 +807,7 @@ async function tickOne(
       prevActive: rt.active,
       maxWrites: g.maxWritesPerTick,
       seeded: rt.seeded,
+      seedEmptyLevels,
       maxOpenOrders: g.maxOpenOrders,
       skipBand: g.skipBand,
       ownershipPrefix: cfg.experiment.enabled ? experimentOwnershipPrefix : undefined,

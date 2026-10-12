@@ -3,7 +3,7 @@
  *
  *   node --import tsx tools/backtest/grid-backtest.ts [--market BTC-USD]
  *
- * Scenario matrix: strategy (bot | classic) x fees x mode
+ * Scenario matrix: strategy (reseed | classic) x fees x mode
  * - fees "published": maker 0, taker 0.025% (third-party summary, unverified)
  * - fees "repo":      maker = taker = 0.05% (src/config.ts feeRate assumption)
  * - mode "strict":    v0.1 limits, stops for good at 5U drawdown from start
@@ -45,7 +45,7 @@ console.log(`price ${first.o} -> ${last.c} (${usd(((last.c - first.o) / first.o)
 const rows: Array<{ name: string; res: SimResult }> = [];
 for (const mode of Object.keys(MODES) as Array<keyof typeof MODES>) {
   for (const fee of Object.keys(FEES) as Array<keyof typeof FEES>) {
-    for (const strategy of ["bot", "classic"] as Strategy[]) {
+    for (const strategy of ["reseed", "classic"] as Strategy[]) {
       const cfg: SimConfig = { ...V01_PROFILE, strategy, ...FEES[fee], ...MODES[mode] };
       rows.push({ name: `${mode}/${fee}/${strategy}`, res: simulate(candles, funding, cfg) });
     }
